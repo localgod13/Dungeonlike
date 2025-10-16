@@ -22,21 +22,25 @@ export class LobbyUI {
 
     this.container = scene.add.container(0, 0);
 
-    // Title
+    // Title (with shadow for visibility over background)
     this.titleText = scene.add.text(centerX, 100, 'Lobby', {
       fontSize: '48px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 6,
     });
     this.titleText.setOrigin(0.5);
 
-    // Player list
+    // Player list (with shadow for visibility)
     this.playerListText = scene.add.text(centerX, 200, 'Players:\n', {
       fontSize: '24px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       align: 'center',
+      stroke: '#000000',
+      strokeThickness: 4,
     });
     this.playerListText.setOrigin(0.5, 0);
 

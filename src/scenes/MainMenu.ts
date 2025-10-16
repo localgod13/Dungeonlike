@@ -16,25 +16,51 @@ export class MainMenu extends Phaser.Scene {
     const width = this.scale.width;
     const height = this.scale.height;
 
+    // Set background color (fallback if image fails to load)
+    this.cameras.main.setBackgroundColor('#0d0d0d');
+
+    // Add background image
+    const bg = this.add.image(0, 0, 'mmbg');
+    bg.setOrigin(0, 0);
+    bg.setDepth(-1); // Behind everything
+    
+    // Scale background to cover screen while maintaining aspect ratio
+    const scaleX = width / bg.width;
+    const scaleY = height / bg.height;
+    const scale = Math.max(scaleX, scaleY); // Use max to cover entire screen
+    bg.setScale(scale);
+    
+    // Center the background
+    bg.setPosition(
+      (width - bg.width * scale) / 2,
+      (height - bg.height * scale) / 2
+    );
+    
+    console.log(`Main menu background loaded: ${bg.width}x${bg.height}, scaled: ${scale.toFixed(2)}x`);
+
     // Initialize sound manager and play title music
     this.soundManager = new SoundManager(this);
     this.soundManager.playMusic('music_title', { volume: 0.3, loop: true });
     console.log('Title music started');
 
-    // Title
-    const title = this.add.text(width / 2, height / 3, 'DARKEST-LIKE', {
+    // Title (with shadow for visibility over background)
+    const title = this.add.text(width / 2, height / 3, 'DARKEST LIGHT', {
       fontSize: '64px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 8,
     });
     title.setOrigin(0.5);
 
-    // Subtitle
+    // Subtitle (with shadow for visibility)
     const subtitle = this.add.text(width / 2, height / 3 + 70, 'Co-op Dungeon Crawler', {
       fontSize: '24px',
-      color: '#aaaaaa',
+      color: '#cccccc',
       fontFamily: 'Arial, sans-serif',
+      stroke: '#000000',
+      strokeThickness: 4,
     });
     subtitle.setOrigin(0.5);
 

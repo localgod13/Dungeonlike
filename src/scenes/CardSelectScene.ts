@@ -267,26 +267,11 @@ export class CardSelectScene extends Phaser.Scene {
       bg.setFillStyle(0x44aa44);
       this.readyButtonText.setText('Unready');
       
-      // Fade out card selection music when player clicks ready
-      if (this.soundManager) {
-        console.log('Player ready - fading out card selection music');
-        this.soundManager.fadeOutMusic(2000); // 2 second fade out
-      }
+      // Don't fade out music here - keep it playing until battle transition
+      // This prevents silence between scenes
     } else {
       bg.setFillStyle(0x666666);
       this.readyButtonText.setText('Ready');
-      
-      // Fade back in if they unready
-      if (this.soundManager) {
-        console.log('Player unready - fading card selection music back in');
-        const music = this.sound.get('music_cardselect') as Phaser.Sound.BaseSound;
-        if (music && !music.isPlaying) {
-          this.soundManager.playMusicWithFadeIn('music_cardselect', { 
-            volume: 0.4, 
-            loop: true 
-          }, 1500);
-        }
-      }
     }
 
     // Update own ready state
@@ -405,12 +390,6 @@ export class CardSelectScene extends Phaser.Scene {
   private transitionToBattle(loadouts: Loadout[]): void {
     console.log('Transitioning to battle with loadouts:', loadouts);
 
-    // Stop card selection music before transitioning
-    if (this.soundManager) {
-      console.log('Stopping card selection music for battle transition');
-      this.soundManager.stopMusic();
-    }
-
     // Prepare player data for battle scene
     const battlePlayers = this.players.map(player => ({
       id: player.userId,
@@ -423,6 +402,7 @@ export class CardSelectScene extends Phaser.Scene {
       isHost: player.isHost,
     }));
 
+    // Transition to battle (card music will be handled by battle scene)
     this.scene.start('BattleScene', {
       lobbyId: this.lobbyId,
       players: battlePlayers,
@@ -431,9 +411,14 @@ export class CardSelectScene extends Phaser.Scene {
   }
 
   shutdown(): void {
+    console.log('Card select scene shutting down');
+    
     if (this.unsubscribe) {
       this.unsubscribe();
     }
+    
+    // Music crossfade is now handled by the BattleScene
+    // The battle scene will stop/fade out the card select music when it starts
   }
 
   destroy(): void {

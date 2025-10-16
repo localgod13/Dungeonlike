@@ -47,6 +47,31 @@ export class Lobby extends Phaser.Scene {
   async create(): Promise<void> {
     console.log('Lobby scene started');
 
+    const width = this.scale.width;
+    const height = this.scale.height;
+
+    // Set background color (fallback if image fails to load)
+    this.cameras.main.setBackgroundColor('#0d0d0d');
+
+    // Add background image
+    const bg = this.add.image(0, 0, 'lobbybg');
+    bg.setOrigin(0, 0);
+    bg.setDepth(-1); // Behind everything
+    
+    // Scale background to cover screen while maintaining aspect ratio
+    const scaleX = width / bg.width;
+    const scaleY = height / bg.height;
+    const scale = Math.max(scaleX, scaleY); // Use max to cover entire screen
+    bg.setScale(scale);
+    
+    // Center the background
+    bg.setPosition(
+      (width - bg.width * scale) / 2,
+      (height - bg.height * scale) / 2
+    );
+    
+    console.log(`Lobby background loaded: ${bg.width}x${bg.height}, scaled: ${scale.toFixed(2)}x`);
+
     // Initialize sound manager and ensure title music is playing
     this.soundManager = new SoundManager(this);
     
@@ -73,13 +98,15 @@ export class Lobby extends Phaser.Scene {
     const centerX = this.scale.width / 2;
     const centerY = this.scale.height / 2;
 
-    // Title
+    // Title (with shadow for visibility)
     this.add
       .text(centerX, centerY - 150, 'Enter Your Name', {
         fontSize: '32px',
         color: '#ffffff',
         fontFamily: 'Arial, sans-serif',
         fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 5,
       })
       .setOrigin(0.5);
 
@@ -157,12 +184,14 @@ export class Lobby extends Phaser.Scene {
 
     this.container = this.add.container(0, 0);
 
-    // Title
+    // Title (with shadow for visibility over background)
     const title = this.add.text(centerX, 100, 'Lobby', {
       fontSize: '48px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 6,
     });
     title.setOrigin(0.5);
     this.container.add(title);

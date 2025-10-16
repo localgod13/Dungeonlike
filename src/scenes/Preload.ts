@@ -67,6 +67,14 @@ export class Preload extends Phaser.Scene {
     // Load background images
     console.log('[Preload] Loading background images...');
     this.load.image(
+      'mmbg',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/mmbg.png'
+    );
+    this.load.image(
+      'lobbybg',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/lobby.png'
+    );
+    this.load.image(
       'battleground1',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/Battleground1.png'
     );

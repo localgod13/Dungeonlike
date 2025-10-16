@@ -22,7 +22,7 @@ config.scene = [Boot, Preload, MainMenu, Lobby, Run, CardSelectScene, BattleScen
 const game = new Phaser.Game(config);
 
 // Log initialization
-console.log('🎮 Darkest-Like initialized');
+console.log('🎮 Darkest Light initialized');
 console.log(`Phaser v${Phaser.VERSION}`);
 console.log(`Viewport: ${config.width}x${config.height}`);
 

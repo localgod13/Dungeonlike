@@ -221,13 +221,36 @@ export class BattleScene extends Phaser.Scene {
     this.soundManager = new SoundManager(this);
     console.log('Sound manager initialized');
 
+    // Stop any card selection music that might still be playing
+    console.log('Checking for card selection music...');
+    const allSounds = this.sound.getAllPlaying();
+    console.log('Currently playing sounds:', allSounds.map(s => s.key));
+    
+    allSounds.forEach(sound => {
+      if (sound.key === 'music_cardselect') {
+        console.log('Found card selection music, fading it out...');
+        // Fade it out for smooth crossfade
+        this.tweens.add({
+          targets: sound,
+          volume: 0,
+          duration: 1500,
+          ease: 'Linear',
+          onComplete: () => {
+            console.log('Card selection music fade complete, stopping...');
+            sound.stop();
+            sound.destroy();
+          }
+        });
+      }
+    });
+
     // Play battle music starting at 2 seconds with fade in
     this.soundManager.playMusicWithFadeIn('music_battle', { 
       volume: 0.3, 
       loop: true,
       seek: 2.0  // Start 2 seconds into the track
-    }, 2000); // 2 second fade in
-    console.log('Battle music started with fade in from 2 seconds');
+    }, 2000); // 2 second fade in for crossfade
+    console.log('Battle music started with 2s fade in from 2 seconds');
 
     // Create battle layout
     this.createBattleLayout();
