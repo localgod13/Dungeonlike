@@ -6,6 +6,8 @@ export type Target = 'none' | 'ally' | 'enemy' | 'all_enemies';
 
 export type CardOpcode = 'DMG' | 'HEAL' | 'GUARD' | 'VULN' | 'STUN' | 'AOE_DMG';
 
+export type CardType = 'attack' | 'defense' | 'magic';
+
 export interface Card {
   id: string;
   name: string;
@@ -14,6 +16,7 @@ export interface Card {
   opcode: CardOpcode;
   power: number;       // magnitude for effect
   desc: string;
+  type: CardType;      // Visual card type for image selection
 }
 
 /**
@@ -27,7 +30,8 @@ export const CARD_POOL: Card[] = [
     target: 'enemy', 
     opcode: 'DMG', 
     power: 6, 
-    desc: 'Deal 6 damage' 
+    desc: 'Deal 6 damage',
+    type: 'attack'
   },
   { 
     id: 'Guard', 
@@ -36,7 +40,8 @@ export const CARD_POOL: Card[] = [
     target: 'ally', 
     opcode: 'GUARD', 
     power: 3, 
-    desc: 'Give 3 Shield' 
+    desc: 'Give 3 Shield',
+    type: 'defense'
   },
   { 
     id: 'Mend', 
@@ -45,7 +50,8 @@ export const CARD_POOL: Card[] = [
     target: 'ally', 
     opcode: 'HEAL', 
     power: 6, 
-    desc: 'Heal 6 HP' 
+    desc: 'Heal 6 HP',
+    type: 'magic'
   },
   { 
     id: 'Weaken', 
@@ -54,7 +60,8 @@ export const CARD_POOL: Card[] = [
     target: 'enemy', 
     opcode: 'VULN', 
     power: 2, 
-    desc: 'Apply 2 Vulnerable (this turn)' 
+    desc: 'Apply 2 Vulnerable (this turn)',
+    type: 'magic'
   },
   { 
     id: 'Bash', 
@@ -63,7 +70,8 @@ export const CARD_POOL: Card[] = [
     target: 'enemy', 
     opcode: 'STUN', 
     power: 1, 
-    desc: 'Stun target (skip next action)' 
+    desc: 'Stun target (skip next action)',
+    type: 'attack'
   },
   { 
     id: 'Nova', 
@@ -72,7 +80,8 @@ export const CARD_POOL: Card[] = [
     target: 'all_enemies', 
     opcode: 'AOE_DMG', 
     power: 4, 
-    desc: 'Deal 4 to all enemies' 
+    desc: 'Deal 4 to all enemies',
+    type: 'attack'
   },
 ];
 

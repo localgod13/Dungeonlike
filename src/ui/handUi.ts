@@ -7,7 +7,7 @@ import { Card, getCardById } from '../game/cards';
  */
 
 const CARD_WIDTH = 120;
-const CARD_HEIGHT = 160;
+const CARD_HEIGHT = 180; // Changed from 160 to match 2:3 aspect ratio of card images (1024x1536)
 const CARD_SPACING = 15;
 
 export class HandUI {
@@ -57,40 +57,52 @@ export class HandUI {
     container.setData('cardId', card.id);
     container.setData('apCost', card.ap);
 
-    // Background
-    const bg = this.scene.add.rectangle(0, 0, CARD_WIDTH, CARD_HEIGHT, 0x2a2a2a, 1);
-    bg.setStrokeStyle(2, 0x666666);
+    // Card background image based on type
+    const imageKey = `card_${card.type}`;
+    const cardImage = this.scene.add.image(0, 0, imageKey);
+    cardImage.setDisplaySize(CARD_WIDTH, CARD_HEIGHT);
+    cardImage.setName('cardImage');
+    container.add(cardImage);
+
+    // Border frame (for hover/selection effects)
+    const bg = this.scene.add.rectangle(0, 0, CARD_WIDTH, CARD_HEIGHT, 0x000000, 0);
+    bg.setStrokeStyle(3, 0x444444, 0.8);
     bg.setName('bg');
     container.add(bg);
 
     // Disabled overlay (initially hidden)
-    const disabledOverlay = this.scene.add.rectangle(0, 0, CARD_WIDTH, CARD_HEIGHT, 0x000000, 0.7);
+    const disabledOverlay = this.scene.add.rectangle(0, 0, CARD_WIDTH, CARD_HEIGHT, 0x000000, 0.75);
     disabledOverlay.setName('disabledOverlay');
     disabledOverlay.setVisible(false);
+    disabledOverlay.setDepth(10);
     container.add(disabledOverlay);
 
-    // Card name
-    const nameText = this.scene.add.text(0, -CARD_HEIGHT / 2 + 25, card.name, {
-      fontSize: '16px',
+    // Card name (with shadow for better visibility over image)
+    const nameText = this.scene.add.text(0, -CARD_HEIGHT / 2 + 30, card.name, {
+      fontSize: '18px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
       align: 'center',
+      stroke: '#000000',
+      strokeThickness: 4,
     });
     nameText.setOrigin(0.5);
     nameText.setName('nameText');
+    nameText.setDepth(20);
     container.add(nameText);
 
-    // AP cost badge
-    const apBadge = this.scene.add.container(-CARD_WIDTH / 2 + 25, -CARD_HEIGHT / 2 + 20);
+    // AP cost badge (smaller)
+    const apBadge = this.scene.add.container(-CARD_WIDTH / 2 + 24, -CARD_HEIGHT / 2 + 22);
     apBadge.setName('apBadge');
+    apBadge.setDepth(20);
     
-    const apBg = this.scene.add.rectangle(0, 0, 35, 25, 0x4a4a4a);
-    apBg.setStrokeStyle(1, 0x888888);
+    const apBg = this.scene.add.circle(0, 0, 14, 0x000000, 0.9);
+    apBg.setStrokeStyle(2, 0xffaa00, 1);
     apBadge.add(apBg);
 
     const apText = this.scene.add.text(0, 0, `${card.ap}`, {
-      fontSize: '14px',
+      fontSize: '16px',
       color: '#ffaa00',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
@@ -100,43 +112,52 @@ export class HandUI {
     
     container.add(apBadge);
 
-    // Description
-    const descText = this.scene.add.text(0, 5, card.desc, {
-      fontSize: '12px',
-      color: '#cccccc',
+    // Description (no background box - just text with shadow)
+    const descText = this.scene.add.text(0, 10, card.desc, {
+      fontSize: '13px',
+      color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       align: 'center',
-      wordWrap: { width: CARD_WIDTH - 15 },
+      wordWrap: { width: CARD_WIDTH - 20 },
+      stroke: '#000000',
+      strokeThickness: 3,
     });
     descText.setOrigin(0.5);
     descText.setName('descText');
+    descText.setDepth(20);
     container.add(descText);
 
-    // Target info
-    const targetText = this.scene.add.text(0, CARD_HEIGHT / 2 - 25, `Target: ${card.target}`, {
-      fontSize: '10px',
-      color: '#888888',
+    // Target info (no background - just text with shadow)
+    const targetText = this.scene.add.text(0, CARD_HEIGHT / 2 - 30, `Target: ${card.target}`, {
+      fontSize: '11px',
+      color: '#cccccc',
       fontFamily: 'Arial, sans-serif',
       align: 'center',
+      stroke: '#000000',
+      strokeThickness: 3,
     });
     targetText.setOrigin(0.5);
     targetText.setName('targetText');
+    targetText.setDepth(20);
     container.add(targetText);
 
     // Make interactive
     bg.setInteractive({ useHandCursor: true });
     bg.on('pointerover', () => {
       if (this.canAffordCard(card.id)) {
-        bg.setStrokeStyle(3, 0xffffff);
+        bg.setStrokeStyle(4, 0xffffff, 1);
+        // Slight glow effect
+        container.setScale(1.05);
       }
     });
     bg.on('pointerout', () => {
       const isSelected = this.selectedCardId === card.id;
       if (isSelected) {
-        bg.setStrokeStyle(3, 0x44ff44);
+        bg.setStrokeStyle(4, 0x44ff44, 1);
       } else {
-        bg.setStrokeStyle(2, 0x666666);
+        bg.setStrokeStyle(3, 0x444444, 0.8);
       }
+      container.setScale(1);
     });
     bg.on('pointerdown', () => {
       if (this.canAffordCard(card.id)) {
@@ -163,7 +184,7 @@ export class HandUI {
       const prevContainer = this.cardContainers.get(this.selectedCardId);
       if (prevContainer) {
         const bg = prevContainer.getByName('bg') as Phaser.GameObjects.Rectangle;
-        bg.setStrokeStyle(2, 0x666666);
+        bg.setStrokeStyle(3, 0x444444, 0.8);
       }
     }
 
@@ -172,7 +193,7 @@ export class HandUI {
     const container = this.cardContainers.get(cardId);
     if (container) {
       const bg = container.getByName('bg') as Phaser.GameObjects.Rectangle;
-      bg.setStrokeStyle(3, 0x44ff44);
+      bg.setStrokeStyle(4, 0x44ff44, 1);
     }
 
     // Notify callback
@@ -232,7 +253,7 @@ export class HandUI {
         // Deselect if this was selected
         if (this.selectedCardId === cardId) {
           this.selectedCardId = null;
-          bg.setStrokeStyle(2, 0x666666);
+          bg.setStrokeStyle(3, 0x444444, 0.8);
         }
       }
     });
@@ -252,7 +273,7 @@ export class HandUI {
       const container = this.cardContainers.get(this.selectedCardId);
       if (container) {
         const bg = container.getByName('bg') as Phaser.GameObjects.Rectangle;
-        bg.setStrokeStyle(2, 0x666666);
+        bg.setStrokeStyle(3, 0x444444, 0.8);
       }
       this.selectedCardId = null;
     }

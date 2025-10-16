@@ -134,7 +134,12 @@ export function buildTimeline(
           callback = () => callbacks.onVfx(effect.src, undefined, effect.note);
         } else if (effect.note === 'heal-cast') {
           callback = () => callbacks.onVfx(effect.src, effect.dst, effect.note);
+        } else if (effect.note === 'vulnerable' || effect.note === 'stun') {
+          // Status effect VFX (Weaken, Bash, etc.)
+          console.log(`[Timeline] Routing VFX effect with note="${effect.note}" to onVfx callback`);
+          callback = () => callbacks.onVfx(effect.src, effect.dst, effect.note);
         } else {
+          // Strike animations (slash, etc.)
           callback = () => callbacks.onStrike(effect.src, effect.dst!, effect.note);
         }
         break;

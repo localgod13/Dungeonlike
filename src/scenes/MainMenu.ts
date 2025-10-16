@@ -1,10 +1,13 @@
 import Phaser from 'phaser';
 import { COLORS } from '../game/config';
+import { SoundManager } from '../game/sound';
 
 /**
  * Main menu - entry point, play button routes to lobby
  */
 export class MainMenu extends Phaser.Scene {
+  private soundManager: SoundManager | null = null;
+
   constructor() {
     super('MainMenu');
   }
@@ -12,6 +15,11 @@ export class MainMenu extends Phaser.Scene {
   create(): void {
     const width = this.scale.width;
     const height = this.scale.height;
+
+    // Initialize sound manager and play title music
+    this.soundManager = new SoundManager(this);
+    this.soundManager.playMusic('music_title', { volume: 0.3, loop: true });
+    console.log('Title music started');
 
     // Title
     const title = this.add.text(width / 2, height / 3, 'DARKEST-LIKE', {
@@ -83,6 +91,19 @@ export class MainMenu extends Phaser.Scene {
     });
 
     bg.on('pointerdown', callback);
+  }
+
+  shutdown(): void {
+    // Don't stop music here - let it continue to Lobby
+    // Music will fade out when transitioning to card selection
+  }
+
+  destroy(): void {
+    // Clean up sound manager
+    if (this.soundManager) {
+      this.soundManager.destroy();
+      this.soundManager = null;
+    }
   }
 }
 

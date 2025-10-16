@@ -9,6 +9,7 @@ import {
 } from '../net/match';
 import { Loadout } from '../net/proto';
 import { CardSelectUI } from '../ui/cardSelectUi';
+import { SoundManager } from '../game/sound';
 
 /**
  * Card selection scene - players choose up to 4 cards before battle
@@ -39,6 +40,9 @@ export class CardSelectScene extends Phaser.Scene {
   private loadouts = new Map<string, string[]>(); // userId -> cardIds
   private readyStates = new Map<string, boolean>(); // userId -> ready
 
+  // Sound manager
+  private soundManager: SoundManager | null = null;
+
   constructor() {
     super('CardSelectScene');
   }
@@ -65,8 +69,44 @@ export class CardSelectScene extends Phaser.Scene {
     // Determine if host
     this.isHost = this.players.length > 0 && this.players[0].userId === this.userId;
 
-    // Set background
+    // Set background color (fallback if image fails to load)
     this.cameras.main.setBackgroundColor('#0d0d0d');
+
+    // Add background image
+    const bg = this.add.image(0, 0, 'cardselectbg');
+    bg.setOrigin(0, 0);
+    bg.setDepth(-1); // Behind everything
+    
+    // Scale background to cover screen while maintaining aspect ratio
+    const scaleX = this.scale.width / bg.width;
+    const scaleY = this.scale.height / bg.height;
+    const scale = Math.max(scaleX, scaleY); // Use max to cover entire screen
+    bg.setScale(scale);
+    
+    // Center the background
+    bg.setPosition(
+      (this.scale.width - bg.width * scale) / 2,
+      (this.scale.height - bg.height * scale) / 2
+    );
+    
+    console.log(`Card select background loaded: ${bg.width}x${bg.height}, scaled: ${scale.toFixed(2)}x`);
+
+    // Initialize sound manager and ensure title music is stopped
+    this.soundManager = new SoundManager(this);
+    
+    // Stop any title music that might still be playing/fading
+    const titleMusic = this.sound.getAllPlaying().find(s => s.key === 'music_title');
+    if (titleMusic) {
+      console.log('Stopping title music in card selection');
+      titleMusic.stop();
+    }
+
+    // Play card selection music with fade in
+    this.soundManager.playMusicWithFadeIn('music_cardselect', { 
+      volume: 0.4, 
+      loop: true 
+    }, 1500); // 1.5 second fade in
+    console.log('Card selection music started with fade in');
 
     // Create UI
     this.cardUI = new CardSelectUI(
@@ -226,9 +266,27 @@ export class CardSelectScene extends Phaser.Scene {
     if (this.isReady) {
       bg.setFillStyle(0x44aa44);
       this.readyButtonText.setText('Unready');
+      
+      // Fade out card selection music when player clicks ready
+      if (this.soundManager) {
+        console.log('Player ready - fading out card selection music');
+        this.soundManager.fadeOutMusic(2000); // 2 second fade out
+      }
     } else {
       bg.setFillStyle(0x666666);
       this.readyButtonText.setText('Ready');
+      
+      // Fade back in if they unready
+      if (this.soundManager) {
+        console.log('Player unready - fading card selection music back in');
+        const music = this.sound.get('music_cardselect') as Phaser.Sound.BaseSound;
+        if (music && !music.isPlaying) {
+          this.soundManager.playMusicWithFadeIn('music_cardselect', { 
+            volume: 0.4, 
+            loop: true 
+          }, 1500);
+        }
+      }
     }
 
     // Update own ready state
@@ -347,6 +405,12 @@ export class CardSelectScene extends Phaser.Scene {
   private transitionToBattle(loadouts: Loadout[]): void {
     console.log('Transitioning to battle with loadouts:', loadouts);
 
+    // Stop card selection music before transitioning
+    if (this.soundManager) {
+      console.log('Stopping card selection music for battle transition');
+      this.soundManager.stopMusic();
+    }
+
     // Prepare player data for battle scene
     const battlePlayers = this.players.map(player => ({
       id: player.userId,
@@ -376,6 +440,11 @@ export class CardSelectScene extends Phaser.Scene {
     this.shutdown();
     if (this.cardUI) {
       this.cardUI.destroy();
+    }
+    // Clean up sound manager
+    if (this.soundManager) {
+      this.soundManager.destroy();
+      this.soundManager = null;
     }
   }
 }

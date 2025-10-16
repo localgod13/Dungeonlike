@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { COLORS } from '../game/config';
+import { preloadSounds } from '../game/sound';
 
 /**
  * Preload scene - asset loading with progress bar
@@ -52,8 +53,44 @@ export class Preload extends Phaser.Scene {
       percentText.destroy();
     });
 
-    // Load assets here (placeholder for now)
-    // this.load.image('key', 'path/to/image.png');
+    // Add error handler for failed loads
+    this.load.on('loaderror', (file: any) => {
+      console.error(`[Preload] Failed to load file: ${file.key}`, file);
+      console.error(`[Preload] File URL: ${file.url}`);
+    });
+
+    // Load sound assets
+    console.log('[Preload] Loading sound assets...');
+    preloadSounds(this);
+    console.log('[Preload] Sound assets queued for loading');
+    
+    // Load background images
+    console.log('[Preload] Loading background images...');
+    this.load.image(
+      'battleground1',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/Battleground1.png'
+    );
+    this.load.image(
+      'cardselectbg',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/cardselectbg.png'
+    );
+    console.log('[Preload] Background images queued for loading');
+
+    // Load card type images
+    console.log('[Preload] Loading card images...');
+    this.load.image(
+      'card_attack',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/attack.png'
+    );
+    this.load.image(
+      'card_defense',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/defense.png'
+    );
+    this.load.image(
+      'card_magic',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/magic.png'
+    );
+    console.log('[Preload] Card images queued for loading');
   }
 
   create(): void {

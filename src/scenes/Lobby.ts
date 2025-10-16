@@ -13,6 +13,7 @@ import {
 } from '../net/lobby';
 import { useClientStore } from '../store/clientStore';
 import { COLORS } from '../game/config';
+import { SoundManager } from '../game/sound';
 
 /**
  * Lobby scene - authentication, create/join, 3-player slots, ready system
@@ -36,12 +37,27 @@ export class Lobby extends Phaser.Scene {
   private codeInput!: HTMLInputElement;
   private lobbyContainer!: Phaser.GameObjects.Container;
 
+  // Sound manager
+  private soundManager: SoundManager | null = null;
+
   constructor() {
     super('Lobby');
   }
 
   async create(): Promise<void> {
     console.log('Lobby scene started');
+
+    // Initialize sound manager and ensure title music is playing
+    this.soundManager = new SoundManager(this);
+    
+    // Check if title music should be playing (from MainMenu)
+    // If not, start it
+    if (!this.sound.getAllPlaying().find(s => s.key === 'music_title')) {
+      console.log('Title music not playing, starting it...');
+      this.soundManager.playMusic('music_title', { volume: 0.3, loop: true });
+    } else {
+      console.log('Title music already playing from MainMenu');
+    }
 
     // Check if already authenticated
     const existingUserId = await getCurrentUserId();
@@ -553,10 +569,19 @@ export class Lobby extends Phaser.Scene {
 
     console.log(`Starting card selection with ${players.length} players:`, players);
     
-    // Transition to CardSelectScene instead of directly to BattleScene
-    this.scene.start('CardSelectScene', { 
-      lobbyId: this.lobbyId,
-      players: players,
+    // Fade out title music before transitioning to card selection
+    if (this.soundManager) {
+      console.log('Fading out title music...');
+      this.soundManager.fadeOutMusic(1500); // 1.5 second fade
+    }
+    
+    // Delay scene transition to allow fade to start
+    this.time.delayedCall(200, () => {
+      // Transition to CardSelectScene instead of directly to BattleScene
+      this.scene.start('CardSelectScene', { 
+        lobbyId: this.lobbyId,
+        players: players,
+      });
     });
   }
 
@@ -572,6 +597,16 @@ export class Lobby extends Phaser.Scene {
     }
     if (this.lobbyContainer) {
       this.lobbyContainer.destroy();
+    }
+    // Music will be faded out by startRun() before transitioning
+    // Or stopped by MainMenu if going back
+  }
+
+  destroy(): void {
+    // Clean up sound manager
+    if (this.soundManager) {
+      this.soundManager.destroy();
+      this.soundManager = null;
     }
   }
 }

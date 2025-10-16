@@ -32,6 +32,7 @@ import { COLORS } from '../game/config';
 import { HandUI } from '../ui/handUi';
 import { getCardById, requiresTarget } from '../game/cards';
 import { startBattleAP, refreshAP, canAfford, spendAP } from '../game/economy';
+import { SoundManager } from '../game/sound';
 
 /**
  * Side-view battle scene with deterministic combat pipeline
@@ -53,7 +54,7 @@ export class BattleScene extends Phaser.Scene {
   private combatState: CombatState;
   private currentTurn = 1;
   private phase: 'planning' | 'resolving' | 'idle' = 'planning';
-  private playerPlans = new Map<ActorId, ActionPlan>();
+  private playerPlans = new Map<ActorId, ActionPlan[]>(); // Multiple actions per player
   private isLocked = false;
 
   // UI elements
@@ -81,6 +82,8 @@ export class BattleScene extends Phaser.Scene {
   private handUI: HandUI | null = null;
   private selectedCardId: string | null = null;
   private apDisplayTexts = new Map<ActorId, Phaser.GameObjects.Text>(); // AP displays per player
+  private queuedActions: ActionPlan[] = []; // Multiple actions queued for this turn
+  private queueDisplay: Phaser.GameObjects.Container | null = null; // UI showing queued cards
 
   // Cursor tracking
   private remoteCursors = new Map<string, Phaser.GameObjects.Container>();
@@ -91,6 +94,17 @@ export class BattleScene extends Phaser.Scene {
   private combatLogContainer: Phaser.GameObjects.Container | null = null;
   private combatLogEntries: Phaser.GameObjects.Text[] = [];
   private readonly MAX_LOG_ENTRIES = 4;
+  private readonly MAX_LOG_ENTRIES_EXPANDED = 12;
+  private isLogExpanded = false;
+  private logExpandButton: Phaser.GameObjects.Container | null = null;
+
+  // Sound manager
+  private soundManager: SoundManager | null = null;
+
+  // Player stat displays (bottom left HUD)
+  private playerHpText: Phaser.GameObjects.Text | null = null;
+  private playerLevelText: Phaser.GameObjects.Text | null = null;
+  private playerApText: Phaser.GameObjects.Text | null = null;
 
   constructor() {
     super('BattleScene');
@@ -168,8 +182,52 @@ export class BattleScene extends Phaser.Scene {
     console.log(`Combat State:`, this.combatState);
     console.log(`=== END COMBAT STATE INIT ===`);
 
-    // Set background
+    // Set background color (fallback if image fails to load)
     this.cameras.main.setBackgroundColor('#0d0d0d');
+
+    // Battle area dimensions
+    const battleWidth = 1280;
+    const battleHeight = 600;
+    const bottomMargin = 120; // Space for action buttons
+    
+    // Add background image
+    const bg = this.add.image(0, 0, 'battleground1');
+    bg.setOrigin(0, 0);
+    bg.setDepth(-1); // Behind everything
+    
+    // Scale background to fit the battle area (1280x600)
+    const scaleX = battleWidth / bg.width;
+    const scaleY = battleHeight / bg.height;
+    const scale = Math.min(scaleX, scaleY); // Use min to fit within battle area
+    bg.setScale(scale);
+    
+    // Center the background in the battle area
+    const bgWidth = bg.width * scale;
+    const bgHeight = bg.height * scale;
+    const bgX = (this.scale.width - bgWidth) / 2;
+    const bgY = (this.scale.height - bottomMargin - bgHeight) / 2;
+    
+    bg.setPosition(bgX, bgY);
+    
+    console.log(`Background loaded: ${bg.width}x${bg.height}`);
+    console.log(`Battle area: ${battleWidth}x${battleHeight}`);
+    console.log(`Background scaled to: ${bgWidth.toFixed(0)}x${bgHeight.toFixed(0)} at scale ${scale.toFixed(2)}x`);
+    console.log(`Background position: (${bgX.toFixed(0)}, ${bgY.toFixed(0)})`);
+
+    // Wireframe border disabled - uncomment to show battle area boundaries
+    // this.createBattleAreaBorder();
+
+    // Initialize sound manager
+    this.soundManager = new SoundManager(this);
+    console.log('Sound manager initialized');
+
+    // Play battle music starting at 2 seconds with fade in
+    this.soundManager.playMusicWithFadeIn('music_battle', { 
+      volume: 0.3, 
+      loop: true,
+      seek: 2.0  // Start 2 seconds into the track
+    }, 2000); // 2 second fade in
+    console.log('Battle music started with fade in from 2 seconds');
 
     // Create battle layout
     this.createBattleLayout();
@@ -370,67 +428,67 @@ export class BattleScene extends Phaser.Scene {
   private createHUD(): void {
     this.hudContainer = this.add.container(0, 0);
 
-    // Top HUD background
-    const topBg = this.add.rectangle(
-      this.scale.width / 2,
-      30,
-      this.scale.width,
-      60,
-      0x1a1a1a,
-      0.9
-    );
-    this.hudContainer.add(topBg);
-
-    // Combat log panel (top left corner with proper bounds)
-    const logWidth = 250;
-    const logHeight = 150;
-    const logX = 10; // Small margin from left edge
-    const logY = 80;
+    // Combat log panel (bottom right corner - matches player stats size)
+    const logWidth = 220;
+    const logHeight = 80;
+    const logX = this.scale.width - logWidth - 10; // Small margin from right edge
+    const logY = this.scale.height - logHeight - 10; // Small margin from bottom edge
     
     this.combatLogContainer = this.add.container(logX, logY);
-    this.combatLogContainer.setDepth(10);
+    this.combatLogContainer.setDepth(1000);
 
     // Combat log background with proper sizing
-    const logBg = this.add.rectangle(logWidth / 2, logHeight / 2, logWidth, logHeight, 0x1a1a2e, 0.9);
+    const logBg = this.add.rectangle(logWidth / 2, logHeight / 2, logWidth, logHeight, 0x1a1a1a, 0.9);
     logBg.setStrokeStyle(1, 0x4a90e2, 0.6);
+    logBg.setName('logBg');
     this.combatLogContainer.add(logBg);
 
     // Combat log title positioned within bounds
-    const logTitle = this.add.text(10, 10, 'Log', {
+    const logTitle = this.add.text(10, 10, 'Combat Log', {
       fontSize: '14px',
       color: '#4a90e2',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
     });
     logTitle.setOrigin(0, 0);
+    logTitle.setName('logTitle');
     this.combatLogContainer.add(logTitle);
+
+    // Expand/collapse button
+    this.createLogExpandButton();
 
     // Add initial message
     this.addCombatLogEntry('Battle begins!', '#4a90e2');
 
-    // Turn indicator (top right)
+    // Turn indicator (top right) - with text shadow for visibility
     const turnText = this.add.text(this.scale.width - 20, 20, `Turn ${this.currentTurn}`, {
-      fontSize: '18px',
+      fontSize: '20px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 4,
     });
     turnText.setOrigin(1, 0);
+    turnText.setDepth(1000);
     this.hudContainer.add(turnText);
 
-    // Phase indicator (top left)
+    // Phase indicator (top left) - with text shadow for visibility
     const phaseText = this.add.text(
       20,
       20,
       'Planning',
       {
-        fontSize: '20px',
+        fontSize: '22px',
         color: '#4a90e2',
         fontFamily: 'Arial, sans-serif',
         fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 4,
       }
     );
     phaseText.setOrigin(0, 0);
+    phaseText.setDepth(1000);
     this.hudContainer.add(phaseText);
 
     // Bottom left HUD with proper positioning and sizing
@@ -443,26 +501,152 @@ export class BattleScene extends Phaser.Scene {
     bottomLeftBg.setStrokeStyle(1, 0x4a90e2, 0.6);
     this.hudContainer.add(bottomLeftBg);
 
-    const hpText = this.add.text(statsX + 10, statsY + 15, 'HP: 100%', {
+    // Store references to stat text objects so we can update them
+    this.playerHpText = this.add.text(statsX + 10, statsY + 15, 'HP: 100%', {
       fontSize: '16px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
     });
-    this.hudContainer.add(hpText);
+    this.hudContainer.add(this.playerHpText);
 
-    const levelText = this.add.text(statsX + 10, statsY + 35, 'Level: 1', {
+    this.playerLevelText = this.add.text(statsX + 10, statsY + 35, 'Level: 1', {
       fontSize: '16px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
     });
-    this.hudContainer.add(levelText);
+    this.hudContainer.add(this.playerLevelText);
 
-    const apText = this.add.text(statsX + 10, statsY + 55, 'AP: 5', {
+    this.playerApText = this.add.text(statsX + 10, statsY + 55, 'AP: 5', {
       fontSize: '16px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
     });
-    this.hudContainer.add(apText);
+    this.hudContainer.add(this.playerApText);
+    
+    // Update with actual player stats
+    this.updatePlayerStatsDisplay();
+  }
+
+  private createBattleAreaBorder(): void {
+    const graphics = this.add.graphics();
+    graphics.setDepth(100); // On top of background but behind UI
+    
+    // Draw wireframe border around the play area
+    const borderColor = 0x4a90e2;
+    const borderAlpha = 0.5; // More visible to show battle boundaries
+    const borderThickness = 4;
+    
+    // Battle area dimensions (1280x600)
+    const battleWidth = 1280;
+    const battleHeight = 600;
+    const bottomMargin = 120; // Space for action buttons at bottom
+    
+    // Center the battle area on screen
+    const battleX = (this.scale.width - battleWidth) / 2;
+    const battleY = (this.scale.height - bottomMargin - battleHeight) / 2;
+    
+    graphics.lineStyle(borderThickness, borderColor, borderAlpha);
+    graphics.strokeRect(
+      battleX, 
+      battleY, 
+      battleWidth, 
+      battleHeight
+    );
+    
+    // Add corner markers for visual reference
+    const markerSize = 20;
+    const corners = [
+      { x: battleX, y: battleY }, // Top-left
+      { x: battleX + battleWidth, y: battleY }, // Top-right
+      { x: battleX, y: battleY + battleHeight }, // Bottom-left
+      { x: battleX + battleWidth, y: battleY + battleHeight }, // Bottom-right
+    ];
+    
+    graphics.lineStyle(4, borderColor, borderAlpha * 0.9);
+    corners.forEach((corner, index) => {
+      // Draw L-shaped corner markers
+      const isLeft = index === 0 || index === 2;
+      const isTop = index === 0 || index === 1;
+      
+      // Horizontal line
+      graphics.beginPath();
+      if (isLeft) {
+        graphics.moveTo(corner.x, corner.y);
+        graphics.lineTo(corner.x + markerSize, corner.y);
+      } else {
+        graphics.moveTo(corner.x - markerSize, corner.y);
+        graphics.lineTo(corner.x, corner.y);
+      }
+      graphics.strokePath();
+      
+      // Vertical line
+      graphics.beginPath();
+      if (isTop) {
+        graphics.moveTo(corner.x, corner.y);
+        graphics.lineTo(corner.x, corner.y + markerSize);
+      } else {
+        graphics.moveTo(corner.x, corner.y - markerSize);
+        graphics.lineTo(corner.x, corner.y);
+      }
+      graphics.strokePath();
+    });
+    
+    // Add center cross for reference
+    const centerX = battleX + battleWidth / 2;
+    const centerY = battleY + battleHeight / 2;
+    const crossSize = 25;
+    
+    graphics.lineStyle(2, borderColor, borderAlpha * 0.5);
+    // Horizontal line
+    graphics.beginPath();
+    graphics.moveTo(centerX - crossSize, centerY);
+    graphics.lineTo(centerX + crossSize, centerY);
+    graphics.strokePath();
+    
+    // Vertical line
+    graphics.beginPath();
+    graphics.moveTo(centerX, centerY - crossSize);
+    graphics.lineTo(centerX, centerY + crossSize);
+    graphics.strokePath();
+    
+    // Add subtle grid lines for spatial reference (more subtle with background)
+    graphics.lineStyle(1, borderColor, borderAlpha * 0.2);
+    
+    // Vertical grid lines (every 200px within battle area)
+    for (let i = 1; i * 200 < battleWidth; i++) {
+      const x = battleX + i * 200;
+      graphics.beginPath();
+      graphics.moveTo(x, battleY);
+      graphics.lineTo(x, battleY + battleHeight);
+      graphics.strokePath();
+    }
+    
+    // Horizontal grid lines (every 200px within battle area)
+    for (let i = 1; i * 200 < battleHeight; i++) {
+      const y = battleY + i * 200;
+      graphics.beginPath();
+      graphics.moveTo(battleX, y);
+      graphics.lineTo(battleX + battleWidth, y);
+      graphics.strokePath();
+    }
+    
+    // Add dimension labels
+    const labelStyle = {
+      fontSize: '14px',
+      color: '#4a90e2',
+      fontFamily: 'monospace',
+      backgroundColor: '#000000dd',
+      padding: { x: 8, y: 4 },
+    };
+    
+    const dimensionText = this.add.text(
+      centerX,
+      battleY + battleHeight - 30,
+      `Battle Area: ${battleWidth}x${battleHeight}px`,
+      labelStyle
+    );
+    dimensionText.setOrigin(0.5, 0);
+    dimensionText.setDepth(1001);
   }
 
   private createActionButtons(): void {
@@ -594,6 +778,7 @@ export class BattleScene extends Phaser.Scene {
     const currentAP = this.playerAP.get(this.userId!) || 0;
     if (!canAfford(currentAP, card.ap)) {
       console.log(`Cannot afford card ${cardId}: need ${card.ap} AP, have ${currentAP}`);
+      this.showPendingActionText(`❌ Not enough AP! Need ${card.ap}, have ${currentAP}`, '#e74c3c');
       return;
     }
 
@@ -605,9 +790,66 @@ export class BattleScene extends Phaser.Scene {
     if (requiresTarget(card)) {
       this.showTargetSelector(card.target);
     } else {
-      // No target needed, can lock immediately
-      this.showLockButton();
+      // No target needed, can play immediately
+      this.playSelectedCard(null);
     }
+  }
+
+  private playSelectedCard(targetId: ActorId | null): void {
+    if (!this.userId || !this.selectedCardId) return;
+
+    const card = getCardById(this.selectedCardId);
+    if (!card) return;
+
+    // Find current player actor
+    const playerActor = this.players.find(p => p.userId === this.userId);
+    if (!playerActor) {
+      console.error('Player actor not found');
+      return;
+    }
+
+    // Deduct AP
+    const currentAP = this.playerAP.get(this.userId) || 0;
+    const newAP = spendAP(currentAP, card.ap);
+    this.playerAP.set(this.userId, newAP);
+
+    // Queue the action
+    const action: ActionPlan = {
+      by: playerActor.id,
+      type: 'Card',
+      target: targetId || undefined,
+      cardId: this.selectedCardId,
+    };
+    this.queuedActions.push(action);
+
+    console.log(`Card ${card.name} played! AP: ${currentAP} -> ${newAP}`);
+    console.log(`Queued actions: ${this.queuedActions.length}`);
+
+    // Update hand UI
+    if (this.handUI) {
+      this.handUI.setAP(newAP);
+      this.handUI.clearSelection();
+    }
+
+    // Update player stats display
+    this.updatePlayerStatsDisplay();
+
+    // Update queued actions display
+    this.updateQueueDisplay();
+
+    // Show feedback
+    this.showPendingActionText(
+      `✓ ${card.name} queued! AP: ${newAP}/${currentAP + card.ap} | ${this.queuedActions.length} card(s) ready`,
+      '#27ae60'
+    );
+
+    // Clear selection
+    this.selectedCardId = null;
+    this.selectedAction = null;
+    this.selectedTarget = null;
+
+    // Show lock button to end turn
+    this.showLockButton();
   }
 
   private selectAction(actionType: ActionType): void {
@@ -672,11 +914,15 @@ export class BattleScene extends Phaser.Scene {
           this.selectedTarget = target.id;
           this.hideTargetSelector();
           
-          const actionText = this.selectedAction === 'Card' && this.selectedCardId 
-            ? getCardById(this.selectedCardId)?.name 
-            : this.selectedAction;
-          this.showPendingActionText(`${actionText} → ${target.name} - Ready to lock!`);
-          this.showLockButton();
+          // If playing a card, execute it immediately
+          if (this.selectedAction === 'Card' && this.selectedCardId) {
+            this.playSelectedCard(target.id);
+          } else {
+            // Old action system (Attack, Guard, Skill, Skip)
+            const actionText = this.selectedAction;
+            this.showPendingActionText(`${actionText} → ${target.name} - Ready to lock!`, '#27ae60');
+            this.showLockButton();
+          }
         });
       }
     });
@@ -699,8 +945,14 @@ export class BattleScene extends Phaser.Scene {
       this.hideTargetSelector();
       this.selectedAction = null;
       this.selectedTarget = null;
+      this.selectedCardId = null;
       this.hidePendingActionText();
       this.clearButtonHighlights();
+      
+      // Clear card selection in hand UI
+      if (this.handUI) {
+        this.handUI.clearSelection();
+      }
     });
   }
 
@@ -712,7 +964,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private async lockAction(): Promise<void> {
-    if (!this.lobbyId || !this.userId || !this.selectedAction) return;
+    if (!this.lobbyId || !this.userId) return;
 
     this.hideTargetSelector();
     this.hideLockButton();
@@ -721,78 +973,55 @@ export class BattleScene extends Phaser.Scene {
     const playerActor = this.players.find(p => p.userId === this.userId);
     if (!playerActor) {
       console.error('Player actor not found for userId:', this.userId);
-      console.error('Available players:', this.players);
-      console.error('Current userId:', this.userId);
       this.showPendingActionText(`❌ Player not found! Refresh and try again.`, '#e74c3c');
       return;
     }
 
-    // Validate playerActor has required fields
-    if (!playerActor.id) {
-      console.error('Player actor missing id field:', playerActor);
-      this.showPendingActionText(`❌ Player data corrupted! Refresh and try again.`, '#e74c3c');
-      return;
+    // Use queued actions if any cards were played, otherwise use old action system
+    const plansToSend: ActionPlan[] = [];
+
+    if (this.queuedActions.length > 0) {
+      // Send all queued actions
+      plansToSend.push(...this.queuedActions);
+      console.log(`Locking ${this.queuedActions.length} queued action(s):`, this.queuedActions);
+    } else if (this.selectedAction) {
+      // Old action system (Attack, Guard, Skill, Skip)
+      plansToSend.push({
+        by: playerActor.id,
+        type: this.selectedAction,
+        target: this.selectedTarget || undefined,
+        cardId: this.selectedCardId || undefined,
+      });
+    } else {
+      // No action selected - skip turn (preserve AP)
+      plansToSend.push({
+        by: playerActor.id,
+        type: 'Skip',
+      });
+      console.log('No action selected, skipping turn to preserve AP');
     }
 
-    // Handle card actions - validate AP and include cardId
-    if (this.selectedAction === 'Card') {
-      if (!this.selectedCardId) {
-        console.error('Card action selected but no cardId');
-        this.showPendingActionText(`❌ No card selected!`, '#e74c3c');
-        return;
-      }
-
-      const card = getCardById(this.selectedCardId);
-      if (!card) {
-        console.error('Card not found:', this.selectedCardId);
-        this.showPendingActionText(`❌ Card not found!`, '#e74c3c');
-        return;
-      }
-
-      const currentAP = this.playerAP.get(this.userId) || 0;
-      if (!canAfford(currentAP, card.ap)) {
-        console.error(`Cannot afford card: need ${card.ap} AP, have ${currentAP}`);
-        this.showPendingActionText(`❌ Not enough AP!`, '#e74c3c');
-        return;
-      }
-
-      // Deduct AP
-      const newAP = spendAP(currentAP, card.ap);
-      this.playerAP.set(this.userId, newAP);
-      
-      // Update hand UI
-      if (this.handUI) {
-        this.handUI.setAP(newAP);
-        this.handUI.clearSelection();
-      }
-
-      console.log(`AP spent: ${currentAP} -> ${newAP} (cost: ${card.ap})`);
-    }
-
-    const plan: ActionPlan = {
-      by: playerActor.id,
-      type: this.selectedAction,
-      target: this.selectedTarget || undefined,
-      cardId: this.selectedCardId || undefined,
-    };
-
-    console.log('Created action plan:', plan);
+    console.log('Created action plans:', plansToSend);
     console.log('Player actor used:', playerActor);
 
     // Show loading state
-    this.showPendingActionText(`🔄 Locking ${this.selectedAction}...`, '#f39c12');
+    const actionCount = this.queuedActions.length > 0 ? `${this.queuedActions.length} action(s)` : (this.selectedAction || 'turn');
+    this.showPendingActionText(`🔄 Locking ${actionCount}...`, '#f39c12');
 
     try {
-      console.log(`Locking action:`, plan);
+      console.log(`Locking actions:`, plansToSend);
       console.log(`Sending to lobby: ${this.lobbyId}, turn: ${this.currentTurn}`);
       console.log(`Player actor:`, playerActor);
       
-      await sendPlan(this.lobbyId, plan, this.currentTurn);
+      // Send all plans
+      for (const plan of plansToSend) {
+        await sendPlan(this.lobbyId, plan, this.currentTurn);
+      }
       
-      console.log('Action plan sent successfully!');
+      console.log('All action plans sent successfully!');
       
-      // Update local state
-      this.playerPlans.set(playerActor.id, plan);
+      // Update local state - store all plans for this player
+      this.playerPlans.set(playerActor.id, plansToSend);
       this.isLocked = true;
       
       // Clear pending action
@@ -800,7 +1029,10 @@ export class BattleScene extends Phaser.Scene {
       this.clearButtonHighlights();
       
       // Show locked confirmation
-      this.showPendingActionText(`✓ ${this.selectedAction} locked! Waiting for others...`, '#27ae60');
+      const lockMessage = this.queuedActions.length > 0 
+        ? `✓ ${this.queuedActions.length} card(s) locked! Waiting for others...`
+        : `✓ ${this.selectedAction} locked! Waiting for others...`;
+      this.showPendingActionText(lockMessage, '#27ae60');
       
       // Update action indicators
       this.updateActionIndicators();
@@ -825,18 +1057,19 @@ export class BattleScene extends Phaser.Scene {
         lobbyId: this.lobbyId,
         userId: this.userId,
         currentTurn: this.currentTurn,
-        plan,
+        plansToSend,
         playerActor,
-        error: error.message || error
+        error: (error as any).message || error
       });
       
       // Show more specific error message
       let errorMsg = '❌ Failed to lock action! Try again.';
-      if (error.message?.includes('Not authenticated')) {
+      const errorMessage = (error as any).message || '';
+      if (errorMessage.includes('Not authenticated')) {
         errorMsg = '❌ Authentication error! Refresh and try again.';
-      } else if (error.message?.includes('network')) {
+      } else if (errorMessage.includes('network')) {
         errorMsg = '❌ Network error! Check connection.';
-      } else if (error.message?.includes('Player not found')) {
+      } else if (errorMessage.includes('Player not found')) {
         errorMsg = '❌ Player not found! Refresh and try again.';
       }
       
@@ -865,16 +1098,22 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    // Update local state
-    this.playerPlans.set(plan.by, plan);
+    // Update local state - accumulate multiple plans per player
+    const existingPlans = this.playerPlans.get(plan.by) || [];
+    existingPlans.push(plan);
+    this.playerPlans.set(plan.by, existingPlans);
     this.updateActionIndicators();
 
     console.log('Updated player plans:', Array.from(this.playerPlans.entries()));
 
-    // Show notification that other player locked in
+    // Show notification that other player locked in (only once per player)
     const player = this.players.find(p => p.id === plan.by);
-    if (player) {
-      this.showPlayerLockedNotification(player.name, plan.type);
+    const playerPlans = this.playerPlans.get(plan.by) || [];
+    
+    // Only show notification for the first action from this player
+    if (player && playerPlans.length === 1) {
+      const actionCount = playerPlans.length;
+      this.showPlayerLockedNotification(player.name, plan.type, actionCount);
     }
 
     // Check if all players have committed (host only)
@@ -913,8 +1152,11 @@ export class BattleScene extends Phaser.Scene {
       await sendCommit(this.lobbyId, this.currentTurn);
       console.log('Commit message sent successfully');
       
-      // Resolve turn
-      const partyPlans = Array.from(this.playerPlans.values());
+      // Resolve turn - flatten all plans into a single array
+      const partyPlans: ActionPlan[] = [];
+      this.playerPlans.forEach(plans => {
+        partyPlans.push(...plans);
+      });
       console.log('Resolving turn with plans:', partyPlans);
       
       const payload = resolveTurn(this.combatState, partyPlans, this.lobbyId);
@@ -954,19 +1196,10 @@ export class BattleScene extends Phaser.Scene {
     // Store the post-turn state to apply after animations
     this.pendingPostState = payload.post;
     
-    // Check for combat end using pending post state
-    const result = this.pendingPostState ? isCombatOver({ 
-      ...this.combatState, 
-      party: this.pendingPostState.filter(a => a.side === 'party'),
-      enemies: this.pendingPostState.filter(a => a.side === 'enemy')
-    }) : null;
-    if (result) {
-      console.log(`Combat ended: ${result}`);
-      this.endCombat(result);
-      return;
-    }
+    // DON'T check for combat end here - wait until animations complete
+    // This allows death animations to play out fully
     
-    // Start next turn
+    // Start next turn (will be used if combat doesn't end)
     this.currentTurn = payload.turn + 1;
     this.combatState.turn = this.currentTurn;
     console.log(`Starting turn ${this.currentTurn}`);
@@ -1013,6 +1246,17 @@ export class BattleScene extends Phaser.Scene {
       },
       onStrike: (srcId, dstId, note) => {
         console.log(`Animation: Strike from ${srcId} to ${dstId} (${note})`);
+        // Play sound based on the action note
+        // Only play card sounds for actual card names (not animation types like "slash")
+        if (note && this.soundManager) {
+          const validCardNames = ['Strike', 'Nova', 'Bash'];
+          if (validCardNames.includes(note)) {
+            console.log(`Playing card sound for: ${note}`);
+            this.soundManager.playCardSound(note);
+          } else {
+            console.log(`Skipping sound for non-card note: ${note}`);
+          }
+        }
         this.playStrike(srcId, dstId, note);
       },
       onHit: (srcId, dstId, damage) => {
@@ -1021,6 +1265,10 @@ export class BattleScene extends Phaser.Scene {
         const srcName = this.getActorName(srcId);
         const dstName = this.getActorName(dstId);
         this.addCombatLogEntry(`${srcName} hits ${dstName} for ${damage} damage!`, '#e74c3c');
+        
+        // Don't play sound here - it's already played in onStrike callback
+        // This prevents double-playing the Strike sound
+        
         this.playHit(srcId, dstId, damage);
         
         // Apply damage immediately so health drops are visible during animations
@@ -1033,6 +1281,12 @@ export class BattleScene extends Phaser.Scene {
         console.log(`Animation: Guard from ${srcId} with value ${value}`);
         const srcName = this.getActorName(srcId);
         this.addCombatLogEntry(`${srcName} guards (-${value} damage)`, '#3498db');
+        
+        // Play guard sound
+        if (this.soundManager) {
+          this.soundManager.playCardSound('Guard');
+        }
+        
         this.playGuard(srcId, value);
       },
       onHeal: (srcId, dstId, value) => {
@@ -1044,6 +1298,12 @@ export class BattleScene extends Phaser.Scene {
         } else {
           this.addCombatLogEntry(`${srcName} heals ${dstName} for ${value} HP!`, '#27ae60');
         }
+        
+        // Play heal sound
+        if (this.soundManager) {
+          this.soundManager.playCardSound('Mend');
+        }
+        
         this.playHeal(srcId, dstId, value);
         
         // Apply healing immediately so health increases are visible during animations
@@ -1051,8 +1311,33 @@ export class BattleScene extends Phaser.Scene {
         this.applyHealingToActor(dstId, value);
       },
       onVfx: (srcId, dstId, note) => {
+        console.log(`=== VFX CALLBACK ===`);
         console.log(`Animation: VFX from ${srcId} to ${dstId} (${note})`);
+        console.log(`Sound manager exists: ${!!this.soundManager}`);
+        
+        // Add combat log entries for status effects
+        if (note === 'vulnerable' && dstId) {
+          const srcName = this.getActorName(srcId);
+          const dstName = this.getActorName(dstId);
+          this.addCombatLogEntry(`${srcName} weakens ${dstName}! (+2 dmg taken)`, '#9b59b6');
+        }
+        
+        // Play sound effects for special VFX
+        if (note && this.soundManager) {
+          console.log(`VFX note detected: "${note}"`);
+          if (note === 'vulnerable') {
+            console.log('✓ Matched "vulnerable" - Playing Weaken sound...');
+            this.soundManager.playCardSound('Weaken');
+          } else if (note === 'stun') {
+            console.log('✓ Matched "stun" - Playing Bash sound...');
+            this.soundManager.playCardSound('Bash');
+          } else {
+            console.log(`No sound mapping for VFX note: "${note}"`);
+          }
+        }
+        
         this.playVfx(srcId, dstId, note);
+        console.log(`=== END VFX CALLBACK ===`);
       },
     };
 
@@ -1135,20 +1420,54 @@ export class BattleScene extends Phaser.Scene {
   private playGuard(srcId: ActorId, value: number): void {
     const srcSlot = this.getActorSlot(srcId);
     if (srcSlot) {
-      // Shield effect
+      // Shield icon - more prominent and lasts longer
       const shield = this.add.graphics();
-      shield.lineStyle(3, 0x3498db, 0.8);
+      shield.lineStyle(4, 0x3498db, 1.0);
+      shield.fillStyle(0x3498db, 0.3);
+      
+      // Draw a shield shape
       shield.beginPath();
-      shield.arc(srcSlot.x, srcSlot.y, 30, 0, Math.PI * 2);
+      shield.arc(srcSlot.x, srcSlot.y, 40, 0, Math.PI * 2);
       shield.strokePath();
-      srcSlot.add(shield);
+      shield.fillPath();
+      
+      // Shield value text (shows how much damage is blocked)
+      const shieldText = this.add.text(
+        srcSlot.x,
+        srcSlot.y,
+        `🛡️ ${value}`,
+        {
+          fontSize: '24px',
+          color: '#3498db',
+          fontFamily: 'Arial, sans-serif',
+          fontStyle: 'bold',
+        }
+      );
+      shieldText.setOrigin(0.5);
+      shieldText.setDepth(100);
 
+      // Pulse effect for shield
       this.tweens.add({
         targets: shield,
+        scaleX: 1.2,
+        scaleY: 1.2,
+        duration: 300,
+        yoyo: true,
+        repeat: 2,
+        ease: 'Sine.easeInOut',
+      });
+
+      // Fade out after showing for a while
+      this.tweens.add({
+        targets: [shield, shieldText],
         alpha: 0,
-        duration: 500,
+        duration: 800,
+        delay: 1200, // Stay visible longer
         ease: 'Power2',
-        onComplete: () => shield.destroy(),
+        onComplete: () => {
+          shield.destroy();
+          shieldText.destroy();
+        },
       });
     }
   }
@@ -1192,8 +1511,63 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private playVfx(srcId: ActorId, dstId?: ActorId, note?: string): void {
-    // Generic VFX - could be expanded based on note
     console.log(`VFX: ${note} from ${srcId} to ${dstId}`);
+    
+    // Add visual effects for specific VFX types
+    if (note === 'vulnerable' && dstId) {
+      const dstSlot = this.getActorSlot(dstId);
+      if (dstSlot) {
+        // Vulnerable debuff visual - purple swirl
+        const debuff = this.add.graphics();
+        debuff.lineStyle(3, 0x9b59b6, 0.9);
+        
+        // Draw a downward arrow or broken shield
+        debuff.beginPath();
+        debuff.arc(dstSlot.x, dstSlot.y, 35, 0, Math.PI * 2);
+        debuff.strokePath();
+        
+        // Vulnerable icon
+        const vulnText = this.add.text(
+          dstSlot.x,
+          dstSlot.y - 50,
+          '⚠️ VULNERABLE',
+          {
+            fontSize: '16px',
+            color: '#9b59b6',
+            fontFamily: 'Arial, sans-serif',
+            fontStyle: 'bold',
+            backgroundColor: '#000000',
+            padding: { x: 5, y: 3 },
+          }
+        );
+        vulnText.setOrigin(0.5);
+        vulnText.setDepth(100);
+        
+        // Pulse effect
+        this.tweens.add({
+          targets: debuff,
+          scaleX: 1.3,
+          scaleY: 1.3,
+          duration: 400,
+          yoyo: true,
+          repeat: 2,
+          ease: 'Sine.easeInOut',
+        });
+        
+        // Fade out
+        this.tweens.add({
+          targets: [debuff, vulnText],
+          alpha: 0,
+          duration: 1000,
+          delay: 1500,
+          ease: 'Power2',
+          onComplete: () => {
+            debuff.destroy();
+            vulnText.destroy();
+          },
+        });
+      }
+    }
   }
 
   private getActorSlot(actorId: ActorId): Phaser.GameObjects.Container | null {
@@ -1235,12 +1609,17 @@ export class BattleScene extends Phaser.Scene {
         return;
       }
 
-      const plan = this.playerPlans.get(player.id);
+      const plans = this.playerPlans.get(player.id);
       const wasLocked = lockIndicator.text === '✓';
       
-      if (plan) {
-        const icons = { Attack: '⚔️', Guard: '🛡️', Skill: '✨', Skip: '⏱️' };
-        actionIndicator.setText(icons[plan.type] || '');
+      if (plans && plans.length > 0) {
+        const icons = { Attack: '⚔️', Guard: '🛡️', Skill: '✨', Skip: '⏱️', Card: '🃏' };
+        // Show first action icon + count if multiple
+        const firstPlan = plans[0];
+        const iconText = plans.length > 1 
+          ? `${icons[firstPlan.type] || '🃏'}×${plans.length}`
+          : (icons[firstPlan.type] || '🃏');
+        actionIndicator.setText(iconText);
         lockIndicator.setText('✓');
         
         // Add glow effect when newly locked
@@ -1272,13 +1651,13 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private updateUI(): void {
-    // Update phase text
-    const phaseText = this.hudContainer.getAt(2) as Phaser.GameObjects.Text;
-    phaseText.setText(this.phase);
-    
-    // Update turn text
-    const turnText = this.hudContainer.getAt(1) as Phaser.GameObjects.Text;
+    // Update turn text (index 0 in hudContainer after removing background)
+    const turnText = this.hudContainer.getAt(0) as Phaser.GameObjects.Text;
     turnText.setText(`Turn ${this.currentTurn}`);
+    
+    // Update phase text (index 1 in hudContainer after removing background)
+    const phaseText = this.hudContainer.getAt(1) as Phaser.GameObjects.Text;
+    phaseText.setText(this.phase);
 
     // Update phase color
     let phaseColor = '#4a90e2'; // planning
@@ -1288,6 +1667,55 @@ export class BattleScene extends Phaser.Scene {
 
     // Update HP bars
     this.updateHPBars();
+    
+    // Update player stats display
+    this.updatePlayerStatsDisplay();
+  }
+
+  /**
+   * Updates the player stats display in the bottom left corner
+   */
+  private updatePlayerStatsDisplay(): void {
+    if (!this.userId) return;
+
+    // Find the current player's actor
+    const playerActor = this.players.find(p => p.userId === this.userId);
+    if (!playerActor) return;
+
+    // Update HP
+    if (this.playerHpText) {
+      const hpPercent = Math.floor((playerActor.hp / playerActor.maxHp) * 100);
+      this.playerHpText.setText(`HP: ${playerActor.hp}/${playerActor.maxHp} (${hpPercent}%)`);
+      
+      // Color code based on HP
+      if (hpPercent > 60) {
+        this.playerHpText.setColor('#27ae60'); // Green
+      } else if (hpPercent > 30) {
+        this.playerHpText.setColor('#f39c12'); // Orange
+      } else {
+        this.playerHpText.setColor('#e74c3c'); // Red
+      }
+    }
+
+    // Update Level (for now we'll assume level 1, but this could be dynamic later)
+    if (this.playerLevelText) {
+      this.playerLevelText.setText('Level: 1');
+    }
+
+    // Update AP
+    if (this.playerApText) {
+      const currentAP = this.playerAP.get(playerActor.id) || 0;
+      this.playerApText.setText(`AP: ${currentAP}`);
+      
+      // Color code based on AP
+      if (currentAP >= 10) {
+        this.playerApText.setColor('#27ae60'); // Green - lots of AP
+      } else if (currentAP >= 5) {
+        this.playerApText.setColor('#f39c12'); // Orange - moderate AP
+      } else {
+        this.playerApText.setColor('#e74c3c'); // Red - low AP
+      }
+    }
   }
 
   private updateHPBars(): void {
@@ -1455,6 +1883,9 @@ export class BattleScene extends Phaser.Scene {
       
       // Update health bar immediately
       this.updateTargetHealthBar(targetId);
+      
+      // Update player stats display if this is the current player
+      this.updatePlayerStatsDisplay();
       return;
     }
 
@@ -1473,6 +1904,9 @@ export class BattleScene extends Phaser.Scene {
       
       // Update health bar immediately
       this.updateTargetHealthBar(targetId);
+      
+      // Update player stats display in case this affected the current player
+      this.updatePlayerStatsDisplay();
     } else {
       console.warn(`No actor found with ID: ${targetId}`);
     }
@@ -1497,6 +1931,9 @@ export class BattleScene extends Phaser.Scene {
       
       // Update health bar immediately
       this.updateTargetHealthBar(targetId);
+      
+      // Update player stats display if this is the current player
+      this.updatePlayerStatsDisplay();
       return;
     }
 
@@ -1514,6 +1951,9 @@ export class BattleScene extends Phaser.Scene {
       
       // Update health bar immediately
       this.updateTargetHealthBar(targetId);
+      
+      // Update player stats display in case this affected the current player
+      this.updatePlayerStatsDisplay();
     }
   }
 
@@ -1591,24 +2031,49 @@ export class BattleScene extends Phaser.Scene {
   private startPlanningPhase(): void {
     this.phase = 'planning';
     this.playerPlans.clear();
+    this.queuedActions = []; // Clear queued actions for new turn
     this.isLocked = false;
     this.selectedAction = null;
     this.selectedTarget = null;
     this.selectedCardId = null;
     
-    // Refresh AP for all players at start of round
-    this.players.forEach(player => {
-      const currentAP = this.playerAP.get(player.id) || 0;
-      const newAP = refreshAP(currentAP);
-      this.playerAP.set(player.id, newAP);
-      console.log(`Refreshed AP for ${player.name}: ${currentAP} -> ${newAP}`);
-    });
+    // Clear queue display
+    if (this.queueDisplay) {
+      this.queueDisplay.destroy();
+      this.queueDisplay = null;
+    }
+    
+    // Refresh AP for all players at start of round (but not on turn 1)
+    // Turn 1: Players start with their initial 5 AP
+    // Turn 2+: Players gain +5 AP per round
+    if (this.currentTurn > 1) {
+      this.players.forEach(player => {
+        const currentAP = this.playerAP.get(player.id) || 0;
+        const newAP = refreshAP(currentAP);
+        const apGained = newAP - currentAP;
+        this.playerAP.set(player.id, newAP);
+        console.log(`Refreshed AP for ${player.name}: ${currentAP} -> ${newAP} (+${apGained})`);
+        
+        // Show AP gain notification for current player
+        if (player.userId === this.userId && apGained > 0) {
+          this.showAPGainNotification(apGained, newAP);
+        }
+      });
+    } else {
+      console.log('Turn 1: Players start with initial AP (no refresh)');
+    }
     
     // Update hand UI with new AP
     if (this.handUI && this.userId) {
-      const myAP = this.playerAP.get(this.userId) || 0;
-      this.handUI.setAP(myAP);
+      const playerActor = this.players.find(p => p.userId === this.userId);
+      if (playerActor) {
+        const myAP = this.playerAP.get(playerActor.id) || 0;
+        this.handUI.setAP(myAP);
+      }
     }
+    
+    // Update player stats display
+    this.updatePlayerStatsDisplay();
     
     // Clear UI
     this.hideLockButton();
@@ -1625,8 +2090,52 @@ export class BattleScene extends Phaser.Scene {
     // Add planning phase log entry
     this.addCombatLogEntry(`--- Turn ${this.currentTurn} ---`, '#4a90e2');
     
+    // Show skip turn button so players can save AP
+    this.showSkipTurnButton();
+    
     // No auto-timer - fully turn-based
     // Players must explicitly lock their actions
+  }
+
+  private showSkipTurnButton(): void {
+    // Skip button (bottom right corner)
+    const skipButton = this.add.container(this.scale.width - 120, this.scale.height - 150);
+    skipButton.setDepth(100);
+
+    const bg = this.add.rectangle(0, 0, 200, 45, 0x95a5a6, 0.9);
+    bg.setStrokeStyle(2, 0xffffff, 0.7);
+    bg.setInteractive({ useHandCursor: true });
+    skipButton.add(bg);
+
+    const currentAP = this.userId ? (this.playerAP.get(this.players.find(p => p.userId === this.userId)?.id || '') || 0) : 0;
+    const text = this.add.text(0, 0, `⏩ Skip (Save ${currentAP} AP)`, {
+      fontSize: '14px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    text.setOrigin(0.5);
+    skipButton.add(text);
+
+    bg.on('pointerover', () => {
+      bg.setFillStyle(0xa0b0b6, 0.9);
+    });
+
+    bg.on('pointerout', () => {
+      bg.setFillStyle(0x95a5a6, 0.9);
+    });
+
+    bg.on('pointerdown', () => {
+      // Don't deduct any AP - just skip turn
+      this.showPendingActionText(`⏩ Skipping turn - Saving AP for next round!`, '#95a5a6');
+      this.time.delayedCall(500, () => {
+        this.lockAction();
+      });
+      skipButton.destroy();
+    });
+
+    // Store reference for cleanup
+    skipButton.setData('skipButton', true);
   }
 
   private endCombat(result: 'victory' | 'defeat'): void {
@@ -1663,18 +2172,150 @@ export class BattleScene extends Phaser.Scene {
   }
 
   // UI Helper Methods
+  private updateQueueDisplay(): void {
+    // Remove old queue display
+    if (this.queueDisplay) {
+      this.queueDisplay.destroy();
+      this.queueDisplay = null;
+    }
+
+    if (this.queuedActions.length === 0) return;
+
+    // Create queue display above lock button
+    const centerX = this.scale.width / 2;
+    const y = this.scale.height - 230;
+
+    this.queueDisplay = this.add.container(centerX, y);
+    this.queueDisplay.setDepth(900);
+
+    // Background
+    const width = Math.min(600, this.queuedActions.length * 80 + 40);
+    const bg = this.add.rectangle(0, 0, width, 60, 0x2c3e50, 0.95);
+    bg.setStrokeStyle(2, 0x4a90e2, 0.8);
+    this.queueDisplay.add(bg);
+
+    // Title
+    const title = this.add.text(-width / 2 + 10, -20, 'Queued Cards (click to remove):', {
+      fontSize: '12px',
+      color: '#aaaaaa',
+      fontFamily: 'Arial, sans-serif',
+    });
+    title.setOrigin(0, 0.5);
+    this.queueDisplay.add(title);
+
+    // Show queued cards
+    const cardSpacing = 70;
+    const startX = -((this.queuedActions.length - 1) * cardSpacing) / 2;
+
+    this.queuedActions.forEach((action, index) => {
+      const card = getCardById(action.cardId || '');
+      if (!card) return;
+
+      const x = startX + index * cardSpacing;
+      const cardContainer = this.add.container(x, 10);
+
+      // Card mini icon
+      const cardBg = this.add.rectangle(0, 0, 60, 35, 0x3a4a5a, 1);
+      cardBg.setStrokeStyle(2, 0x5a90e2, 0.9);
+      cardBg.setInteractive({ useHandCursor: true });
+      cardContainer.add(cardBg);
+
+      const cardName = this.add.text(0, -8, card.name, {
+        fontSize: '11px',
+        color: '#ffffff',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+      });
+      cardName.setOrigin(0.5);
+      cardContainer.add(cardName);
+
+      const cardAP = this.add.text(0, 5, `${card.ap} AP`, {
+        fontSize: '9px',
+        color: '#ffaa00',
+        fontFamily: 'Arial, sans-serif',
+      });
+      cardAP.setOrigin(0.5);
+      cardContainer.add(cardAP);
+
+      // Hover effects
+      cardBg.on('pointerover', () => {
+        cardBg.setFillStyle(0xe74c3c, 1);
+        cardName.setText('✖ Remove');
+      });
+      cardBg.on('pointerout', () => {
+        cardBg.setFillStyle(0x3a4a5a, 1);
+        cardName.setText(card.name);
+      });
+
+      // Click to remove from queue
+      cardBg.on('pointerdown', () => {
+        this.removeFromQueue(index);
+      });
+
+      this.queueDisplay!.add(cardContainer);
+    });
+  }
+
+  private removeFromQueue(index: number): void {
+    if (index < 0 || index >= this.queuedActions.length || !this.userId) return;
+
+    const action = this.queuedActions[index];
+    const card = getCardById(action.cardId || '');
+    if (!card) return;
+
+    // Refund the AP
+    const playerActor = this.players.find(p => p.userId === this.userId);
+    if (!playerActor) return;
+
+    const currentAP = this.playerAP.get(playerActor.id) || 0;
+    const refundedAP = Math.min(30, currentAP + card.ap); // Respect AP cap
+    this.playerAP.set(playerActor.id, refundedAP);
+
+    // Remove from queue
+    this.queuedActions.splice(index, 1);
+
+    console.log(`Removed ${card.name} from queue. AP refunded: ${card.ap}. New AP: ${refundedAP}`);
+
+    // Update UI
+    if (this.handUI) {
+      this.handUI.setAP(refundedAP);
+    }
+    this.updatePlayerStatsDisplay();
+    this.updateQueueDisplay();
+
+    // Show feedback
+    this.showPendingActionText(
+      `🔄 ${card.name} removed! AP refunded: ${refundedAP}`,
+      '#f39c12'
+    );
+
+    // Hide lock button if no cards queued
+    if (this.queuedActions.length === 0) {
+      this.hideLockButton();
+      this.hidePendingActionText();
+    }
+  }
+
   private showLockButton(): void {
     this.hideLockButton();
 
     this.lockButton = this.add.container(this.scale.width / 2, this.scale.height - 150);
 
-    const bg = this.add.rectangle(0, 0, 180, 50, 0x27ae60, 1);
+    // Show different text based on whether cards were played
+    const buttonText = this.queuedActions.length > 0 
+      ? `🔒 END TURN (${this.queuedActions.length} card${this.queuedActions.length > 1 ? 's' : ''})`
+      : '🔒 END TURN';
+    
+    // Calculate button width based on text
+    const buttonWidth = Math.max(180, buttonText.length * 10);
+    
+    const bg = this.add.rectangle(0, 0, buttonWidth, 50, 0x27ae60, 1);
     bg.setStrokeStyle(3, 0xffffff, 0.9);
     bg.setInteractive({ useHandCursor: true });
     this.lockButton.add(bg);
-
-    const text = this.add.text(0, 0, '🔒 LOCK TURN', {
-      fontSize: '20px',
+    
+    const text = this.add.text(0, 0, buttonText, {
+      fontSize: '18px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
@@ -1804,7 +2445,7 @@ export class BattleScene extends Phaser.Scene {
         this.timeline.update();
         
         if (!this.timeline.isActive()) {
-          console.log('Timeline complete, starting next planning phase');
+          console.log('Timeline complete - checking for combat end');
           
           // Verify synchronization with pendingPostState (damage was already applied during animations)
           if (this.pendingPostState) {
@@ -1831,6 +2472,25 @@ export class BattleScene extends Phaser.Scene {
               this.updateHPBars();
             } else {
               console.log('✓ Combat state is synchronized correctly!');
+            }
+            
+            // NOW check for combat end AFTER all animations have played
+            const result = isCombatOver({ 
+              ...this.combatState, 
+              party: this.pendingPostState.filter(a => a.side === 'party'),
+              enemies: this.pendingPostState.filter(a => a.side === 'enemy')
+            });
+            
+            if (result) {
+              console.log(`Combat ended after animations: ${result}`);
+              this.pendingPostState = null;
+              this.timeline = null;
+              
+              // Add a brief delay before showing victory/defeat to let final animations settle
+              this.time.delayedCall(500, () => {
+                this.endCombat(result);
+              });
+              return;
             }
             
             this.pendingPostState = null;
@@ -1979,21 +2639,12 @@ export class BattleScene extends Phaser.Scene {
    * Handles window resize events to maintain proper UI positioning
    */
   private handleResize(): void {
-    // Update HUD background size
-    if (this.hudContainer) {
-      const topBg = this.hudContainer.list.find(obj => obj instanceof Phaser.GameObjects.Rectangle) as Phaser.GameObjects.Rectangle;
-      if (topBg) {
-        topBg.setSize(this.scale.width, 60);
-        topBg.setPosition(this.scale.width / 2, 30);
-      }
-    }
-
-    // Reposition combat log if it would be clipped
+    // Reposition combat log in bottom right corner
     if (this.combatLogContainer) {
-      const logWidth = 250;
-      const logHeight = 150;
-      const logX = Math.min(10, this.scale.width - logWidth - 10);
-      const logY = 80;
+      const logWidth = 220;
+      const logHeight = this.isLogExpanded ? 300 : 80;
+      const logX = this.scale.width - logWidth - 10;
+      const logY = this.scale.height - logHeight - 10;
       this.combatLogContainer.setPosition(logX, logY);
     }
 
@@ -2027,26 +2678,134 @@ export class BattleScene extends Phaser.Scene {
       }
 
       // Update stats text positions
-      const statsTexts = this.hudContainer.list.filter(obj => 
-        obj instanceof Phaser.GameObjects.Text && 
-        obj.text.includes('HP:') || obj.text.includes('Level:') || obj.text.includes('AP:')
-      ) as Phaser.GameObjects.Text[];
-
-      statsTexts.forEach((text, index) => {
-        text.setPosition(statsX + 10, statsY + 15 + index * 20);
-      });
+      if (this.playerHpText) {
+        this.playerHpText.setPosition(statsX + 10, statsY + 15);
+      }
+      if (this.playerLevelText) {
+        this.playerLevelText.setPosition(statsX + 10, statsY + 35);
+      }
+      if (this.playerApText) {
+        this.playerApText.setPosition(statsX + 10, statsY + 55);
+      }
     }
+  }
+
+  private createLogExpandButton(): void {
+    if (!this.combatLogContainer) return;
+
+    const buttonSize = 20;
+    const buttonX = 200; // Right side of log
+    const buttonY = 10; // Top of log
+
+    this.logExpandButton = this.add.container(buttonX, buttonY);
+    this.logExpandButton.setDepth(10);
+
+    // Button background
+    const bg = this.add.rectangle(0, 0, buttonSize, buttonSize, 0x4a90e2, 0.8);
+    bg.setStrokeStyle(1, 0xffffff, 0.5);
+    bg.setInteractive({ useHandCursor: true });
+    bg.setName('bg');
+    this.logExpandButton.add(bg);
+
+    // Arrow icon (down/up)
+    const arrow = this.add.text(0, 0, '▼', {
+      fontSize: '12px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+    });
+    arrow.setOrigin(0.5);
+    arrow.setName('arrow');
+    this.logExpandButton.add(arrow);
+
+    // Hover effect
+    bg.on('pointerover', () => {
+      bg.setFillStyle(0x5aa0f2, 1);
+    });
+    bg.on('pointerout', () => {
+      bg.setFillStyle(0x4a90e2, 0.8);
+    });
+
+    // Click to toggle
+    bg.on('pointerdown', () => {
+      this.toggleLogExpand();
+    });
+
+    this.combatLogContainer.add(this.logExpandButton);
+  }
+
+  private toggleLogExpand(): void {
+    this.isLogExpanded = !this.isLogExpanded;
+
+    const logWidth = 220;
+    const logHeight = this.isLogExpanded ? 300 : 80; // Expanded height
+    const logX = this.scale.width - logWidth - 10;
+    const logY = this.scale.height - logHeight - 10;
+
+    if (!this.combatLogContainer) return;
+
+    // Update background size
+    const logBg = this.combatLogContainer.getByName('logBg') as Phaser.GameObjects.Rectangle;
+    if (logBg) {
+      logBg.setSize(logWidth, logHeight);
+      logBg.setPosition(logWidth / 2, logHeight / 2);
+    }
+
+    // Update container position
+    this.combatLogContainer.setPosition(logX, logY);
+
+    // Update arrow icon
+    if (this.logExpandButton) {
+      const arrow = this.logExpandButton.getByName('arrow') as Phaser.GameObjects.Text;
+      if (arrow) {
+        arrow.setText(this.isLogExpanded ? '▲' : '▼');
+      }
+    }
+
+    // Refresh log entries to fit new size
+    this.refreshLogEntries();
+  }
+
+  private refreshLogEntries(): void {
+    if (!this.combatLogContainer) return;
+
+    const startY = 28;
+    const lineHeight = this.isLogExpanded ? 20 : 14; // More spacing when expanded
+    const maxEntries = this.isLogExpanded ? this.MAX_LOG_ENTRIES_EXPANDED : this.MAX_LOG_ENTRIES;
+
+    // Show only the last N entries based on expanded state
+    const entriesToShow = this.combatLogEntries.slice(-maxEntries);
+
+    // Remove all entries from container
+    this.combatLogEntries.forEach(entry => {
+      if (this.combatLogContainer!.list.includes(entry)) {
+        this.combatLogContainer!.remove(entry, false);
+      }
+    });
+
+    // Re-add and position visible entries
+    entriesToShow.forEach((entry, index) => {
+      const targetY = startY + (index * lineHeight);
+      entry.setY(targetY);
+      
+      if (!this.combatLogContainer!.list.includes(entry)) {
+        this.combatLogContainer!.add(entry);
+      }
+
+      // Fade out older entries
+      const alpha = 1 - (entriesToShow.length - 1 - index) * 0.15;
+      entry.setAlpha(Math.max(0.4, alpha));
+    });
   }
 
   private addCombatLogEntry(message: string, color: string = '#ffffff'): void {
     if (!this.combatLogContainer) return;
 
-    // Create new log entry with proper positioning
+    // Create new log entry with proper positioning and word wrap
     const entry = this.add.text(10, 0, `• ${message}`, {
-      fontSize: '11px',
+      fontSize: '10px',
       color,
       fontFamily: 'Arial, sans-serif',
-      wordWrap: { width: 220 },
+      wordWrap: { width: 195 }, // Fit within 220px box with margins
       align: 'left',
     });
     entry.setOrigin(0, 0);
@@ -2054,37 +2813,16 @@ export class BattleScene extends Phaser.Scene {
     // Add to entries array
     this.combatLogEntries.push(entry);
 
-    // Remove oldest entry if we exceed max
-    if (this.combatLogEntries.length > this.MAX_LOG_ENTRIES) {
+    // Remove oldest entry if we exceed max for expanded view
+    if (this.combatLogEntries.length > this.MAX_LOG_ENTRIES_EXPANDED) {
       const oldest = this.combatLogEntries.shift();
       if (oldest) {
         oldest.destroy();
       }
     }
 
-    // Position all entries (newest at bottom, proper spacing)
-    const startY = 30; // Start below the title
-    const lineHeight = 18;
-    this.combatLogEntries.forEach((logEntry, index) => {
-      const targetY = startY + (index * lineHeight);
-      
-      // Add to container if not already added
-      if (!this.combatLogContainer!.list.includes(logEntry)) {
-        this.combatLogContainer!.add(logEntry);
-      }
-      
-      // Animate to position
-      this.tweens.add({
-        targets: logEntry,
-        y: targetY,
-        duration: 200,
-        ease: 'Power2',
-      });
-      
-      // Fade out older entries
-      const alpha = 1 - (this.combatLogEntries.length - 1 - index) * 0.2;
-      logEntry.setAlpha(Math.max(0.4, alpha));
-    });
+    // Refresh display with new entry
+    this.refreshLogEntries();
 
     // Highlight newest entry (smaller pulse)
     entry.setAlpha(1);
@@ -2103,9 +2841,9 @@ export class BattleScene extends Phaser.Scene {
     return actor?.name || 'Unknown';
   }
 
-  private showPlayerLockedNotification(playerName: string, actionType: ActionType): void {
+  private showPlayerLockedNotification(playerName: string, actionType: ActionType, actionCount: number = 1): void {
     // Get action icon
-    const icons = { Attack: '⚔️', Guard: '🛡️', Skill: '✨', Skip: '⏱️' };
+    const icons = { Attack: '⚔️', Guard: '🛡️', Skill: '✨', Skip: '⏱️', Card: '🃏' };
     const icon = icons[actionType] || '';
 
     // Create notification container
@@ -2128,7 +2866,8 @@ export class BattleScene extends Phaser.Scene {
     notification.add(text);
 
     // Action type
-    const actionText = this.add.text(0, 12, `${icon} ${actionType}`, {
+    const actionTypeText = actionCount > 1 ? `${actionCount} cards` : actionType;
+    const actionText = this.add.text(0, 12, `${icon} ${actionTypeText}`, {
       fontSize: '16px',
       color: '#27ae60',
       fontFamily: 'Arial, sans-serif',
@@ -2176,13 +2915,92 @@ export class BattleScene extends Phaser.Scene {
     if (this.timeline) {
       this.timeline.stop();
     }
+    
+    // Clean up sound manager
+    if (this.soundManager) {
+      this.soundManager.stopAll();
+    }
+    
     this.hideLockButton();
     this.hidePendingActionText();
     this.hideTargetSelector();
     
+    // Clean up queue display
+    if (this.queueDisplay) {
+      this.queueDisplay.destroy();
+      this.queueDisplay = null;
+    }
+    
+    // Clean up skip button if exists
+    const skipButtons = this.children.list.filter((obj: any) => obj.getData && obj.getData('skipButton'));
+    skipButtons.forEach(btn => btn.destroy());
+    
     // Clean up remote cursors
     this.remoteCursors.forEach(cursor => cursor.destroy());
     this.remoteCursors.clear();
+  }
+
+  private showAPGainNotification(apGained: number, newTotal: number): void {
+    const notification = this.add.container(this.scale.width / 2, this.scale.height / 2 - 100);
+    notification.setDepth(999);
+
+    // Background
+    const bg = this.add.rectangle(0, 0, 250, 70, 0x2c3e50, 0.95);
+    bg.setStrokeStyle(3, 0xf39c12, 1);
+    notification.add(bg);
+
+    // AP gain text
+    const gainText = this.add.text(0, -10, `+${apGained} AP`, {
+      fontSize: '28px',
+      color: '#f39c12',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    gainText.setOrigin(0.5);
+    notification.add(gainText);
+
+    // Total AP
+    const totalText = this.add.text(0, 18, `Total: ${newTotal} AP`, {
+      fontSize: '16px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+    });
+    totalText.setOrigin(0.5);
+    notification.add(totalText);
+
+    // Slide in from top
+    notification.setY(-100);
+    notification.setAlpha(0);
+    this.tweens.add({
+      targets: notification,
+      y: this.scale.height / 2 - 100,
+      alpha: 1,
+      duration: 400,
+      ease: 'Back.easeOut',
+    });
+
+    // Pulse effect
+    this.tweens.add({
+      targets: gainText,
+      scaleX: 1.2,
+      scaleY: 1.2,
+      duration: 200,
+      yoyo: true,
+      repeat: 2,
+      ease: 'Sine.easeInOut',
+    });
+
+    // Fade out and destroy after 2 seconds
+    this.time.delayedCall(2000, () => {
+      this.tweens.add({
+        targets: notification,
+        alpha: 0,
+        y: notification.y - 50,
+        duration: 400,
+        ease: 'Power2',
+        onComplete: () => notification.destroy(),
+      });
+    });
   }
 
   destroy(): void {
@@ -2192,6 +3010,12 @@ export class BattleScene extends Phaser.Scene {
     // Clean up other resources
     if (this.unsubscribe) {
       this.unsubscribe();
+    }
+    
+    // Clean up sound manager
+    if (this.soundManager) {
+      this.soundManager.destroy();
+      this.soundManager = null;
     }
     
     // Clean up UI elements

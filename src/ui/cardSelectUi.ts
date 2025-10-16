@@ -9,10 +9,10 @@ import { COLORS } from '../game/config';
 
 const SLOT_COUNT = 4;
 const CARD_WIDTH = 140;
-const CARD_HEIGHT = 180;
+const CARD_HEIGHT = 210; // Match 2:3 aspect ratio (1024x1536)
 const CARD_SPACING = 20;
 const SLOT_WIDTH = 120;
-const SLOT_HEIGHT = 160;
+const SLOT_HEIGHT = 180; // Match 2:3 aspect ratio
 
 export class CardSelectUI {
   private scene: Phaser.Scene;
@@ -122,54 +122,87 @@ export class CardSelectUI {
     container.setSize(CARD_WIDTH, CARD_HEIGHT);
     container.setData('cardId', card.id);
 
-    // Background
-    const bg = this.scene.add.rectangle(0, 0, CARD_WIDTH, CARD_HEIGHT, 0x2a2a2a, 1);
-    bg.setStrokeStyle(2, 0x666666);
+    // Card background image based on type
+    const imageKey = `card_${card.type}`;
+    const cardImage = this.scene.add.image(0, 0, imageKey);
+    cardImage.setDisplaySize(CARD_WIDTH, CARD_HEIGHT);
+    cardImage.setName('cardImage');
+    container.add(cardImage);
+
+    // Border frame (for hover/selection effects)
+    const bg = this.scene.add.rectangle(0, 0, CARD_WIDTH, CARD_HEIGHT, 0x000000, 0);
+    bg.setStrokeStyle(3, 0x666666, 0.9);
+    bg.setName('bg');
     container.add(bg);
 
-    // Card name
-    const nameText = this.scene.add.text(0, -CARD_HEIGHT / 2 + 30, card.name, {
-      fontSize: '18px',
+    // Card name (with shadow for visibility)
+    const nameText = this.scene.add.text(0, -CARD_HEIGHT / 2 + 35, card.name, {
+      fontSize: '20px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
       align: 'center',
+      stroke: '#000000',
+      strokeThickness: 5,
     });
     nameText.setOrigin(0.5);
+    nameText.setDepth(10);
     container.add(nameText);
 
-    // AP cost
-    const apBg = this.scene.add.rectangle(-CARD_WIDTH / 2 + 30, -CARD_HEIGHT / 2 + 20, 40, 30, 0x4a4a4a);
-    apBg.setStrokeStyle(1, 0x888888);
-    container.add(apBg);
+    // AP cost badge (smaller)
+    const apBadge = this.scene.add.container(-CARD_WIDTH / 2 + 26, -CARD_HEIGHT / 2 + 26);
+    apBadge.setDepth(10);
+    
+    const apBg = this.scene.add.circle(0, 0, 16, 0x000000, 0.95);
+    apBg.setStrokeStyle(2, 0xffaa00, 1);
+    apBadge.add(apBg);
 
-    const apText = this.scene.add.text(-CARD_WIDTH / 2 + 30, -CARD_HEIGHT / 2 + 20, `${card.ap}`, {
-      fontSize: '16px',
+    const apText = this.scene.add.text(0, 0, `${card.ap}`, {
+      fontSize: '18px',
       color: '#ffaa00',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
     });
     apText.setOrigin(0.5);
-    container.add(apText);
+    apBadge.add(apText);
+    container.add(apBadge);
 
-    // Description
-    const descText = this.scene.add.text(0, 10, card.desc, {
-      fontSize: '14px',
+    // Description (no background - just text with shadow)
+    const descText = this.scene.add.text(0, 15, card.desc, {
+      fontSize: '15px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      align: 'center',
+      wordWrap: { width: CARD_WIDTH - 25 },
+      stroke: '#000000',
+      strokeThickness: 4,
+    });
+    descText.setOrigin(0.5);
+    descText.setDepth(10);
+    container.add(descText);
+
+    // Target info (no background - just text with shadow)
+    const targetText = this.scene.add.text(0, CARD_HEIGHT / 2 - 35, `Target: ${card.target}`, {
+      fontSize: '12px',
       color: '#cccccc',
       fontFamily: 'Arial, sans-serif',
       align: 'center',
-      wordWrap: { width: CARD_WIDTH - 20 },
+      stroke: '#000000',
+      strokeThickness: 3,
     });
-    descText.setOrigin(0.5);
-    container.add(descText);
+    targetText.setOrigin(0.5);
+    targetText.setDepth(10);
+    container.add(targetText);
 
     // Make interactive
     bg.setInteractive({ useHandCursor: true });
     bg.on('pointerover', () => {
-      bg.setStrokeStyle(3, 0xffffff);
+      bg.setStrokeStyle(4, 0xffffff, 1);
+      container.setScale(1.05);
     });
     bg.on('pointerout', () => {
-      bg.setStrokeStyle(2, 0x666666);
+      bg.setStrokeStyle(3, 0x666666, 0.9);
+      container.setScale(1);
     });
     bg.on('pointerdown', () => {
       this.handleCardClick(card.id);
@@ -304,31 +337,62 @@ export class CardSelectUI {
     const existing = slot.getByName('cardContent');
     if (existing) existing.destroy();
 
-    // Add card content
+    // Add card content with image
     const cardContent = this.scene.add.container(0, 0);
     cardContent.setName('cardContent');
 
-    const nameText = this.scene.add.text(0, -SLOT_HEIGHT / 2 + 25, card.name, {
-      fontSize: '14px',
+    // Card image background
+    const imageKey = `card_${card.type}`;
+    const cardImage = this.scene.add.image(0, 0, imageKey);
+    cardImage.setDisplaySize(SLOT_WIDTH, SLOT_HEIGHT);
+    cardContent.add(cardImage);
+
+    // Card name with shadow
+    const nameText = this.scene.add.text(0, -SLOT_HEIGHT / 2 + 30, card.name, {
+      fontSize: '16px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
       align: 'center',
+      stroke: '#000000',
+      strokeThickness: 4,
     });
     nameText.setOrigin(0.5);
     cardContent.add(nameText);
 
-    const apText = this.scene.add.text(0, 0, `AP: ${card.ap}`, {
-      fontSize: '12px',
+    // AP badge (smaller)
+    const apBadge = this.scene.add.container(-SLOT_WIDTH / 2 + 20, -SLOT_HEIGHT / 2 + 20);
+    
+    const apBg = this.scene.add.circle(0, 0, 13, 0x000000, 0.95);
+    apBg.setStrokeStyle(2, 0xffaa00, 1);
+    apBadge.add(apBg);
+    
+    const apText = this.scene.add.text(0, 0, `${card.ap}`, {
+      fontSize: '14px',
       color: '#ffaa00',
       fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
     });
     apText.setOrigin(0.5);
-    cardContent.add(apText);
+    apBadge.add(apText);
+    cardContent.add(apBadge);
+
+    // Description text (no background - just text with shadow)
+    const descText = this.scene.add.text(0, 0, card.desc, {
+      fontSize: '11px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      align: 'center',
+      wordWrap: { width: SLOT_WIDTH - 15 },
+      stroke: '#000000',
+      strokeThickness: 3,
+    });
+    descText.setOrigin(0.5);
+    cardContent.add(descText);
 
     slot.add(cardContent);
-    bg.setStrokeStyle(2, 0x66ff66);
-    bg.setFillStyle(0x2a4a2a, 0.8);
+    bg.setStrokeStyle(3, 0x66ff66, 1);
+    bg.setFillStyle(0x000000, 0); // Transparent fill since image is showing
 
     // Enable pointer cursor for filled slots
     bg.setInteractive({ useHandCursor: true });
