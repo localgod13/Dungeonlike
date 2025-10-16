@@ -566,6 +566,33 @@ export class Lobby extends Phaser.Scene {
       await this.handleLeaveLobby();
       this.scene.start('MainMenu');
     });
+
+    // Test Map button (for development)
+    if (import.meta.env.DEV) {
+      const testMapText = this.add.text(20, 50, '🗺️ Test Map', {
+        fontSize: '16px',
+        color: '#aaaaaa',
+        fontFamily: 'Arial, sans-serif',
+      });
+      testMapText.setScrollFactor(0);
+      testMapText.setInteractive({ useHandCursor: true });
+
+      testMapText.on('pointerover', () => {
+        testMapText.setColor('#4a90e2');
+      });
+
+      testMapText.on('pointerout', () => {
+        testMapText.setColor('#aaaaaa');
+      });
+
+      testMapText.on('pointerdown', () => {
+        this.scene.start('MapScene', {
+          lobbyId: 'test-lobby',
+          players: [{ userId: 'test-user', name: 'Test Player', isHost: true }],
+          mapSeed: Date.now(),
+        });
+      });
+    }
   }
 
   private async handleLeaveLobby(): Promise<void> {

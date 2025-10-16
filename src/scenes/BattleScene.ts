@@ -49,6 +49,9 @@ export class BattleScene extends Phaser.Scene {
   private userId: string | null = null;
   private isHost = false;
   private unsubscribe: (() => void) | null = null;
+  private mapSeed: number | undefined = undefined; // Persist map across battles
+  private visitedNodes: string[] = []; // Track visited nodes for map progression
+  private currentNodeId: string | null = null; // Track current position on map
 
   // Combat state
   private combatState: CombatState;
@@ -110,13 +113,21 @@ export class BattleScene extends Phaser.Scene {
     super('BattleScene');
   }
 
-  init(data: { lobbyId: string; players: any[]; loadouts?: Loadout[] }): void {
+  init(data: { lobbyId: string; players: any[]; loadouts?: Loadout[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string }): void {
     this.lobbyId = data.lobbyId;
     this.players = data.players || [];
+    this.mapSeed = data.mapSeed; // Store map seed for continuity
+    this.visitedNodes = data.visitedNodes || []; // Store visited nodes
+    this.currentNodeId = data.currentNodeId || null; // Store current position
+    
+    // Clear any stale combat log entries from previous scene instances
+    this.combatLogEntries = [];
     
     console.log('=== BATTLE SCENE INIT DEBUG ===');
     console.log('Received data:', data);
     console.log('Loadouts in data:', data.loadouts);
+    console.log('Visited nodes:', this.visitedNodes);
+    console.log('Current node:', this.currentNodeId);
     
     // Initialize loadouts and AP
     if (data.loadouts) {
@@ -2188,9 +2199,22 @@ export class BattleScene extends Phaser.Scene {
     );
     bannerText.setOrigin(0.5);
 
-    // Return to lobby after delay
+    // Return to map or lobby after delay
     this.time.delayedCall(3000, () => {
-      this.scene.start('Lobby');
+      if (result === 'victory') {
+        // Continue to map on victory
+        // Use existing mapSeed if available, otherwise create new map
+        this.scene.start('MapScene', {
+          lobbyId: this.lobbyId,
+          players: this.players,
+          mapSeed: this.mapSeed || Date.now(),
+          visitedNodes: this.visitedNodes, // Pass visited nodes to restore progress
+          currentNodeId: this.currentNodeId, // Pass current position
+        });
+      } else {
+        // Return to lobby on defeat
+        this.scene.start('Lobby');
+      }
     });
   }
 
@@ -2790,6 +2814,12 @@ export class BattleScene extends Phaser.Scene {
 
   private refreshLogEntries(): void {
     if (!this.combatLogContainer) return;
+    
+    // Safety check: ensure scene is active
+    if (!this.scene.isActive()) {
+      console.warn('Cannot refresh log entries: scene not active');
+      return;
+    }
 
     const startY = 28;
     const lineHeight = this.isLogExpanded ? 20 : 14; // More spacing when expanded
@@ -2800,13 +2830,20 @@ export class BattleScene extends Phaser.Scene {
 
     // Remove all entries from container
     this.combatLogEntries.forEach(entry => {
-      if (this.combatLogContainer!.list.includes(entry)) {
+      // Safety check: ensure entry is valid and from this scene
+      if (entry && entry.scene === this && this.combatLogContainer!.list.includes(entry)) {
         this.combatLogContainer!.remove(entry, false);
       }
     });
 
     // Re-add and position visible entries
     entriesToShow.forEach((entry, index) => {
+      // Safety check: ensure entry is valid and from this scene
+      if (!entry || entry.scene !== this) {
+        console.warn('Skipping invalid log entry from old scene');
+        return;
+      }
+      
       const targetY = startY + (index * lineHeight);
       entry.setY(targetY);
       
@@ -2822,6 +2859,12 @@ export class BattleScene extends Phaser.Scene {
 
   private addCombatLogEntry(message: string, color: string = '#ffffff'): void {
     if (!this.combatLogContainer) return;
+    
+    // Safety check: ensure scene is active and ready
+    if (!this.scene.isActive() || !this.add) {
+      console.warn('Cannot add combat log entry: scene not ready');
+      return;
+    }
 
     // Create new log entry with proper positioning and word wrap
     const entry = this.add.text(10, 0, `• ${message}`, {

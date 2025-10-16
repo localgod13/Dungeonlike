@@ -27,6 +27,9 @@ export class CardSelectScene extends Phaser.Scene {
   private isHost = false;
   private players: Player[] = [];
   private unsubscribe: (() => void) | null = null;
+  private mapSeed: number | undefined = undefined; // For map continuity
+  private visitedNodes: string[] = []; // Track visited nodes for map progression
+  private currentNodeId: string | null = null; // Track current position on map
 
   // UI
   private cardUI!: CardSelectUI;
@@ -47,12 +50,17 @@ export class CardSelectScene extends Phaser.Scene {
     super('CardSelectScene');
   }
 
-  init(data: { lobbyId: string; players: Player[] }): void {
+  init(data: { lobbyId: string; players: Player[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string }): void {
     this.lobbyId = data.lobbyId;
     this.players = data.players || [];
+    this.mapSeed = data.mapSeed; // Store map seed for continuity
+    this.visitedNodes = data.visitedNodes || []; // Store visited nodes
+    this.currentNodeId = data.currentNodeId || null; // Store current position
     
     console.log(`Card selection initialized for lobby: ${this.lobbyId}`);
     console.log(`Players:`, this.players);
+    console.log(`Visited nodes:`, this.visitedNodes);
+    console.log(`Current node:`, this.currentNodeId);
   }
 
   async create(): Promise<void> {
@@ -294,6 +302,9 @@ export class CardSelectScene extends Phaser.Scene {
   }
 
   private handleRemotePick(userId: string, cardId: string): void {
+    // Safety check: don't process if scene is shutting down
+    if (!this.scene.isActive()) return;
+    
     console.log(`Remote pick from ${userId}: ${cardId}`);
     
     const loadout = this.loadouts.get(userId) || [];
@@ -310,6 +321,9 @@ export class CardSelectScene extends Phaser.Scene {
   }
 
   private handleRemoteSwap(userId: string, outId: string, inId: string): void {
+    // Safety check: don't process if scene is shutting down
+    if (!this.scene.isActive()) return;
+    
     console.log(`Remote swap from ${userId}: ${outId} -> ${inId}`);
     
     const loadout = this.loadouts.get(userId) || [];
@@ -321,6 +335,9 @@ export class CardSelectScene extends Phaser.Scene {
   }
 
   private handleRemoteReady(userId: string, ready: boolean): void {
+    // Safety check: don't process if scene is shutting down
+    if (!this.scene.isActive()) return;
+    
     console.log(`${userId} is ${ready ? 'ready' : 'not ready'}`);
     
     this.readyStates.set(userId, ready);
@@ -379,6 +396,9 @@ export class CardSelectScene extends Phaser.Scene {
   }
 
   private handleCommit(loadouts: Loadout[]): void {
+    // Safety check: don't process if scene is shutting down
+    if (!this.scene.isActive()) return;
+    
     console.log('Received loadout commit:', loadouts);
     
     // Non-hosts transition to battle when they receive the commit
@@ -389,6 +409,12 @@ export class CardSelectScene extends Phaser.Scene {
 
   private transitionToBattle(loadouts: Loadout[]): void {
     console.log('Transitioning to battle with loadouts:', loadouts);
+
+    // Unsubscribe from network updates BEFORE transitioning
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
 
     // Prepare player data for battle scene
     const battlePlayers = this.players.map(player => ({
@@ -407,6 +433,9 @@ export class CardSelectScene extends Phaser.Scene {
       lobbyId: this.lobbyId,
       players: battlePlayers,
       loadouts: loadouts,
+      mapSeed: this.mapSeed, // Pass map seed for continuity
+      visitedNodes: this.visitedNodes, // Pass visited nodes for map progression
+      currentNodeId: this.currentNodeId, // Pass current position
     });
   }
 

@@ -7,6 +7,7 @@ import { Lobby } from './scenes/Lobby';
 import { Run } from './scenes/Run';
 import { CardSelectScene } from './scenes/CardSelectScene';
 import { BattleScene } from './scenes/BattleScene';
+import { MapScene } from './scenes/MapScene';
 
 /**
  * Main entry point - initialize Phaser game
@@ -16,7 +17,7 @@ import { BattleScene } from './scenes/BattleScene';
 const config = createPhaserConfig('game-container');
 
 // Add scenes
-config.scene = [Boot, Preload, MainMenu, Lobby, Run, CardSelectScene, BattleScene];
+config.scene = [Boot, Preload, MainMenu, Lobby, Run, CardSelectScene, BattleScene, MapScene];
 
 // Initialize game
 const game = new Phaser.Game(config);
