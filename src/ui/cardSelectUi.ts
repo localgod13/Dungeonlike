@@ -1,0 +1,415 @@
+import Phaser from 'phaser';
+import { Card, CARD_POOL } from '../game/cards';
+import { COLORS } from '../game/config';
+
+/**
+ * Card selection UI for pre-battle phase
+ * Allows players to choose up to 4 cards from the shared pool
+ */
+
+const SLOT_COUNT = 4;
+const CARD_WIDTH = 140;
+const CARD_HEIGHT = 180;
+const CARD_SPACING = 20;
+const SLOT_WIDTH = 120;
+const SLOT_HEIGHT = 160;
+
+export class CardSelectUI {
+  private scene: Phaser.Scene;
+  private container: Phaser.GameObjects.Container;
+  private selectedCards: string[] = [];
+  private onCardPick?: (cardId: string) => void;
+  private onCardSwap?: (outId: string, inId: string) => void;
+  private pendingSwap: string | null = null;
+  
+  // UI elements
+  private titleText!: Phaser.GameObjects.Text;
+  private poolContainer!: Phaser.GameObjects.Container;
+  private loadoutContainer!: Phaser.GameObjects.Container;
+  private loadoutSlots: Phaser.GameObjects.Container[] = [];
+  private cardButtons: Map<string, Phaser.GameObjects.Container> = new Map();
+
+  constructor(
+    scene: Phaser.Scene,
+    onCardPick?: (cardId: string) => void,
+    onCardSwap?: (outId: string, inId: string) => void
+  ) {
+    this.scene = scene;
+    this.onCardPick = onCardPick;
+    this.onCardSwap = onCardSwap;
+    
+    this.container = scene.add.container(0, 0);
+    this.createUI();
+  }
+
+  private createUI(): void {
+    const centerX = this.scene.scale.width / 2;
+    
+    // Title
+    this.titleText = this.scene.add.text(
+      centerX,
+      50,
+      'Choose up to 4 cards',
+      {
+        fontSize: '32px',
+        color: '#ffffff',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+      }
+    );
+    this.titleText.setOrigin(0.5);
+    this.container.add(this.titleText);
+
+    // Card pool section
+    const poolY = 150;
+    const poolTitle = this.scene.add.text(
+      centerX,
+      poolY,
+      'Card Pool',
+      {
+        fontSize: '24px',
+        color: '#aaaaaa',
+        fontFamily: 'Arial, sans-serif',
+      }
+    );
+    poolTitle.setOrigin(0.5);
+    this.container.add(poolTitle);
+
+    // Pool container
+    this.poolContainer = this.scene.add.container(0, 0);
+    this.container.add(this.poolContainer);
+    this.createCardPool(poolY + 50);
+
+    // Loadout section
+    const loadoutY = this.scene.scale.height - 250;
+    const loadoutTitle = this.scene.add.text(
+      centerX,
+      loadoutY - 40,
+      `Your Loadout (0/${SLOT_COUNT})`,
+      {
+        fontSize: '24px',
+        color: '#aaaaaa',
+        fontFamily: 'Arial, sans-serif',
+      }
+    );
+    loadoutTitle.setOrigin(0.5);
+    loadoutTitle.setName('loadoutTitle');
+    this.container.add(loadoutTitle);
+
+    // Loadout container
+    this.loadoutContainer = this.scene.add.container(0, 0);
+    this.container.add(this.loadoutContainer);
+    this.createLoadoutSlots(loadoutY);
+  }
+
+  private createCardPool(startY: number): void {
+    const centerX = this.scene.scale.width / 2;
+    const totalWidth = CARD_POOL.length * (CARD_WIDTH + CARD_SPACING) - CARD_SPACING;
+    const startX = centerX - totalWidth / 2;
+
+    CARD_POOL.forEach((card, index) => {
+      const x = startX + index * (CARD_WIDTH + CARD_SPACING) + CARD_WIDTH / 2;
+      const y = startY + CARD_HEIGHT / 2;
+      
+      const cardButton = this.createCardButton(card, x, y);
+      this.poolContainer.add(cardButton);
+      this.cardButtons.set(card.id, cardButton);
+    });
+  }
+
+  private createCardButton(card: Card, x: number, y: number): Phaser.GameObjects.Container {
+    const container = this.scene.add.container(x, y);
+    container.setSize(CARD_WIDTH, CARD_HEIGHT);
+    container.setData('cardId', card.id);
+
+    // Background
+    const bg = this.scene.add.rectangle(0, 0, CARD_WIDTH, CARD_HEIGHT, 0x2a2a2a, 1);
+    bg.setStrokeStyle(2, 0x666666);
+    container.add(bg);
+
+    // Card name
+    const nameText = this.scene.add.text(0, -CARD_HEIGHT / 2 + 30, card.name, {
+      fontSize: '18px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+      align: 'center',
+    });
+    nameText.setOrigin(0.5);
+    container.add(nameText);
+
+    // AP cost
+    const apBg = this.scene.add.rectangle(-CARD_WIDTH / 2 + 30, -CARD_HEIGHT / 2 + 20, 40, 30, 0x4a4a4a);
+    apBg.setStrokeStyle(1, 0x888888);
+    container.add(apBg);
+
+    const apText = this.scene.add.text(-CARD_WIDTH / 2 + 30, -CARD_HEIGHT / 2 + 20, `${card.ap}`, {
+      fontSize: '16px',
+      color: '#ffaa00',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    apText.setOrigin(0.5);
+    container.add(apText);
+
+    // Description
+    const descText = this.scene.add.text(0, 10, card.desc, {
+      fontSize: '14px',
+      color: '#cccccc',
+      fontFamily: 'Arial, sans-serif',
+      align: 'center',
+      wordWrap: { width: CARD_WIDTH - 20 },
+    });
+    descText.setOrigin(0.5);
+    container.add(descText);
+
+    // Make interactive
+    bg.setInteractive({ useHandCursor: true });
+    bg.on('pointerover', () => {
+      bg.setStrokeStyle(3, 0xffffff);
+    });
+    bg.on('pointerout', () => {
+      bg.setStrokeStyle(2, 0x666666);
+    });
+    bg.on('pointerdown', () => {
+      this.handleCardClick(card.id);
+    });
+
+    return container;
+  }
+
+  private createLoadoutSlots(y: number): void {
+    const centerX = this.scene.scale.width / 2;
+    const totalWidth = SLOT_COUNT * (SLOT_WIDTH + CARD_SPACING) - CARD_SPACING;
+    const startX = centerX - totalWidth / 2;
+
+    for (let i = 0; i < SLOT_COUNT; i++) {
+      const x = startX + i * (SLOT_WIDTH + CARD_SPACING) + SLOT_WIDTH / 2;
+      const slot = this.createLoadoutSlot(x, y, i);
+      this.loadoutContainer.add(slot);
+      this.loadoutSlots.push(slot);
+    }
+  }
+
+  private createLoadoutSlot(x: number, y: number, index: number): Phaser.GameObjects.Container {
+    const container = this.scene.add.container(x, y);
+    container.setSize(SLOT_WIDTH, SLOT_HEIGHT);
+    container.setData('slotIndex', index);
+    container.setData('cardId', null);
+
+    // Empty slot background
+    const bg = this.scene.add.rectangle(0, 0, SLOT_WIDTH, SLOT_HEIGHT, 0x1a1a1a, 0.5);
+    bg.setStrokeStyle(2, 0x444444, 0.8);
+    bg.setName('bg');
+    container.add(bg);
+
+    const emptyText = this.scene.add.text(0, 0, 'Empty', {
+      fontSize: '16px',
+      color: '#666666',
+      fontFamily: 'Arial, sans-serif',
+    });
+    emptyText.setOrigin(0.5);
+    emptyText.setName('emptyText');
+    container.add(emptyText);
+
+    // Make interactive for swapping
+    bg.setInteractive({ useHandCursor: false });
+    bg.on('pointerdown', () => {
+      this.handleSlotClick(index);
+    });
+
+    return container;
+  }
+
+  private handleCardClick(cardId: string): void {
+    if (this.selectedCards.length < SLOT_COUNT && !this.selectedCards.includes(cardId)) {
+      // Pick card
+      this.addCardToLoadout(cardId);
+      if (this.onCardPick) {
+        this.onCardPick(cardId);
+      }
+    } else if (this.selectedCards.length === SLOT_COUNT && !this.selectedCards.includes(cardId)) {
+      // Initiate swap - highlight loadout slots
+      this.pendingSwap = cardId;
+      this.highlightLoadoutSlots(true);
+      this.updateTitle('Click a slot to swap');
+    }
+  }
+
+  private handleSlotClick(index: number): void {
+    const cardId = this.loadoutSlots[index].getData('cardId');
+    
+    if (this.pendingSwap) {
+      // Complete swap
+      if (cardId) {
+        this.removeCardFromLoadout(cardId);
+        this.addCardToLoadout(this.pendingSwap);
+        
+        if (this.onCardSwap) {
+          this.onCardSwap(cardId, this.pendingSwap);
+        }
+      }
+      
+      this.pendingSwap = null;
+      this.highlightLoadoutSlots(false);
+      this.updateTitle('Choose up to 4 cards');
+    } else if (cardId) {
+      // Remove card
+      this.removeCardFromLoadout(cardId);
+    }
+  }
+
+  private addCardToLoadout(cardId: string): void {
+    const card = CARD_POOL.find(c => c.id === cardId);
+    if (!card) return;
+
+    const emptySlotIndex = this.selectedCards.length;
+    if (emptySlotIndex >= SLOT_COUNT) return;
+
+    this.selectedCards.push(cardId);
+    this.updateLoadoutSlot(emptySlotIndex, card);
+    this.updateLoadoutTitle();
+  }
+
+  private removeCardFromLoadout(cardId: string): void {
+    const index = this.selectedCards.indexOf(cardId);
+    if (index === -1) return;
+
+    this.selectedCards.splice(index, 1);
+    
+    // Rebuild all slots
+    for (let i = 0; i < SLOT_COUNT; i++) {
+      if (i < this.selectedCards.length) {
+        const card = CARD_POOL.find(c => c.id === this.selectedCards[i]);
+        if (card) {
+          this.updateLoadoutSlot(i, card);
+        }
+      } else {
+        this.clearLoadoutSlot(i);
+      }
+    }
+    
+    this.updateLoadoutTitle();
+  }
+
+  private updateLoadoutSlot(index: number, card: Card): void {
+    const slot = this.loadoutSlots[index];
+    slot.setData('cardId', card.id);
+
+    // Remove old content
+    const bg = slot.getByName('bg') as Phaser.GameObjects.Rectangle;
+    const oldText = slot.getByName('emptyText') as Phaser.GameObjects.Text;
+    if (oldText) oldText.destroy();
+
+    const existing = slot.getByName('cardContent');
+    if (existing) existing.destroy();
+
+    // Add card content
+    const cardContent = this.scene.add.container(0, 0);
+    cardContent.setName('cardContent');
+
+    const nameText = this.scene.add.text(0, -SLOT_HEIGHT / 2 + 25, card.name, {
+      fontSize: '14px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+      align: 'center',
+    });
+    nameText.setOrigin(0.5);
+    cardContent.add(nameText);
+
+    const apText = this.scene.add.text(0, 0, `AP: ${card.ap}`, {
+      fontSize: '12px',
+      color: '#ffaa00',
+      fontFamily: 'Arial, sans-serif',
+    });
+    apText.setOrigin(0.5);
+    cardContent.add(apText);
+
+    slot.add(cardContent);
+    bg.setStrokeStyle(2, 0x66ff66);
+    bg.setFillStyle(0x2a4a2a, 0.8);
+
+    // Enable pointer cursor for filled slots
+    bg.setInteractive({ useHandCursor: true });
+  }
+
+  private clearLoadoutSlot(index: number): void {
+    const slot = this.loadoutSlots[index];
+    slot.setData('cardId', null);
+
+    const bg = slot.getByName('bg') as Phaser.GameObjects.Rectangle;
+    const cardContent = slot.getByName('cardContent');
+    if (cardContent) cardContent.destroy();
+
+    const emptyText = this.scene.add.text(0, 0, 'Empty', {
+      fontSize: '16px',
+      color: '#666666',
+      fontFamily: 'Arial, sans-serif',
+    });
+    emptyText.setOrigin(0.5);
+    emptyText.setName('emptyText');
+    slot.add(emptyText);
+
+    bg.setStrokeStyle(2, 0x444444, 0.8);
+    bg.setFillStyle(0x1a1a1a, 0.5);
+    bg.setInteractive({ useHandCursor: false });
+  }
+
+  private highlightLoadoutSlots(highlight: boolean): void {
+    this.loadoutSlots.forEach(slot => {
+      const bg = slot.getByName('bg') as Phaser.GameObjects.Rectangle;
+      if (highlight) {
+        bg.setStrokeStyle(3, 0xffff00);
+      } else {
+        const cardId = slot.getData('cardId');
+        if (cardId) {
+          bg.setStrokeStyle(2, 0x66ff66);
+        } else {
+          bg.setStrokeStyle(2, 0x444444, 0.8);
+        }
+      }
+    });
+  }
+
+  private updateLoadoutTitle(): void {
+    const titleObj = this.container.getByName('loadoutTitle') as Phaser.GameObjects.Text;
+    if (titleObj) {
+      titleObj.setText(`Your Loadout (${this.selectedCards.length}/${SLOT_COUNT})`);
+    }
+  }
+
+  private updateTitle(text: string): void {
+    this.titleText.setText(text);
+  }
+
+  public getSelectedCards(): string[] {
+    return [...this.selectedCards];
+  }
+
+  public setLoadout(cards: string[]): void {
+    this.selectedCards = [...cards].slice(0, SLOT_COUNT);
+    
+    for (let i = 0; i < SLOT_COUNT; i++) {
+      if (i < this.selectedCards.length) {
+        const card = CARD_POOL.find(c => c.id === this.selectedCards[i]);
+        if (card) {
+          this.updateLoadoutSlot(i, card);
+        }
+      } else {
+        this.clearLoadoutSlot(i);
+      }
+    }
+    
+    this.updateLoadoutTitle();
+  }
+
+  public destroy(): void {
+    this.container.destroy();
+  }
+
+  public setVisible(visible: boolean): void {
+    this.container.setVisible(visible);
+  }
+}
+
