@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { generateMap, GameMap, MapNode, NodeType, getNodesInLayer, getAvailableNodes, visitNode } from '../game/mapgen';
 import { COLORS } from '../game/config';
 import { SoundManager } from '../game/sound';
+import { subscribeMap, sendMapVote, sendMapVoteResult } from '../net/match';
 
 /**
  * Map scene - Slay the Spire style node-based progression
@@ -16,6 +17,14 @@ export class MapScene extends Phaser.Scene {
   // Scene data
   private lobbyId: string | null = null;
   private players: any[] = [];
+  private userId: string | null = null;
+  private isHost = false;
+  
+  // Voting system
+  private mapVotes = new Map<string, string>(); // userId -> nodeId
+  private myVote: string | null = null;
+  private votingUI: Phaser.GameObjects.Container | null = null;
+  private unsubscribe: (() => void) | null = null;
   
   // Layout constants
   private readonly NODE_RADIUS = 25;
@@ -163,7 +172,188 @@ export class MapScene extends Phaser.Scene {
     // Update available nodes (only forward progression)
     this.updateAvailableNodes();
     
+    // Setup networking if multiple players
+    if (this.players.length > 1 && this.lobbyId) {
+      this.setupVoting();
+    }
+    
     // No scrolling needed - map fits on screen!
+  }
+
+  private async getCurrentUserId(): Promise<string | null> {
+    try {
+      const { getCurrentUserId } = await import('../net/supa');
+      return await getCurrentUserId();
+    } catch (error) {
+      console.error('Failed to get current user:', error);
+      return null;
+    }
+  }
+
+  private setupVoting(): void {
+    if (!this.lobbyId) return;
+
+    subscribeMap(this.lobbyId, {
+      onMapVote: this.handleRemoteVote.bind(this),
+      onMapVoteResult: this.handleVoteResult.bind(this),
+    }).then((unsubscribe) => {
+      this.unsubscribe = unsubscribe;
+      console.log('Map voting system initialized');
+    }).catch((error) => {
+      console.error('Failed to setup voting:', error);
+    });
+  }
+
+  private handleRemoteVote(userId: string, nodeId: string): void {
+    console.log(`Remote vote from ${userId}: ${nodeId}`);
+    
+    // Don't process our own votes
+    if (userId === this.userId) return;
+    
+    this.mapVotes.set(userId, nodeId);
+    this.updateVotingUI();
+    
+    // If host, check if all players voted
+    if (this.isHost) {
+      this.checkAllVotesIn();
+    }
+  }
+
+  private handleVoteResult(selectedNodeId: string, votes: { [nodeId: string]: string[] }): void {
+    console.log('Received vote result:', selectedNodeId, votes);
+    
+    // Transition to the selected node
+    const node = this.gameMap.nodes.get(selectedNodeId);
+    if (node) {
+      this.transitionToNode(node);
+    }
+  }
+
+  private checkAllVotesIn(): void {
+    if (!this.isHost) return;
+    
+    const totalPlayers = this.players.length;
+    const votesReceived = this.mapVotes.size + (this.myVote ? 1 : 0);
+    
+    if (votesReceived >= totalPlayers) {
+      console.log('All votes received, resolving...');
+      this.resolveVotes();
+    }
+  }
+
+  private resolveVotes(): void {
+    // Count votes for each node
+    const voteCounts = new Map<string, string[]>();
+    
+    // Add remote votes
+    for (const [userId, nodeId] of this.mapVotes.entries()) {
+      if (!voteCounts.has(nodeId)) {
+        voteCounts.set(nodeId, []);
+      }
+      voteCounts.get(nodeId)!.push(userId);
+    }
+    
+    // Add my vote
+    if (this.myVote) {
+      if (!voteCounts.has(this.myVote)) {
+        voteCounts.set(this.myVote, []);
+      }
+      voteCounts.get(this.myVote)!.push(this.userId!);
+    }
+    
+    // Find winner(s)
+    let maxVotes = 0;
+    let winningNodes: string[] = [];
+    
+    for (const [nodeId, voters] of voteCounts.entries()) {
+      if (voters.length > maxVotes) {
+        maxVotes = voters.length;
+        winningNodes = [nodeId];
+      } else if (voters.length === maxVotes) {
+        winningNodes.push(nodeId);
+      }
+    }
+    
+    // Select winner (coin toss if tie)
+    const selectedNodeId = winningNodes[Math.floor(Math.random() * winningNodes.length)];
+    
+    console.log(`Vote resolution: ${selectedNodeId} wins with ${maxVotes} votes`);
+    
+    // Convert Map to object for network
+    const votesObject: { [nodeId: string]: string[] } = {};
+    for (const [nodeId, voters] of voteCounts.entries()) {
+      votesObject[nodeId] = voters;
+    }
+    
+    // Broadcast result
+    if (this.lobbyId) {
+      sendMapVoteResult(this.lobbyId, selectedNodeId, votesObject).catch(err => {
+        console.error('Failed to send vote result:', err);
+      });
+    }
+  }
+
+  private updateVotingUI(): void {
+    // Remove old UI
+    if (this.votingUI) {
+      this.votingUI.destroy();
+    }
+    
+    if (this.players.length <= 1) return;
+    
+    // Create voting status UI
+    this.votingUI = this.add.container(50, this.scale.height - 100);
+    this.votingUI.setScrollFactor(0);
+    this.votingUI.setDepth(1000);
+    
+    const bg = this.add.rectangle(0, 0, 300, 80, 0x1a0f2e, 0.9);
+    bg.setStrokeStyle(2, 0x8b7355, 0.8);
+    this.votingUI.add(bg);
+    
+    // Voting status text
+    const totalPlayers = this.players.length;
+    const votesReceived = this.mapVotes.size + (this.myVote ? 1 : 0);
+    
+    const statusText = this.add.text(0, -15, 'Voting for Path...', {
+      fontSize: '16px',
+      color: '#d4af37',
+      fontFamily: 'Georgia, serif',
+      fontStyle: 'bold',
+    });
+    statusText.setOrigin(0.5);
+    this.votingUI.add(statusText);
+    
+    const progressText = this.add.text(0, 10, `${votesReceived}/${totalPlayers} votes`, {
+      fontSize: '14px',
+      color: '#b8a890',
+      fontFamily: 'Georgia, serif',
+    });
+    progressText.setOrigin(0.5);
+    this.votingUI.add(progressText);
+    
+    // Show current votes
+    if (this.myVote) {
+      const myVoteText = this.add.text(0, 30, `Your vote: ${this.getNodeTypeName(this.myVote)}`, {
+        fontSize: '12px',
+        color: '#44ff88',
+        fontFamily: 'Georgia, serif',
+      });
+      myVoteText.setOrigin(0.5);
+      this.votingUI.add(myVoteText);
+    }
+  }
+
+  private getNodeTypeName(nodeId: string): string {
+    const node = this.gameMap.nodes.get(nodeId);
+    if (!node) return 'Unknown';
+    
+    switch (node.type) {
+      case NodeType.Battle: return 'Battle';
+      case NodeType.Shop: return 'Shop';
+      case NodeType.Event: return 'Event';
+      case NodeType.Boss: return 'Boss';
+      default: return 'Unknown';
+    }
   }
 
   private createFantasyBackground(): void {
@@ -492,6 +682,36 @@ export class MapScene extends Phaser.Scene {
 
     console.log(`Selected node: ${node.id} (${node.type})`);
     
+    if (this.players.length > 1) {
+      // Multiplayer: Vote for this node
+      this.voteForNode(node.id);
+    } else {
+      // Single player: Direct transition
+      this.transitionDirectly(node);
+    }
+  }
+
+  private async voteForNode(nodeId: string): Promise<void> {
+    this.myVote = nodeId;
+    this.updateVotingUI();
+    
+    // Send vote
+    if (this.lobbyId) {
+      try {
+        await sendMapVote(this.lobbyId, nodeId);
+        console.log(`Voted for node: ${nodeId}`);
+      } catch (error) {
+        console.error('Failed to send vote:', error);
+      }
+    }
+    
+    // If host, check if all votes are in
+    if (this.isHost) {
+      this.checkAllVotesIn();
+    }
+  }
+
+  private transitionDirectly(node: MapNode): void {
     // Mark as visited and update current position
     visitNode(this.gameMap, node.id);
     this.currentNodeId = node.id;
@@ -507,15 +727,15 @@ export class MapScene extends Phaser.Scene {
   }
 
   private transitionToNode(node: MapNode): void {
+    // Get list of visited node IDs
+    const visitedNodes = Array.from(this.gameMap.nodes.values())
+      .filter(n => n.visited)
+      .map(n => n.id);
+    
     switch (node.type) {
       case NodeType.Battle:
       case NodeType.Boss:
         console.log('Transitioning to battle...');
-        
-        // Get list of visited node IDs
-        const visitedNodes = Array.from(this.gameMap.nodes.values())
-          .filter(n => n.visited)
-          .map(n => n.id);
         
         // TODO: Generate enemy loadout based on difficulty
         this.scene.start('CardSelectScene', {
@@ -529,14 +749,26 @@ export class MapScene extends Phaser.Scene {
         
       case NodeType.Shop:
         console.log('Transitioning to shop...');
-        // TODO: Create shop scene
-        alert('Shop not implemented yet! Returning to map...');
+        this.scene.start('ShopScene', {
+          lobbyId: this.lobbyId,
+          players: this.players,
+          mapSeed: this.gameMap.seed,
+          visitedNodes: visitedNodes,
+          currentNodeId: this.currentNodeId,
+          nodeId: node.id,
+        });
         break;
         
       case NodeType.Event:
         console.log('Transitioning to event...');
-        // TODO: Create event scene
-        alert('Event not implemented yet! Returning to map...');
+        this.scene.start('EventScene', {
+          lobbyId: this.lobbyId,
+          players: this.players,
+          mapSeed: this.gameMap.seed,
+          visitedNodes: visitedNodes,
+          currentNodeId: this.currentNodeId,
+          nodeId: node.id,
+        });
         break;
         
       case NodeType.Start:
@@ -550,6 +782,12 @@ export class MapScene extends Phaser.Scene {
   shutdown(): void {
     // Cleanup
     this.nodeVisuals.clear();
+    
+    // Unsubscribe from network
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
   }
 
   destroy(): void {
