@@ -28,9 +28,19 @@ export const MAGE_SPRITES: Record<string, SpriteSheetConfig> = {
     frameWidth: 150,  // 1200 / 8 columns
     frameHeight: 150,
   },
+  attack: {
+    key: 'mage_attack',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/wizard2/Attack.png',
+    frameWidth: 150,  // 1200 / 8 columns
+    frameHeight: 150, // 1 row
+  },
+  hurt: {
+    key: 'mage_hurt',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/wizard2/Take Hit.png',
+    frameWidth: 150,  // 600 / 4 columns
+    frameHeight: 150, // 1 row
+  },
   // Future animations can be added here:
-  // attack: { ... },
-  // hurt: { ... },
   // death: { ... },
 };
 
@@ -42,6 +52,20 @@ export const MAGE_ANIMATIONS: Record<string, AnimationConfig> = {
     frameCount: 8,
     frameRate: 8,
     repeat: -1, // Loop forever
+  },
+  attack: {
+    key: 'mage_attack_anim',
+    spriteKey: 'mage_attack',
+    frameCount: 8,
+    frameRate: 12,
+    repeat: 0, // Play once
+  },
+  hurt: {
+    key: 'mage_hurt_anim',
+    spriteKey: 'mage_hurt',
+    frameCount: 4,
+    frameRate: 10,
+    repeat: 0, // Play once
   },
 };
 

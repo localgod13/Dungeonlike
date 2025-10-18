@@ -13,6 +13,7 @@ export class EventScene extends Phaser.Scene {
   private mapSeed: number | null = null;
   private visitedNodes: string[] = [];
   private currentNodeId: string | null = null;
+  private currentStage = 1; // Track battle stage number
   
   // Event data
   private currentEvent: EventData | null = null;
@@ -35,15 +36,18 @@ export class EventScene extends Phaser.Scene {
     visitedNodes?: string[]; 
     currentNodeId?: string;
     nodeId?: string;
+    stage?: number;
   }): void {
     this.lobbyId = data.lobbyId || null;
     this.players = data.players || [];
     this.mapSeed = data.mapSeed || null;
     this.visitedNodes = data.visitedNodes || [];
     this.currentNodeId = data.currentNodeId || null;
-    this.eventSeed = this.mapSeed || Date.now();
+    this.currentStage = data.stage || 1; // Receive stage number
+    this.eventSeed = this.mapSeed || (Date.now() % 2147483647); // Keep within PostgreSQL integer range
     
     console.log('EventScene initialized with node:', data.nodeId);
+    console.log('Current stage:', this.currentStage);
   }
 
   async create(): Promise<void> {
@@ -636,6 +640,7 @@ export class EventScene extends Phaser.Scene {
       mapSeed: this.mapSeed,
       visitedNodes: this.visitedNodes,
       currentNodeId: this.currentNodeId,
+      stage: this.currentStage, // Pass stage back to map
     });
   }
 

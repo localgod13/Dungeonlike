@@ -13,6 +13,7 @@ export class ShopScene extends Phaser.Scene {
   private mapSeed: number | null = null;
   private visitedNodes: string[] = [];
   private currentNodeId: string | null = null;
+  private currentStage = 1; // Track battle stage number
   
   // Shop data
   private items: ShopItem[] = [];
@@ -35,14 +36,17 @@ export class ShopScene extends Phaser.Scene {
     visitedNodes?: string[]; 
     currentNodeId?: string;
     nodeId?: string;
+    stage?: number;
   }): void {
     this.lobbyId = data.lobbyId || null;
     this.players = data.players || [];
     this.mapSeed = data.mapSeed || null;
     this.visitedNodes = data.visitedNodes || [];
     this.currentNodeId = data.currentNodeId || null;
+    this.currentStage = data.stage || 1; // Receive stage number
     
     console.log('ShopScene initialized with node:', data.nodeId);
+    console.log('Current stage:', this.currentStage);
   }
 
   async create(): Promise<void> {
@@ -594,6 +598,7 @@ export class ShopScene extends Phaser.Scene {
       mapSeed: this.mapSeed,
       visitedNodes: this.visitedNodes,
       currentNodeId: this.currentNodeId,
+      stage: this.currentStage, // Pass stage back to map
     });
   }
 

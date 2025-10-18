@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
-import { Card, CARD_POOL } from '../game/cards';
+import { Card } from '../game/cards';
 import { COLORS } from '../game/config';
 
 /**
  * Card selection UI for pre-battle phase
- * Allows players to choose up to 4 cards from the shared pool
+ * Allows players to choose up to 4 cards from their class-specific pool
  */
 
 const SLOT_COUNT = 4;
@@ -21,6 +21,7 @@ export class CardSelectUI {
   private onCardPick?: (cardId: string) => void;
   private onCardSwap?: (outId: string, inId: string) => void;
   private pendingSwap: string | null = null;
+  private cardPool: Card[]; // Class-specific card pool
   
   // UI elements
   private titleText!: Phaser.GameObjects.Text;
@@ -31,10 +32,12 @@ export class CardSelectUI {
 
   constructor(
     scene: Phaser.Scene,
+    cardPool: Card[],
     onCardPick?: (cardId: string) => void,
     onCardSwap?: (outId: string, inId: string) => void
   ) {
     this.scene = scene;
+    this.cardPool = cardPool;
     this.onCardPick = onCardPick;
     this.onCardSwap = onCardSwap;
     
@@ -104,10 +107,10 @@ export class CardSelectUI {
 
   private createCardPool(startY: number): void {
     const centerX = this.scene.scale.width / 2;
-    const totalWidth = CARD_POOL.length * (CARD_WIDTH + CARD_SPACING) - CARD_SPACING;
+    const totalWidth = this.cardPool.length * (CARD_WIDTH + CARD_SPACING) - CARD_SPACING;
     const startX = centerX - totalWidth / 2;
 
-    CARD_POOL.forEach((card, index) => {
+    this.cardPool.forEach((card, index) => {
       const x = startX + index * (CARD_WIDTH + CARD_SPACING) + CARD_WIDTH / 2;
       const y = startY + CARD_HEIGHT / 2;
       
@@ -293,7 +296,7 @@ export class CardSelectUI {
   }
 
   private addCardToLoadout(cardId: string): void {
-    const card = CARD_POOL.find(c => c.id === cardId);
+    const card = this.cardPool.find(c => c.id === cardId);
     if (!card) return;
 
     const emptySlotIndex = this.selectedCards.length;
@@ -313,7 +316,7 @@ export class CardSelectUI {
     // Rebuild all slots
     for (let i = 0; i < SLOT_COUNT; i++) {
       if (i < this.selectedCards.length) {
-        const card = CARD_POOL.find(c => c.id === this.selectedCards[i]);
+        const card = this.cardPool.find(c => c.id === this.selectedCards[i]);
         if (card) {
           this.updateLoadoutSlot(i, card);
         }
@@ -456,7 +459,7 @@ export class CardSelectUI {
     
     for (let i = 0; i < SLOT_COUNT; i++) {
       if (i < this.selectedCards.length) {
-        const card = CARD_POOL.find(c => c.id === this.selectedCards[i]);
+        const card = this.cardPool.find(c => c.id === this.selectedCards[i]);
         if (card) {
           this.updateLoadoutSlot(i, card);
         }

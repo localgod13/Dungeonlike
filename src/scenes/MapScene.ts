@@ -2,7 +2,8 @@ import Phaser from 'phaser';
 import { generateMap, GameMap, MapNode, NodeType, getNodesInLayer, getAvailableNodes, visitNode } from '../game/mapgen';
 import { COLORS } from '../game/config';
 import { SoundManager } from '../game/sound';
-import { subscribeMap, sendMapVote, sendMapVoteResult } from '../net/match';
+import { subscribeMap, sendMapVote, sendMapVoteResult, sendMapCursor } from '../net/match';
+import { CursorPosition } from '../net/proto';
 
 /**
  * Map scene - Slay the Spire style node-based progression
@@ -19,12 +20,17 @@ export class MapScene extends Phaser.Scene {
   private players: any[] = [];
   private userId: string | null = null;
   private isHost = false;
+  private currentStage = 1; // Track battle stage number
   
   // Voting system
-  private mapVotes = new Map<string, string>(); // userId -> nodeId
-  private myVote: string | null = null;
+  private mapVotes = new Map<string, string>(); // userId -> nodeId (includes own vote!)
   private votingUI: Phaser.GameObjects.Container | null = null;
   private unsubscribe: (() => void) | null = null;
+  
+  // Cursor tracking
+  private remoteCursors = new Map<string, Phaser.GameObjects.Container>();
+  private cursorThrottle = 0;
+  private readonly CURSOR_THROTTLE_MS = 50;
   
   // Layout constants
   private readonly NODE_RADIUS = 25;
@@ -38,10 +44,11 @@ export class MapScene extends Phaser.Scene {
     super('MapScene');
   }
 
-  init(data: { lobbyId?: string; players?: any[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string }): void {
+  init(data: { lobbyId?: string; players?: any[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number }): void {
     this.lobbyId = data.lobbyId || null;
     this.players = data.players || [];
     this.currentNodeId = data.currentNodeId || null;
+    this.currentStage = data.stage || 1; // Receive stage number from previous battle
     
     console.log('=== MAP SCENE INITIALIZED ===');
     console.log('LobbyId:', this.lobbyId);
@@ -50,6 +57,7 @@ export class MapScene extends Phaser.Scene {
     console.log('Map seed:', data.mapSeed);
     console.log('Visited nodes:', data.visitedNodes);
     console.log('Current node:', this.currentNodeId);
+    console.log('Current stage:', this.currentStage);
     console.log('============================');
     
     // Generate map with same seed to get same structure
@@ -114,6 +122,25 @@ export class MapScene extends Phaser.Scene {
 
     // Initialize sound
     this.soundManager = new SoundManager(this);
+    
+    // Stop any music from previous scenes (battle, shop, etc.)
+    console.log('Checking for music from previous scenes...');
+    const allSounds = this.sound.getAllPlaying();
+    console.log('Currently playing sounds:', allSounds.map(s => s.key));
+    
+    allSounds.forEach(sound => {
+      if (sound.key.startsWith('music_')) {
+        console.log(`Stopping previous scene music: ${sound.key}`);
+        sound.stop();
+      }
+    });
+    
+    // Play map music with fade in
+    this.soundManager.playMusicWithFadeIn('music_map', { 
+      volume: 0.35, 
+      loop: true 
+    }, 1500); // 1.5 second fade in
+    console.log('Map music started with fade in');
 
     // Fantasy-styled title with glow effect
     const titleShadow = this.add.text(width / 2 + 2, 42, 'THE PATH AHEAD', {
@@ -206,24 +233,25 @@ export class MapScene extends Phaser.Scene {
     subscribeMap(this.lobbyId, {
       onMapVote: this.handleRemoteVote.bind(this),
       onMapVoteResult: this.handleVoteResult.bind(this),
+      onCursorMove: this.handleCursorMove.bind(this),
     }).then((unsubscribe) => {
       this.unsubscribe = unsubscribe;
       console.log('Map voting system initialized');
     }).catch((error) => {
       console.error('Failed to setup voting:', error);
     });
+    
+    // Setup cursor sending
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      this.sendCursorPosition(pointer.x, pointer.y);
+    });
   }
 
   private handleRemoteVote(userId: string, nodeId: string): void {
-    console.log(`Remote vote from ${userId}: ${nodeId}`);
+    console.log(`📨 Remote vote from ${userId}: ${nodeId}`);
     console.log(`My userId: ${this.userId}`);
     
-    // Don't process our own votes
-    if (userId === this.userId) {
-      console.log('Ignoring own vote');
-      return;
-    }
-    
+    // Store ALL votes including echoes of our own
     this.mapVotes.set(userId, nodeId);
     console.log(`Current vote map:`, Array.from(this.mapVotes.entries()));
     this.updateVotingUI();
@@ -252,39 +280,33 @@ export class MapScene extends Phaser.Scene {
     }
     
     const totalPlayers = this.players.length;
-    const votesReceived = this.mapVotes.size + (this.myVote ? 1 : 0);
+    const votesReceived = this.mapVotes.size;
     
-    console.log(`Vote check: ${votesReceived}/${totalPlayers} votes received`);
-    console.log(`Remote votes:`, this.mapVotes.size);
-    console.log(`My vote:`, this.myVote);
+    console.log(`📊 Vote check: ${votesReceived}/${totalPlayers} votes received`);
+    console.log(`All votes:`, Array.from(this.mapVotes.entries()));
     console.log(`Total players:`, totalPlayers);
+    console.log(`Players:`, this.players.map(p => ({ userId: p.userId, name: p.name })));
     
     if (votesReceived >= totalPlayers) {
       console.log('✅ All votes received, resolving...');
       this.resolveVotes();
     } else {
+      const missingPlayers = this.players.filter(p => !this.mapVotes.has(p.userId));
       console.log(`⏳ Waiting for more votes (${totalPlayers - votesReceived} remaining)`);
+      console.log(`Missing votes from:`, missingPlayers.map(p => p.name));
     }
   }
 
   private resolveVotes(): void {
-    // Count votes for each node
+    // Count votes for each node (mapVotes now includes everyone's votes)
     const voteCounts = new Map<string, string[]>();
     
-    // Add remote votes
+    // Add all votes from mapVotes
     for (const [userId, nodeId] of this.mapVotes.entries()) {
       if (!voteCounts.has(nodeId)) {
         voteCounts.set(nodeId, []);
       }
       voteCounts.get(nodeId)!.push(userId);
-    }
-    
-    // Add my vote
-    if (this.myVote) {
-      if (!voteCounts.has(this.myVote)) {
-        voteCounts.set(this.myVote, []);
-      }
-      voteCounts.get(this.myVote)!.push(this.userId!);
     }
     
     // Find winner(s)
@@ -345,7 +367,7 @@ export class MapScene extends Phaser.Scene {
     
     // Voting status text
     const totalPlayers = this.players.length;
-    const votesReceived = this.mapVotes.size + (this.myVote ? 1 : 0);
+    const votesReceived = this.mapVotes.size;
     
     const statusText = this.add.text(0, -15, 'Voting for Path...', {
       fontSize: '16px',
@@ -364,9 +386,10 @@ export class MapScene extends Phaser.Scene {
     progressText.setOrigin(0.5);
     this.votingUI.add(progressText);
     
-    // Show current votes
-    if (this.myVote) {
-      const myVoteText = this.add.text(0, 30, `Your vote: ${this.getNodeTypeName(this.myVote)}`, {
+    // Show current user's vote
+    const myVoteNodeId = this.mapVotes.get(this.userId!);
+    if (myVoteNodeId) {
+      const myVoteText = this.add.text(0, 30, `Your vote: ${this.getNodeTypeName(myVoteNodeId)}`, {
         fontSize: '12px',
         color: '#44ff88',
         fontFamily: 'Georgia, serif',
@@ -727,9 +750,11 @@ export class MapScene extends Phaser.Scene {
   private async voteForNode(nodeId: string): Promise<void> {
     console.log(`=== VOTING FOR NODE: ${nodeId} ===`);
     
-    // Record my vote
-    this.myVote = nodeId;
-    console.log(`My vote recorded: ${this.myVote}`);
+    // Record my vote locally immediately
+    if (this.userId) {
+      this.mapVotes.set(this.userId, nodeId);
+      console.log(`My vote recorded: ${this.userId} -> ${nodeId}`);
+    }
     this.updateVotingUI();
     
     // Visual feedback
@@ -738,7 +763,7 @@ export class MapScene extends Phaser.Scene {
       visual.showVoted();
     }
     
-    // Send vote
+    // Send vote to network (will echo back and be processed by handleRemoteVote)
     if (this.lobbyId) {
       try {
         await sendMapVote(this.lobbyId, nodeId);
@@ -774,6 +799,71 @@ export class MapScene extends Phaser.Scene {
     });
   }
 
+  private sendCursorPosition(x: number, y: number): void {
+    // Throttle cursor updates
+    const now = Date.now();
+    if (now - this.cursorThrottle < this.CURSOR_THROTTLE_MS) {
+      return;
+    }
+    this.cursorThrottle = now;
+    
+    if (!this.lobbyId || !this.userId) return;
+    
+    // Find player name
+    const player = this.players.find(p => p.userId === this.userId);
+    const userName = player?.name || 'Unknown';
+    
+    sendMapCursor(this.lobbyId, x, y, userName).catch(err => {
+      // Silently fail - don't spam console with cursor errors
+    });
+  }
+
+  private handleCursorMove(cursor: CursorPosition): void {
+    // Don't show our own cursor
+    if (cursor.userId === this.userId) {
+      return;
+    }
+    
+    // Get or create cursor visual
+    let cursorContainer = this.remoteCursors.get(cursor.userId);
+    
+    if (!cursorContainer) {
+      // Create new cursor
+      cursorContainer = this.add.container(cursor.x, cursor.y);
+      cursorContainer.setDepth(9999); // Above everything
+      
+      // Cursor pointer
+      const cursorGraphic = this.add.graphics();
+      cursorGraphic.fillStyle(0x44ff88, 1);
+      cursorGraphic.fillTriangle(0, 0, 0, 20, 8, 12);
+      cursorGraphic.lineStyle(2, 0x000000, 1);
+      cursorGraphic.strokeTriangle(0, 0, 0, 20, 8, 12);
+      cursorContainer.add(cursorGraphic);
+      
+      // Player name label
+      const nameText = this.add.text(12, 0, cursor.userName || 'Player', {
+        fontSize: '12px',
+        color: '#44ff88',
+        fontFamily: 'Arial, sans-serif',
+        backgroundColor: '#000000',
+        padding: { x: 4, y: 2 },
+      });
+      nameText.setOrigin(0, 0);
+      cursorContainer.add(nameText);
+      
+      this.remoteCursors.set(cursor.userId, cursorContainer);
+    }
+    
+    // Update cursor position with smooth tween
+    this.tweens.add({
+      targets: cursorContainer,
+      x: cursor.x,
+      y: cursor.y,
+      duration: 50,
+      ease: 'Linear',
+    });
+  }
+
   private transitionToNode(node: MapNode): void {
     // Get list of visited node IDs
     const visitedNodes = Array.from(this.gameMap.nodes.values())
@@ -783,39 +873,73 @@ export class MapScene extends Phaser.Scene {
     switch (node.type) {
       case NodeType.Battle:
       case NodeType.Boss:
-        console.log('Transitioning to battle...');
+        console.log(`Transitioning to battle... (Stage ${this.currentStage + 1})`);
         
-        // TODO: Generate enemy loadout based on difficulty
-        this.scene.start('CardSelectScene', {
-          lobbyId: this.lobbyId,
-          players: this.players,
-          mapSeed: this.gameMap.seed, // Pass map seed to maintain continuity
-          visitedNodes: visitedNodes, // Pass visited nodes to maintain progress
-          currentNodeId: this.currentNodeId, // Pass current position
+        // Increment stage for each battle
+        const nextStage = this.currentStage + 1;
+        
+        // Fade out map music before transitioning
+        if (this.soundManager) {
+          console.log('Fading out map music before transitioning to card selection...');
+          this.soundManager.fadeOutMusic(1000); // 1 second fade out
+        }
+        
+        // Delay transition to allow fade to complete
+        this.time.delayedCall(1000, () => {
+          this.scene.start('CardSelectScene', {
+            lobbyId: this.lobbyId,
+            players: this.players,
+            mapSeed: this.gameMap.seed, // Pass map seed to maintain continuity
+            visitedNodes: visitedNodes, // Pass visited nodes to maintain progress
+            currentNodeId: this.currentNodeId, // Pass current position
+            stage: nextStage, // Increment stage for next battle
+          });
         });
         break;
         
       case NodeType.Shop:
         console.log('Transitioning to shop...');
-        this.scene.start('ShopScene', {
-          lobbyId: this.lobbyId,
-          players: this.players,
-          mapSeed: this.gameMap.seed,
-          visitedNodes: visitedNodes,
-          currentNodeId: this.currentNodeId,
-          nodeId: node.id,
+        
+        // Fade out map music before transitioning
+        if (this.soundManager) {
+          console.log('Fading out map music before transitioning to shop...');
+          this.soundManager.fadeOutMusic(1000);
+        }
+        
+        // Delay transition to allow fade to complete
+        this.time.delayedCall(1000, () => {
+          this.scene.start('ShopScene', {
+            lobbyId: this.lobbyId,
+            players: this.players,
+            mapSeed: this.gameMap.seed,
+            visitedNodes: visitedNodes,
+            currentNodeId: this.currentNodeId,
+            nodeId: node.id,
+            stage: this.currentStage, // Pass stage (doesn't increment for shops)
+          });
         });
         break;
         
       case NodeType.Event:
         console.log('Transitioning to event...');
-        this.scene.start('EventScene', {
-          lobbyId: this.lobbyId,
-          players: this.players,
-          mapSeed: this.gameMap.seed,
-          visitedNodes: visitedNodes,
-          currentNodeId: this.currentNodeId,
-          nodeId: node.id,
+        
+        // Fade out map music before transitioning
+        if (this.soundManager) {
+          console.log('Fading out map music before transitioning to event...');
+          this.soundManager.fadeOutMusic(1000);
+        }
+        
+        // Delay transition to allow fade to complete
+        this.time.delayedCall(1000, () => {
+          this.scene.start('EventScene', {
+            lobbyId: this.lobbyId,
+            players: this.players,
+            mapSeed: this.gameMap.seed,
+            visitedNodes: visitedNodes,
+            currentNodeId: this.currentNodeId,
+            nodeId: node.id,
+            stage: this.currentStage, // Pass stage (doesn't increment for events)
+          });
         });
         break;
         
@@ -830,6 +954,12 @@ export class MapScene extends Phaser.Scene {
   shutdown(): void {
     // Cleanup
     this.nodeVisuals.clear();
+    
+    // Cleanup cursors
+    for (const cursor of this.remoteCursors.values()) {
+      cursor.destroy();
+    }
+    this.remoteCursors.clear();
     
     // Unsubscribe from network
     if (this.unsubscribe) {
@@ -1046,6 +1176,36 @@ class NodeVisual extends Phaser.GameObjects.Container {
       onComplete: () => {
         this.emit('click');
       },
+    });
+  }
+
+  showVoted(): void {
+    // Visual feedback that this node was voted for
+    this.scene.tweens.add({
+      targets: this,
+      scale: { from: 1, to: 1.2 },
+      duration: 200,
+      yoyo: true,
+      ease: 'Bounce.easeOut',
+    });
+    
+    // Add sparkle effect
+    const sparkle = this.scene.add.text(0, -40, '✓', {
+      fontSize: '32px',
+      color: '#44ff88',
+      fontStyle: 'bold',
+    });
+    sparkle.setOrigin(0.5);
+    this.add(sparkle);
+    
+    // Fade out sparkle
+    this.scene.tweens.add({
+      targets: sparkle,
+      y: -60,
+      alpha: 0,
+      duration: 1000,
+      ease: 'Power2',
+      onComplete: () => sparkle.destroy(),
     });
   }
 }

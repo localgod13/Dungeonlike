@@ -32,6 +32,7 @@ export interface SelectionHandlers {
 export interface MapHandlers {
   onMapVote?: (userId: string, nodeId: string) => void;
   onMapVoteResult?: (selectedNodeId: string, votes: { [nodeId: string]: string[] }) => void;
+  onCursorMove?: (cursor: CursorPosition) => void;
 }
 
 /**
@@ -504,6 +505,15 @@ export async function subscribeMap(
     handlers.onMapVoteResult?.(selectedNodeId, votes);
   });
 
+  // Handle cursor movements
+  channel.on('broadcast', { event: 'map_cursor' }, (payload) => {
+    const cursor = payload.payload as CursorPosition;
+    // Don't process our own cursor
+    if (cursor.userId !== userId) {
+      handlers.onCursorMove?.(cursor);
+    }
+  });
+
   // Subscribe to channel
   const { error } = await channel.subscribe();
   if (error) {
@@ -571,4 +581,38 @@ export async function sendMapVoteResult(
   }
 
   console.log(`Sent map vote result: ${selectedNodeId}`, votes);
+}
+
+/**
+ * Send cursor position update for map scene
+ */
+export async function sendMapCursor(
+  lobbyId: string,
+  x: number,
+  y: number,
+  userName?: string,
+  color?: string
+): Promise<void> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
+
+  if (!userId) {
+    return; // Silently fail if not authenticated
+  }
+
+  const cursor: CursorPosition = {
+    x,
+    y,
+    userId,
+    userName,
+    color,
+  };
+
+  const channel = supabase.channel(`map:${lobbyId}`);
+  // Fire and forget - don't await
+  channel.send({
+    type: 'broadcast',
+    event: 'map_cursor',
+    payload: cursor,
+  });
 }

@@ -38,12 +38,25 @@ export const EffectSchema = z.object({
   note: z.string().optional(),
 });
 
+export const DotEffectSchema = z.object({
+  damage: z.number(),
+  duration: z.number(),
+  source: ActorIdSchema,
+  type: z.enum(['poison', 'burn']),
+});
+
+export const DotEntrySchema = z.object({
+  actorId: ActorIdSchema,
+  effects: z.array(DotEffectSchema),
+});
+
 export const ResolvePayloadSchema = z.object({
   turn: z.number(),
   seed: z.number(),
   order: z.array(ActorIdSchema),
   effects: z.array(EffectSchema),
   post: z.array(ActorSchema),
+  dots: z.array(DotEntrySchema).optional(), // Serialized DOT effects
 });
 
 // Cursor position schema

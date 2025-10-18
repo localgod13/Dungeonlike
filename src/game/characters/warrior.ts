@@ -28,9 +28,19 @@ export const WARRIOR_SPRITES: Record<string, SpriteSheetConfig> = {
     frameWidth: 162,  // 1620 / 10 columns
     frameHeight: 162,
   },
+  attack: {
+    key: 'warrior_attack',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/warrior/Attack1.png',
+    frameWidth: 162,  // 1134 / 7 columns
+    frameHeight: 162, // 1 row
+  },
+  hurt: {
+    key: 'warrior_hurt',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/warrior/Take hit.png',
+    frameWidth: 162,  // 485 / 3 columns (rounded: 162)
+    frameHeight: 162, // 1 row
+  },
   // Future animations can be added here:
-  // attack: { ... },
-  // hurt: { ... },
   // death: { ... },
 };
 
@@ -42,6 +52,20 @@ export const WARRIOR_ANIMATIONS: Record<string, AnimationConfig> = {
     frameCount: 10,
     frameRate: 8,
     repeat: -1, // Loop forever
+  },
+  attack: {
+    key: 'warrior_attack_anim',
+    spriteKey: 'warrior_attack',
+    frameCount: 7,
+    frameRate: 14,
+    repeat: 0, // Play once
+  },
+  hurt: {
+    key: 'warrior_hurt_anim',
+    spriteKey: 'warrior_hurt',
+    frameCount: 3,
+    frameRate: 10,
+    repeat: 0, // Play once
   },
 };
 

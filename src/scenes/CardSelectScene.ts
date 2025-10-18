@@ -10,6 +10,7 @@ import {
 import { Loadout } from '../net/proto';
 import { CardSelectUI } from '../ui/cardSelectUi';
 import { SoundManager } from '../game/sound';
+import { getCardsForClass } from '../game/cards';
 
 /**
  * Card selection scene - players choose up to 4 cards before battle
@@ -31,6 +32,7 @@ export class CardSelectScene extends Phaser.Scene {
   private mapSeed: number | undefined = undefined; // For map continuity
   private visitedNodes: string[] = []; // Track visited nodes for map progression
   private currentNodeId: string | null = null; // Track current position on map
+  private currentStage = 1; // Track battle stage number
 
   // UI
   private cardUI!: CardSelectUI;
@@ -51,18 +53,20 @@ export class CardSelectScene extends Phaser.Scene {
     super('CardSelectScene');
   }
 
-  init(data: { lobbyId: string; players: Player[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string }): void {
+  init(data: { lobbyId: string; players: Player[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number }): void {
     this.lobbyId = data.lobbyId;
     this.players = data.players || [];
     this.mapSeed = data.mapSeed; // Store map seed for continuity
     this.visitedNodes = data.visitedNodes || []; // Store visited nodes
     this.currentNodeId = data.currentNodeId || null; // Store current position
+    this.currentStage = data.stage || 1; // Store battle stage number
     
     console.log(`Card selection initialized for lobby: ${this.lobbyId}`);
     console.log(`Map seed:`, this.mapSeed);
     console.log(`Players:`, this.players);
     console.log(`Visited nodes:`, this.visitedNodes);
     console.log(`Current node:`, this.currentNodeId);
+    console.log(`Battle stage:`, this.currentStage);
   }
 
   async create(): Promise<void> {
@@ -118,9 +122,19 @@ export class CardSelectScene extends Phaser.Scene {
     }, 1500); // 1.5 second fade in
     console.log('Card selection music started with fade in');
 
-    // Create UI
+    // Get current player's class
+    const currentPlayer = this.players.find(p => p.userId === this.userId);
+    const playerClass = currentPlayer?.selectedClass || 'Warrior';
+    console.log(`Current player class: ${playerClass}`);
+    
+    // Get class-specific card pool
+    const classCardPool = getCardsForClass(playerClass);
+    console.log(`Loaded ${classCardPool.length} cards for ${playerClass} class`);
+
+    // Create UI with class-specific cards
     this.cardUI = new CardSelectUI(
       this,
+      classCardPool,
       (cardId) => this.handleCardPick(cardId),
       (outId, inId) => this.handleCardSwap(outId, inId)
     );
@@ -446,6 +460,7 @@ export class CardSelectScene extends Phaser.Scene {
       mapSeed: this.mapSeed, // Pass map seed for continuity
       visitedNodes: this.visitedNodes, // Pass visited nodes for map progression
       currentNodeId: this.currentNodeId, // Pass current position
+      stage: this.currentStage, // Pass battle stage number
     });
   }
 

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { COLORS } from '../game/config';
 import { preloadSounds } from '../game/sound';
 import { preloadCharacterSprites } from '../game/characterSprites';
+import { preloadEnemySprites } from '../game/enemySprites';
 
 /**
  * Preload scene - asset loading with progress bar
@@ -80,6 +81,10 @@ export class Preload extends Phaser.Scene {
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/Battleground1.png'
     );
     this.load.image(
+      'battleground2',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/Battleground2.png'
+    );
+    this.load.image(
       'cardselectbg',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/cardselectbg.png'
     );
@@ -105,6 +110,11 @@ export class Preload extends Phaser.Scene {
     console.log('[Preload] Loading character sprites...');
     preloadCharacterSprites(this);
     console.log('[Preload] Character sprites queued for loading');
+
+    // Load enemy sprites
+    console.log('[Preload] Loading enemy sprites...');
+    preloadEnemySprites(this);
+    console.log('[Preload] Enemy sprites queued for loading');
   }
 
   create(): void {

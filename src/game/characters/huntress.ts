@@ -28,9 +28,25 @@ export const HUNTRESS_SPRITES: Record<string, SpriteSheetConfig> = {
     frameWidth: 100,  // 1000 / 10 columns
     frameHeight: 100,
   },
+  attack: {
+    key: 'huntress_attack',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/huntress/Attack.png',
+    frameWidth: 100,  // 600 / 6 columns
+    frameHeight: 100, // 1 row
+  },
+  arrow: {
+    key: 'huntress_arrow',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/huntress/Static.png',
+    frameWidth: 24,   // Arrow projectile
+    frameHeight: 5,
+  },
+  hurt: {
+    key: 'huntress_hurt',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/huntress/Get Hit.png',
+    frameWidth: 100,  // 300 / 3 columns
+    frameHeight: 100, // 1 row
+  },
   // Future animations can be added here:
-  // attack: { ... },
-  // hurt: { ... },
   // death: { ... },
 };
 
@@ -43,6 +59,20 @@ export const HUNTRESS_ANIMATIONS: Record<string, AnimationConfig> = {
     frameRate: 8,
     repeat: -1, // Loop forever
   },
+  attack: {
+    key: 'huntress_attack_anim',
+    spriteKey: 'huntress_attack',
+    frameCount: 6,
+    frameRate: 12,
+    repeat: 0, // Play once
+  },
+  hurt: {
+    key: 'huntress_hurt_anim',
+    spriteKey: 'huntress_hurt',
+    frameCount: 3,
+    frameRate: 10,
+    repeat: 0, // Play once
+  },
 };
 
 /**
@@ -51,10 +81,16 @@ export const HUNTRESS_ANIMATIONS: Record<string, AnimationConfig> = {
 export function preloadHuntressSprites(scene: Phaser.Scene): void {
   Object.values(HUNTRESS_SPRITES).forEach((config) => {
     console.log(`Loading Huntress sprite: ${config.key}`);
-    scene.load.spritesheet(config.key, config.url, {
-      frameWidth: config.frameWidth,
-      frameHeight: config.frameHeight,
-    });
+    
+    // Arrow is a simple image, not an animated spritesheet
+    if (config.key === 'huntress_arrow') {
+      scene.load.image(config.key, config.url);
+    } else {
+      scene.load.spritesheet(config.key, config.url, {
+        frameWidth: config.frameWidth,
+        frameHeight: config.frameHeight,
+      });
+    }
   });
 }
 
