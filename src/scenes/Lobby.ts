@@ -8,6 +8,7 @@ import {
   leaveLobby as leaveLobbyNet,
   startGame,
   getLobbyState,
+  selectClass,
   LobbyMember,
   Lobby as LobbyData,
 } from '../net/lobby';
@@ -304,13 +305,22 @@ export class Lobby extends Phaser.Scene {
         this.members = members;
         this.renderLobbyUI();
       },
-      onGameStart: (startedAt) => {
+      onGameStart: async (startedAt) => {
         console.log(`Game started at: ${startedAt}`);
         // Don't call startRun() here - host already called it when clicking button
         // Non-host clients will call it from here
         const isHost = this.members.find((m) => m.user_id === this.userId)?.is_host ?? false;
         if (!isHost) {
-          this.startRun();
+          // Fetch the seed from the lobby so all players use the same map
+          try {
+            const state = await getLobbyState(this.lobbyId!);
+            const seed = state.lobby.map_seed || undefined;
+            console.log(`Non-host received map seed: ${seed}`);
+            this.startRun(seed);
+          } catch (error) {
+            console.error('Failed to fetch lobby seed:', error);
+            this.startRun(); // Fallback to no seed
+          }
         }
       },
     });
@@ -354,10 +364,64 @@ export class Lobby extends Phaser.Scene {
     });
     this.lobbyContainer.add(copyBtn);
 
+    // Class selection title
+    const classTitle = this.add.text(centerX, 160, 'Select Your Class:', {
+      fontSize: '20px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    classTitle.setOrigin(0.5);
+    this.lobbyContainer.add(classTitle);
+
+    // Class selection buttons
+    const classes = ['Warrior', 'Huntress', 'Mage'];
+    const buttonWidth = 140;
+    const buttonGap = 20;
+    const totalWidth = (buttonWidth * 3) + (buttonGap * 2);
+    const startX = centerX - totalWidth / 2 + buttonWidth / 2;
+
+    classes.forEach((className, index) => {
+      const x = startX + (buttonWidth + buttonGap) * index;
+      const y = 200;
+
+      // Check if class is taken by someone else
+      const isTaken = this.members.some(
+        (m) => m.selected_class === className && m.user_id !== this.userId
+      );
+
+      // Check if this is our selected class
+      const currentMember = this.members.find((m) => m.user_id === this.userId);
+      const isSelected = currentMember?.selected_class === className;
+
+      const classBtn = this.createClassButton(
+        x,
+        y,
+        buttonWidth,
+        50,
+        className,
+        isTaken,
+        isSelected,
+        async () => {
+          if (!this.lobbyId || isTaken) return;
+          
+          try {
+            // If already selected, deselect. Otherwise, select this class
+            const newClass = isSelected ? null : className;
+            await selectClass(this.lobbyId, newClass);
+          } catch (error: any) {
+            console.error('Failed to select class:', error);
+            alert(error.message || 'Failed to select class');
+          }
+        }
+      );
+      this.lobbyContainer.add(classBtn);
+    });
+
     // Render 3 slots
     for (let i = 0; i < 3; i++) {
       const member = this.members[i];
-      const slotY = startY + i * 100;
+      const slotY = startY + 140 + i * 100;
       const slot = this.renderMemberSlot(centerX, slotY, i + 1, member);
       this.lobbyContainer.add(slot);
     }
@@ -370,7 +434,7 @@ export class Lobby extends Phaser.Scene {
     // Ready button
     const readyBtn = this.createButtonObj(
       centerX - 120,
-      startY + 340,
+      startY + 480,
       200,
       50,
       this.isReady ? '✓ Ready' : 'Ready',
@@ -392,7 +456,7 @@ export class Lobby extends Phaser.Scene {
     this.lobbyContainer.add(readyBtn);
 
     // Leave button
-    const leaveBtn = this.createButtonObj(centerX + 120, startY + 340, 200, 50, 'Leave', async () => {
+    const leaveBtn = this.createButtonObj(centerX + 120, startY + 480, 200, 50, 'Leave', async () => {
       await this.handleLeaveLobby();
     });
     this.lobbyContainer.add(leaveBtn);
@@ -401,14 +465,15 @@ export class Lobby extends Phaser.Scene {
     if (isHost) {
       const allReady = this.members.every((m) => m.ready);
       const enough = this.members.length >= 1; // Allow single player
-      const canStart = allReady && enough;
+      const allHaveClass = this.members.every((m) => m.selected_class !== null);
+      const canStart = allReady && enough && allHaveClass;
 
       const startBtn = this.createButtonObj(
         centerX,
-        startY + 410,
+        startY + 550,
         250,
         60,
-        canStart ? 'Start Run' : `Need ${enough ? 'all ready' : '1+ players'}`,
+        canStart ? 'Start Run' : !allHaveClass ? 'All must pick class' : `Need ${enough ? 'all ready' : '1+ players'}`,
         async () => {
           if (!canStart || !this.lobbyId) return;
           try {
@@ -445,8 +510,11 @@ export class Lobby extends Phaser.Scene {
     container.add(bg);
 
     if (member) {
-      // Name
-      const nameText = this.add.text(-200, -10, member.name, {
+      // Name and Class
+      const displayText = member.selected_class 
+        ? `${member.name} - ${member.selected_class}`
+        : member.name;
+      const nameText = this.add.text(-200, -10, displayText, {
         fontSize: '24px',
         color: '#ffffff',
         fontFamily: 'Arial, sans-serif',
@@ -534,6 +602,79 @@ export class Lobby extends Phaser.Scene {
     return container;
   }
 
+  private createClassButton(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    className: string,
+    isTaken: boolean,
+    isSelected: boolean,
+    callback: () => void
+  ): Phaser.GameObjects.Container {
+    const container = this.add.container(x, y);
+
+    // Determine color based on state
+    let bgColor = COLORS.UI_ACCENT;
+    if (isTaken) {
+      bgColor = 0x555555; // Gray for taken
+    } else if (isSelected) {
+      bgColor = 0x27ae60; // Green for selected
+    }
+
+    const bg = this.add.rectangle(0, 0, width, height, bgColor, 1);
+    bg.setStrokeStyle(2, isSelected ? 0x44ff44 : 0xffffff, 0.8);
+    
+    if (!isTaken) {
+      bg.setInteractive({ useHandCursor: true });
+    }
+
+    const label = this.add.text(0, 0, className, {
+      fontSize: '18px',
+      color: isTaken ? '#888888' : '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    label.setOrigin(0.5);
+
+    if (!isTaken) {
+      bg.on('pointerover', () => {
+        if (!isSelected) {
+          bg.setFillStyle(COLORS.UI_ACCENT, 0.8);
+        }
+      });
+
+      bg.on('pointerout', () => {
+        bg.setFillStyle(isSelected ? 0x27ae60 : COLORS.UI_ACCENT, 1);
+      });
+
+      bg.on('pointerdown', callback);
+    }
+
+    // Add status text if taken or selected
+    if (isTaken) {
+      const takenText = this.add.text(0, 20, 'Taken', {
+        fontSize: '12px',
+        color: '#ff6666',
+        fontFamily: 'Arial, sans-serif',
+      });
+      takenText.setOrigin(0.5);
+      container.add(takenText);
+    } else if (isSelected) {
+      const selectedText = this.add.text(0, 20, '✓', {
+        fontSize: '14px',
+        color: '#44ff44',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+      });
+      selectedText.setOrigin(0.5);
+      container.add(selectedText);
+    }
+
+    container.add([bg, label]);
+    return container;
+  }
+
   private createButton(
     x: number,
     y: number,
@@ -616,14 +757,16 @@ export class Lobby extends Phaser.Scene {
   }
 
   private startRun(seed?: number): void {
-    // Prepare player data for card selection scene
+    // Prepare player data for card selection scene including class info
     const players = this.members.map((member) => ({
       userId: member.user_id,
       name: member.name,
       isHost: member.is_host,
+      selectedClass: member.selected_class || 'Warrior', // Fallback to Warrior if somehow null
     }));
 
     console.log(`Starting card selection with ${players.length} players:`, players);
+    console.log(`Map seed for this run: ${seed}`);
     
     // Fade out title music before transitioning to card selection
     if (this.soundManager) {
@@ -633,10 +776,11 @@ export class Lobby extends Phaser.Scene {
     
     // Delay scene transition to allow fade to start
     this.time.delayedCall(200, () => {
-      // Transition to CardSelectScene instead of directly to BattleScene
+      // Transition to CardSelectScene with map seed
       this.scene.start('CardSelectScene', { 
         lobbyId: this.lobbyId,
         players: players,
+        mapSeed: seed, // Pass the synchronized map seed
       });
     });
   }

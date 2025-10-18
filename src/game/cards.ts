@@ -29,7 +29,7 @@ export const CARD_POOL: Card[] = [
     ap: 3, 
     target: 'enemy', 
     opcode: 'DMG', 
-    power: 50, 
+    power: 6, 
     desc: 'Deal 6 damage',
     type: 'attack'
   },

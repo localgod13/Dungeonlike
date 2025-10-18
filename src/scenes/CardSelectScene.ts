@@ -19,6 +19,7 @@ interface Player {
   userId: string;
   name: string;
   isHost: boolean;
+  selectedClass?: string; // 'Warrior', 'Huntress', or 'Mage'
 }
 
 export class CardSelectScene extends Phaser.Scene {
@@ -58,6 +59,7 @@ export class CardSelectScene extends Phaser.Scene {
     this.currentNodeId = data.currentNodeId || null; // Store current position
     
     console.log(`Card selection initialized for lobby: ${this.lobbyId}`);
+    console.log(`Map seed:`, this.mapSeed);
     console.log(`Players:`, this.players);
     console.log(`Visited nodes:`, this.visitedNodes);
     console.log(`Current node:`, this.currentNodeId);
@@ -192,7 +194,8 @@ export class CardSelectScene extends Phaser.Scene {
 
     this.players.forEach((player, index) => {
       const y = 30 + index * 30;
-      const playerText = this.add.text(0, y, `${player.name}: Not Ready`, {
+      const displayName = player.selectedClass ? `${player.name} (${player.selectedClass})` : player.name;
+      const playerText = this.add.text(0, y, `${displayName}: Not Ready`, {
         fontSize: '16px',
         color: '#aaaaaa',
         fontFamily: 'Arial, sans-serif',
@@ -354,7 +357,8 @@ export class CardSelectScene extends Phaser.Scene {
     if (text) {
       const player = this.players.find(p => p.userId === userId);
       const name = player?.name || 'Unknown';
-      text.setText(`${name}: ${ready ? '✓ Ready' : 'Not Ready'}`);
+      const displayName = player?.selectedClass ? `${name} (${player.selectedClass})` : name;
+      text.setText(`${displayName}: ${ready ? '✓ Ready' : 'Not Ready'}`);
       text.setColor(ready ? '#44aa44' : '#aaaaaa');
     }
   }
@@ -422,11 +426,17 @@ export class CardSelectScene extends Phaser.Scene {
       userId: player.userId,
       side: 'party' as const,
       name: player.name,
+      selectedClass: player.selectedClass || 'Warrior',
       hp: 100,
       maxHp: 100,
       ap: 5,
       isHost: player.isHost,
     }));
+
+    console.log('=== CARD SELECT SCENE TRANSITION ===');
+    console.log('this.players:', this.players);
+    console.log('battlePlayers with classes:', battlePlayers.map(p => ({ name: p.name, class: p.selectedClass })));
+    console.log('=== END TRANSITION ===');
 
     // Transition to battle (card music will be handled by battle scene)
     this.scene.start('BattleScene', {

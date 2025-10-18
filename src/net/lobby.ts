@@ -12,6 +12,7 @@ export interface LobbyMember {
   name: string;
   is_host: boolean;
   ready: boolean;
+  selected_class: string | null; // 'Warrior', 'Huntress', or 'Mage'
   joined_at: string;
 }
 
@@ -21,6 +22,7 @@ export interface Lobby {
   created_by: string;
   created_at: string;
   started_at: string | null;
+  map_seed: number | null; // Seed for map generation
 }
 
 export interface LobbyState {
@@ -289,6 +291,53 @@ export async function setReady(lobbyId: string, ready: boolean): Promise<void> {
 }
 
 /**
+ * Select a class for current user in lobby
+ * @param lobbyId - Lobby ID
+ * @param className - Class name ('Warrior', 'Huntress', or 'Mage')
+ */
+export async function selectClass(lobbyId: string, className: string | null): Promise<void> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
+
+  if (!userId) {
+    throw new Error('Not authenticated');
+  }
+
+  // If selecting a class (not null), check if it's already taken
+  if (className) {
+    const { data: members, error: fetchError } = await supabase
+      .from('lobby_members')
+      .select('user_id, selected_class')
+      .eq('lobby_id', lobbyId);
+
+    if (fetchError) {
+      throw new Error(`Failed to check class availability: ${fetchError.message}`);
+    }
+
+    // Check if another player has already selected this class
+    const isClassTaken = members?.some(
+      (m) => m.selected_class === className && m.user_id !== userId
+    );
+
+    if (isClassTaken) {
+      throw new Error(`Class ${className} is already taken by another player`);
+    }
+  }
+
+  const { error } = await supabase
+    .from('lobby_members')
+    .update({ selected_class: className })
+    .eq('lobby_id', lobbyId)
+    .eq('user_id', userId);
+
+  if (error) {
+    throw new Error(`Failed to select class: ${error.message}`);
+  }
+
+  console.log(`Selected class: ${className} in lobby: ${lobbyId}`);
+}
+
+/**
  * Leave a lobby
  * @param lobbyId - Lobby ID
  */
@@ -342,7 +391,10 @@ export async function startGame(lobbyId: string): Promise<number> {
 
   const { error } = await supabase
     .from('lobbies')
-    .update({ started_at: new Date().toISOString() })
+    .update({ 
+      started_at: new Date().toISOString(),
+      map_seed: seed // Store seed for all players to access
+    })
     .eq('id', lobbyId);
 
   if (error) {

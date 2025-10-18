@@ -43,12 +43,14 @@ export class MapScene extends Phaser.Scene {
     this.players = data.players || [];
     this.currentNodeId = data.currentNodeId || null;
     
-    console.log('Map scene initialized', { 
-      lobbyId: this.lobbyId, 
-      seed: data.mapSeed,
-      visitedNodes: data.visitedNodes,
-      currentNodeId: this.currentNodeId
-    });
+    console.log('=== MAP SCENE INITIALIZED ===');
+    console.log('LobbyId:', this.lobbyId);
+    console.log('Players:', this.players);
+    console.log('Player count:', this.players.length);
+    console.log('Map seed:', data.mapSeed);
+    console.log('Visited nodes:', data.visitedNodes);
+    console.log('Current node:', this.currentNodeId);
+    console.log('============================');
     
     // Generate map with same seed to get same structure
     this.gameMap = generateMap({ seed: data.mapSeed });
@@ -92,9 +94,17 @@ export class MapScene extends Phaser.Scene {
     console.log(`Map generated with ${this.gameMap.nodes.size} nodes, ${data.visitedNodes?.length || 0} visited`);
   }
 
-  create(): void {
+  async create(): Promise<void> {
     const width = this.scale.width;
     const height = this.scale.height;
+
+    // Get current user ID
+    this.userId = await this.getCurrentUserId();
+    console.log('Current userId:', this.userId);
+    
+    // Determine if host (first player)
+    this.isHost = this.players.length > 0 && this.players[0].userId === this.userId;
+    console.log('Is host:', this.isHost);
 
     // Fantasy dark background with gradient
     this.cameras.main.setBackgroundColor('#0d0820');
@@ -206,15 +216,21 @@ export class MapScene extends Phaser.Scene {
 
   private handleRemoteVote(userId: string, nodeId: string): void {
     console.log(`Remote vote from ${userId}: ${nodeId}`);
+    console.log(`My userId: ${this.userId}`);
     
     // Don't process our own votes
-    if (userId === this.userId) return;
+    if (userId === this.userId) {
+      console.log('Ignoring own vote');
+      return;
+    }
     
     this.mapVotes.set(userId, nodeId);
+    console.log(`Current vote map:`, Array.from(this.mapVotes.entries()));
     this.updateVotingUI();
     
     // If host, check if all players voted
     if (this.isHost) {
+      console.log('Host checking if all votes are in...');
       this.checkAllVotesIn();
     }
   }
@@ -230,14 +246,24 @@ export class MapScene extends Phaser.Scene {
   }
 
   private checkAllVotesIn(): void {
-    if (!this.isHost) return;
+    if (!this.isHost) {
+      console.log('Not host, skipping vote check');
+      return;
+    }
     
     const totalPlayers = this.players.length;
     const votesReceived = this.mapVotes.size + (this.myVote ? 1 : 0);
     
+    console.log(`Vote check: ${votesReceived}/${totalPlayers} votes received`);
+    console.log(`Remote votes:`, this.mapVotes.size);
+    console.log(`My vote:`, this.myVote);
+    console.log(`Total players:`, totalPlayers);
+    
     if (votesReceived >= totalPlayers) {
-      console.log('All votes received, resolving...');
+      console.log('✅ All votes received, resolving...');
       this.resolveVotes();
+    } else {
+      console.log(`⏳ Waiting for more votes (${totalPlayers - votesReceived} remaining)`);
     }
   }
 
@@ -285,11 +311,18 @@ export class MapScene extends Phaser.Scene {
       votesObject[nodeId] = voters;
     }
     
-    // Broadcast result
+    // Broadcast result to other players
     if (this.lobbyId) {
       sendMapVoteResult(this.lobbyId, selectedNodeId, votesObject).catch(err => {
         console.error('Failed to send vote result:', err);
       });
+    }
+    
+    // Host also transitions to the selected node
+    const node = this.gameMap.nodes.get(selectedNodeId);
+    if (node) {
+      console.log(`Host transitioning to node: ${selectedNodeId}`);
+      this.transitionToNode(node);
     }
   }
 
@@ -692,22 +725,37 @@ export class MapScene extends Phaser.Scene {
   }
 
   private async voteForNode(nodeId: string): Promise<void> {
+    console.log(`=== VOTING FOR NODE: ${nodeId} ===`);
+    
+    // Record my vote
     this.myVote = nodeId;
+    console.log(`My vote recorded: ${this.myVote}`);
     this.updateVotingUI();
+    
+    // Visual feedback
+    const visual = this.nodeVisuals.get(nodeId);
+    if (visual) {
+      visual.showVoted();
+    }
     
     // Send vote
     if (this.lobbyId) {
       try {
         await sendMapVote(this.lobbyId, nodeId);
-        console.log(`Voted for node: ${nodeId}`);
+        console.log(`✅ Vote sent successfully for node: ${nodeId}`);
       } catch (error) {
-        console.error('Failed to send vote:', error);
+        console.error('❌ Failed to send vote:', error);
       }
+    } else {
+      console.log('⚠️ No lobbyId, not sending vote');
     }
     
     // If host, check if all votes are in
     if (this.isHost) {
+      console.log('I am host, checking votes...');
       this.checkAllVotesIn();
+    } else {
+      console.log('I am not host, waiting for result...');
     }
   }
 

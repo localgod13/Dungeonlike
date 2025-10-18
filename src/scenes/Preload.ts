@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { COLORS } from '../game/config';
 import { preloadSounds } from '../game/sound';
+import { preloadCharacterSprites } from '../game/characterSprites';
 
 /**
  * Preload scene - asset loading with progress bar
@@ -99,6 +100,11 @@ export class Preload extends Phaser.Scene {
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/magic.png'
     );
     console.log('[Preload] Card images queued for loading');
+
+    // Load character sprites
+    console.log('[Preload] Loading character sprites...');
+    preloadCharacterSprites(this);
+    console.log('[Preload] Character sprites queued for loading');
   }
 
   create(): void {

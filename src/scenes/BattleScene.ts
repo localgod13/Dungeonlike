@@ -33,6 +33,7 @@ import { HandUI } from '../ui/handUi';
 import { getCardById, requiresTarget } from '../game/cards';
 import { startBattleAP, refreshAP, canAfford, spendAP } from '../game/economy';
 import { SoundManager } from '../game/sound';
+import { createCharacterAnimations, createCharacterSprite, hasSprite, CharacterClass } from '../game/characterSprites';
 
 /**
  * Side-view battle scene with deterministic combat pipeline
@@ -42,6 +43,7 @@ import { SoundManager } from '../game/sound';
 interface BattleActor extends Actor {
   userId?: string;
   isHost?: boolean;
+  selectedClass?: string; // 'Warrior', 'Huntress', or 'Mage'
 }
 
 export class BattleScene extends Phaser.Scene {
@@ -125,6 +127,8 @@ export class BattleScene extends Phaser.Scene {
     
     console.log('=== BATTLE SCENE INIT DEBUG ===');
     console.log('Received data:', data);
+    console.log('Players data:', data.players);
+    console.log('Player classes:', data.players?.map(p => ({ name: p.name, class: p.selectedClass })));
     console.log('Loadouts in data:', data.loadouts);
     console.log('Visited nodes:', this.visitedNodes);
     console.log('Current node:', this.currentNodeId);
@@ -168,6 +172,9 @@ export class BattleScene extends Phaser.Scene {
 
     // Determine if host (first player)
     this.isHost = this.players.length > 0 && this.players[0].userId === this.userId;
+
+    // Create character animations
+    createCharacterAnimations(this);
 
     // Create initial enemies
     this.enemies = [
@@ -297,11 +304,11 @@ export class BattleScene extends Phaser.Scene {
     const centerX = this.scale.width / 2;
     const centerY = this.scale.height / 2;
 
-    // Create party slots (left side)
+    // Create party slots (left side) - moved further left with more spacing
     for (let i = 0; i < 3; i++) {
       const player = this.players[i];
       const slot = this.createPartySlot(
-        centerX - 200 + i * 100,
+        centerX - 450 + i * 180,
         centerY,
         player
       );
@@ -327,43 +334,71 @@ export class BattleScene extends Phaser.Scene {
   ): Phaser.GameObjects.Container {
     const container = this.add.container(x, y);
 
-    // Slot background
+    // Slot background (will be hidden if sprite is used)
     const bg = this.add.rectangle(0, 0, 80, 120, 0x1a1a1a, 0.8);
     bg.setStrokeStyle(2, 0xffffff, 0.8);
     container.add(bg);
 
     if (player) {
-      // Player avatar (simple robed figure)
-      const avatar = this.add.graphics();
-      avatar.lineStyle(2, 0xffffff, 0.8);
+      // Player avatar - use sprite if class has one, otherwise use stick figure
+      const battlePlayer = player as BattleActor;
+      const characterClass = battlePlayer.selectedClass as CharacterClass;
       
-      // Simple stick figure
-      avatar.beginPath();
-      avatar.moveTo(0, -40); // Head
-      avatar.lineTo(0, -20); // Body
-      avatar.moveTo(-15, -10); // Left arm
-      avatar.lineTo(15, -10); // Right arm
-      avatar.moveTo(-10, 20); // Left leg
-      avatar.lineTo(10, 20); // Right leg
-      avatar.strokePath();
+      let spriteCreated = false;
+      if (characterClass && hasSprite(characterClass)) {
+        // Try to use character sprite
+        try {
+          const sprite = createCharacterSprite(this, 0, -10, characterClass, 2.5);
+          if (sprite) {
+            container.add(sprite);
+            spriteCreated = true;
+            bg.setVisible(false); // Hide background box when using sprite
+            console.log(`✓ Using sprite for ${player.name} (${characterClass})`);
+          }
+        } catch (error) {
+          console.error(`Failed to create sprite for ${characterClass}:`, error);
+        }
+      }
+      
+      // Fallback to stick figure if sprite wasn't created
+      if (!spriteCreated) {
+        console.log(`Using fallback stick figure for ${player.name}`);
+        const avatar = this.add.graphics();
+        avatar.lineStyle(2, 0xffffff, 0.8);
+        
+        // Simple stick figure
+        avatar.beginPath();
+        avatar.moveTo(0, -40); // Head
+        avatar.lineTo(0, -20); // Body
+        avatar.moveTo(-15, -10); // Left arm
+        avatar.lineTo(15, -10); // Right arm
+        avatar.moveTo(-10, 20); // Left leg
+        avatar.lineTo(10, 20); // Right leg
+        avatar.strokePath();
 
-      // Robe
-      avatar.lineStyle(2, 0x4a90e2, 0.8);
-      avatar.beginPath();
-      avatar.moveTo(-20, -15);
-      avatar.lineTo(20, -15);
-      avatar.lineTo(15, 30);
-      avatar.lineTo(-15, 30);
-      avatar.closePath();
-      avatar.strokePath();
+        // Robe
+        avatar.lineStyle(2, 0x4a90e2, 0.8);
+        avatar.beginPath();
+        avatar.moveTo(-20, -15);
+        avatar.lineTo(20, -15);
+        avatar.lineTo(15, 30);
+        avatar.lineTo(-15, 30);
+        avatar.closePath();
+        avatar.strokePath();
 
-      container.add(avatar);
+        container.add(avatar);
+      }
 
-      // Player name
-      const nameText = this.add.text(0, 50, player.name, {
-        fontSize: '12px',
+      // Player name and class
+      console.log(`Creating party slot for ${player.name}, selectedClass:`, battlePlayer.selectedClass);
+      const displayName = battlePlayer.selectedClass 
+        ? `${player.name}\n(${battlePlayer.selectedClass})`
+        : player.name;
+      const nameText = this.add.text(0, 50, displayName, {
+        fontSize: '11px',
         color: '#ffffff',
         fontFamily: 'Arial, sans-serif',
+        align: 'center',
       });
       nameText.setOrigin(0.5);
       container.add(nameText);
@@ -2904,7 +2939,15 @@ export class BattleScene extends Phaser.Scene {
 
   private getActorName(actorId: ActorId): string {
     const actor = [...this.players, ...this.enemies].find(a => a.id === actorId);
-    return actor?.name || 'Unknown';
+    if (!actor) return 'Unknown';
+    
+    // Include class for players
+    const battleActor = actor as BattleActor;
+    if (battleActor.selectedClass && actor.side === 'party') {
+      return `${actor.name} (${battleActor.selectedClass})`;
+    }
+    
+    return actor.name;
   }
 
   private showPlayerLockedNotification(playerName: string, actionType: ActionType, actionCount: number = 1): void {
