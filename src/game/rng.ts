@@ -124,6 +124,8 @@ export function getRNG(): SeededRNG {
 }
 
 export function generateRunSeed(): number {
-  return Math.floor(Math.random() * 0xffffffff);
+  // Use max PostgreSQL integer value (2^31 - 1) to avoid database overflow
+  // PostgreSQL integer range: -2,147,483,648 to 2,147,483,647
+  return Math.floor(Math.random() * 2147483647);
 }
 

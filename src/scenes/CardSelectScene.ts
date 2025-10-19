@@ -10,6 +10,7 @@ import {
 import { Loadout } from '../net/proto';
 import { CardSelectUI } from '../ui/cardSelectUi';
 import { SoundManager } from '../game/sound';
+import { getCardsForClass } from '../game/cards';
 
 /**
  * Card selection scene - players choose up to 4 cards before battle
@@ -19,6 +20,7 @@ interface Player {
   userId: string;
   name: string;
   isHost: boolean;
+  selectedClass?: string; // 'Warrior', 'Huntress', or 'Mage'
 }
 
 export class CardSelectScene extends Phaser.Scene {
@@ -27,6 +29,10 @@ export class CardSelectScene extends Phaser.Scene {
   private isHost = false;
   private players: Player[] = [];
   private unsubscribe: (() => void) | null = null;
+  private mapSeed: number | undefined = undefined; // For map continuity
+  private visitedNodes: string[] = []; // Track visited nodes for map progression
+  private currentNodeId: string | null = null; // Track current position on map
+  private currentStage = 1; // Track battle stage number
 
   // UI
   private cardUI!: CardSelectUI;
@@ -47,12 +53,20 @@ export class CardSelectScene extends Phaser.Scene {
     super('CardSelectScene');
   }
 
-  init(data: { lobbyId: string; players: Player[] }): void {
+  init(data: { lobbyId: string; players: Player[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number }): void {
     this.lobbyId = data.lobbyId;
     this.players = data.players || [];
+    this.mapSeed = data.mapSeed; // Store map seed for continuity
+    this.visitedNodes = data.visitedNodes || []; // Store visited nodes
+    this.currentNodeId = data.currentNodeId || null; // Store current position
+    this.currentStage = data.stage || 1; // Store battle stage number
     
     console.log(`Card selection initialized for lobby: ${this.lobbyId}`);
+    console.log(`Map seed:`, this.mapSeed);
     console.log(`Players:`, this.players);
+    console.log(`Visited nodes:`, this.visitedNodes);
+    console.log(`Current node:`, this.currentNodeId);
+    console.log(`Battle stage:`, this.currentStage);
   }
 
   async create(): Promise<void> {
@@ -108,9 +122,19 @@ export class CardSelectScene extends Phaser.Scene {
     }, 1500); // 1.5 second fade in
     console.log('Card selection music started with fade in');
 
-    // Create UI
+    // Get current player's class
+    const currentPlayer = this.players.find(p => p.userId === this.userId);
+    const playerClass = currentPlayer?.selectedClass || 'Warrior';
+    console.log(`Current player class: ${playerClass}`);
+    
+    // Get class-specific card pool
+    const classCardPool = getCardsForClass(playerClass);
+    console.log(`Loaded ${classCardPool.length} cards for ${playerClass} class`);
+
+    // Create UI with class-specific cards
     this.cardUI = new CardSelectUI(
       this,
+      classCardPool,
       (cardId) => this.handleCardPick(cardId),
       (outId, inId) => this.handleCardSwap(outId, inId)
     );
@@ -184,7 +208,8 @@ export class CardSelectScene extends Phaser.Scene {
 
     this.players.forEach((player, index) => {
       const y = 30 + index * 30;
-      const playerText = this.add.text(0, y, `${player.name}: Not Ready`, {
+      const displayName = player.selectedClass ? `${player.name} (${player.selectedClass})` : player.name;
+      const playerText = this.add.text(0, y, `${displayName}: Not Ready`, {
         fontSize: '16px',
         color: '#aaaaaa',
         fontFamily: 'Arial, sans-serif',
@@ -294,6 +319,9 @@ export class CardSelectScene extends Phaser.Scene {
   }
 
   private handleRemotePick(userId: string, cardId: string): void {
+    // Safety check: don't process if scene is shutting down
+    if (!this.scene.isActive()) return;
+    
     console.log(`Remote pick from ${userId}: ${cardId}`);
     
     const loadout = this.loadouts.get(userId) || [];
@@ -310,6 +338,9 @@ export class CardSelectScene extends Phaser.Scene {
   }
 
   private handleRemoteSwap(userId: string, outId: string, inId: string): void {
+    // Safety check: don't process if scene is shutting down
+    if (!this.scene.isActive()) return;
+    
     console.log(`Remote swap from ${userId}: ${outId} -> ${inId}`);
     
     const loadout = this.loadouts.get(userId) || [];
@@ -321,6 +352,9 @@ export class CardSelectScene extends Phaser.Scene {
   }
 
   private handleRemoteReady(userId: string, ready: boolean): void {
+    // Safety check: don't process if scene is shutting down
+    if (!this.scene.isActive()) return;
+    
     console.log(`${userId} is ${ready ? 'ready' : 'not ready'}`);
     
     this.readyStates.set(userId, ready);
@@ -337,7 +371,8 @@ export class CardSelectScene extends Phaser.Scene {
     if (text) {
       const player = this.players.find(p => p.userId === userId);
       const name = player?.name || 'Unknown';
-      text.setText(`${name}: ${ready ? '✓ Ready' : 'Not Ready'}`);
+      const displayName = player?.selectedClass ? `${name} (${player.selectedClass})` : name;
+      text.setText(`${displayName}: ${ready ? '✓ Ready' : 'Not Ready'}`);
       text.setColor(ready ? '#44aa44' : '#aaaaaa');
     }
   }
@@ -379,6 +414,9 @@ export class CardSelectScene extends Phaser.Scene {
   }
 
   private handleCommit(loadouts: Loadout[]): void {
+    // Safety check: don't process if scene is shutting down
+    if (!this.scene.isActive()) return;
+    
     console.log('Received loadout commit:', loadouts);
     
     // Non-hosts transition to battle when they receive the commit
@@ -390,23 +428,39 @@ export class CardSelectScene extends Phaser.Scene {
   private transitionToBattle(loadouts: Loadout[]): void {
     console.log('Transitioning to battle with loadouts:', loadouts);
 
+    // Unsubscribe from network updates BEFORE transitioning
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
+
     // Prepare player data for battle scene
     const battlePlayers = this.players.map(player => ({
       id: player.userId,
       userId: player.userId,
       side: 'party' as const,
       name: player.name,
+      selectedClass: player.selectedClass || 'Warrior',
       hp: 100,
       maxHp: 100,
       ap: 5,
       isHost: player.isHost,
     }));
 
+    console.log('=== CARD SELECT SCENE TRANSITION ===');
+    console.log('this.players:', this.players);
+    console.log('battlePlayers with classes:', battlePlayers.map(p => ({ name: p.name, class: p.selectedClass })));
+    console.log('=== END TRANSITION ===');
+
     // Transition to battle (card music will be handled by battle scene)
     this.scene.start('BattleScene', {
       lobbyId: this.lobbyId,
       players: battlePlayers,
       loadouts: loadouts,
+      mapSeed: this.mapSeed, // Pass map seed for continuity
+      visitedNodes: this.visitedNodes, // Pass visited nodes for map progression
+      currentNodeId: this.currentNodeId, // Pass current position
+      stage: this.currentStage, // Pass battle stage number
     });
   }
 

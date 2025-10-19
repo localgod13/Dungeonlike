@@ -8,12 +8,14 @@ import {
   leaveLobby as leaveLobbyNet,
   startGame,
   getLobbyState,
+  selectClass,
   LobbyMember,
   Lobby as LobbyData,
 } from '../net/lobby';
 import { useClientStore } from '../store/clientStore';
 import { COLORS } from '../game/config';
 import { SoundManager } from '../game/sound';
+import { createCharacterAnimations, createCharacterSprite, CharacterClass } from '../game/characterSprites';
 
 /**
  * Lobby scene - authentication, create/join, 3-player slots, ready system
@@ -34,7 +36,6 @@ export class Lobby extends Phaser.Scene {
   private nameInput!: HTMLInputElement;
   private createButton!: Phaser.GameObjects.Container;
   private joinButton!: Phaser.GameObjects.Container;
-  private codeInput!: HTMLInputElement;
   private lobbyContainer!: Phaser.GameObjects.Container;
 
   // Sound manager
@@ -71,6 +72,10 @@ export class Lobby extends Phaser.Scene {
     );
     
     console.log(`Lobby background loaded: ${bg.width}x${bg.height}, scaled: ${scale.toFixed(2)}x`);
+
+    // Create character animations for lobby display
+    createCharacterAnimations(this);
+    console.log('Character animations created for lobby');
 
     // Initialize sound manager and ensure title music is playing
     this.soundManager = new SoundManager(this);
@@ -206,31 +211,15 @@ export class Lobby extends Phaser.Scene {
       async () => {
         await this.handleCreateLobby();
       }
-    );
-    this.container.add(this.createButton);
+      );
+      this.container.add(this.createButton);
 
-    // Join code input
-    this.codeInput = document.createElement('input');
-    this.codeInput.type = 'text';
-    this.codeInput.placeholder = 'Enter Code';
-    this.codeInput.maxLength = 5;
-    this.codeInput.style.position = 'absolute';
-    this.codeInput.style.left = `${centerX - 75}px`;
-    this.codeInput.style.top = `${centerY + 30}px`;
-    this.codeInput.style.width = '150px';
-    this.codeInput.style.height = '40px';
-    this.codeInput.style.fontSize = '20px';
-    this.codeInput.style.padding = '5px';
-    this.codeInput.style.textAlign = 'center';
-    this.codeInput.style.textTransform = 'uppercase';
-    document.body.appendChild(this.codeInput);
-
-    // Join lobby button
-    this.joinButton = this.createButtonObj(
-      centerX,
-      centerY + 100,
-      250,
-      60,
+      // Join lobby button
+      this.joinButton = this.createButtonObj(
+        centerX,
+        centerY + 30,
+        250,
+        60,
       'Join Lobby',
       async () => {
         await this.handleJoinLobby();
@@ -251,7 +240,6 @@ export class Lobby extends Phaser.Scene {
       this.lobbyCode = code;
       useClientStore.getState().setCurrentLobby(id, code);
       
-      if (this.codeInput) this.codeInput.remove();
       if (this.container) this.container.destroy();
 
       await this.showLobbyUI();
@@ -261,27 +249,177 @@ export class Lobby extends Phaser.Scene {
   }
 
   private async handleJoinLobby(): Promise<void> {
-    const code = this.codeInput.value.trim().toUpperCase();
-    if (code.length !== 5) {
-      alert('Enter a 5-character code');
-      return;
-    }
+    // Show popup for code input
+    this.showJoinCodePopup();
+  }
 
-    const name = useClientStore.getState().displayName || 'Player';
+  private showJoinCodePopup(): void {
+    const centerX = this.scale.width / 2;
+    const centerY = this.scale.height / 2;
 
-    try {
-      const id = await joinLobbyByCode(code, name);
-      this.lobbyId = id;
-      this.lobbyCode = code;
-      useClientStore.getState().setCurrentLobby(id, code);
+    // Create popup background overlay
+    const overlay = this.add.rectangle(centerX, centerY, this.scale.width, this.scale.height, 0x000000, 0.7);
+    overlay.setDepth(1000);
+    overlay.setScrollFactor(0);
+
+    // Create popup container
+    const popup = this.add.container(centerX, centerY);
+    popup.setDepth(1001);
+    popup.setScrollFactor(0);
+
+    // Popup background
+    const popupBg = this.add.rectangle(0, 0, 400, 200, COLORS.UI_BG, 0.95);
+    popupBg.setStrokeStyle(3, COLORS.UI_ACCENT, 0.8);
+    popup.add(popupBg);
+
+    // Title
+    const title = this.add.text(0, -60, 'Enter Lobby Code', {
+      fontSize: '24px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    title.setOrigin(0.5);
+    popup.add(title);
+
+    // Code input - simpler approach without background rectangle
+    const codeInput = document.createElement('input');
+    codeInput.type = 'text';
+    codeInput.placeholder = 'CODE';
+    codeInput.maxLength = 5;
+    codeInput.style.position = 'fixed';
+    codeInput.style.width = '180px';
+    codeInput.style.height = '45px';
+    codeInput.style.fontSize = '20px';
+    codeInput.style.fontWeight = 'bold';
+    codeInput.style.textAlign = 'center';
+    codeInput.style.textTransform = 'uppercase';
+    codeInput.style.border = '2px solid #ffffff';
+    codeInput.style.borderRadius = '4px';
+    codeInput.style.outline = 'none';
+    codeInput.style.color = '#000000';
+    codeInput.style.backgroundColor = '#ffffff';
+    codeInput.style.letterSpacing = '6px';
+    codeInput.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.3)';
+    codeInput.style.zIndex = '10000';
+    document.body.appendChild(codeInput);
+    
+    // Function to position input centered in the popup - RECALCULATE CENTER EACH TIME
+    const positionInput = () => {
+      const canvas = this.game.canvas;
+      const canvasRect = canvas.getBoundingClientRect();
+      const inputWidth = 180;
+      const inputHeight = 45;
       
-      if (this.codeInput) this.codeInput.remove();
-      if (this.container) this.container.destroy();
+      // RECALCULATE center position based on current canvas size
+      const currentCenterX = canvasRect.left + canvasRect.width / 2;
+      const currentCenterY = canvasRect.top + canvasRect.height / 2;
+      
+      // Center the input at the canvas center
+      codeInput.style.left = `${currentCenterX - inputWidth / 2}px`;
+      codeInput.style.top = `${currentCenterY - 5 - inputHeight / 2}px`;
+    };
+    
+    // Initial position
+    positionInput();
+    
+    // Reposition on window resize
+    const resizeHandler = () => positionInput();
+    window.addEventListener('resize', resizeHandler);
+    
+    // Also reposition on scale manager resize (for fullscreen)
+    const scaleResizeHandler = () => positionInput();
+    this.scale.on('resize', scaleResizeHandler);
+    
+    // Focus input after a brief delay to ensure it's rendered
+    this.time.delayedCall(100, () => {
+      codeInput.focus();
+    });
 
-      await this.showLobbyUI();
-    } catch (error: any) {
-      alert(`Failed to join lobby: ${error.message}`);
-    }
+    // Join button
+    const joinBtn = this.add.container(0, 40);
+    const joinBg = this.add.rectangle(0, 0, 120, 40, COLORS.UI_ACCENT, 1);
+    joinBg.setStrokeStyle(2, 0xffffff, 0.8);
+    joinBg.setInteractive({ useHandCursor: true });
+    joinBtn.add(joinBg);
+
+    const joinText = this.add.text(0, 0, 'Join', {
+      fontSize: '18px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    joinText.setOrigin(0.5);
+    joinBtn.add(joinText);
+
+    // Cancel button
+    const cancelBtn = this.add.container(0, 40);
+    const cancelBg = this.add.rectangle(0, 0, 120, 40, 0x666666, 1);
+    cancelBg.setStrokeStyle(2, 0x999999, 0.8);
+    cancelBg.setInteractive({ useHandCursor: true });
+    cancelBtn.add(cancelBg);
+
+    const cancelText = this.add.text(0, 0, 'Cancel', {
+      fontSize: '18px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    cancelText.setOrigin(0.5);
+    cancelBtn.add(cancelText);
+
+    // Position buttons side by side
+    joinBtn.x = -70;
+    cancelBtn.x = 70;
+
+    popup.add([joinBtn, cancelBtn]);
+
+    // Join button handler
+    joinBg.on('pointerdown', async () => {
+      const code = codeInput.value.trim().toUpperCase();
+      if (code.length !== 5) {
+        alert('Enter a 5-character code');
+        return;
+      }
+
+      const name = useClientStore.getState().displayName || 'Player';
+
+      try {
+        const id = await joinLobbyByCode(code, name);
+        this.lobbyId = id;
+        this.lobbyCode = code;
+        useClientStore.getState().setCurrentLobby(id, code);
+        
+        window.removeEventListener('resize', resizeHandler);
+        this.scale.off('resize', scaleResizeHandler);
+        codeInput.remove();
+        overlay.destroy();
+        popup.destroy();
+        if (this.container) this.container.destroy();
+        await this.showLobbyUI();
+      } catch (error: any) {
+        alert(`Failed to join lobby: ${error.message}`);
+      }
+    });
+
+    // Cancel button handler
+    cancelBg.on('pointerdown', () => {
+      window.removeEventListener('resize', resizeHandler);
+      this.scale.off('resize', scaleResizeHandler);
+      codeInput.remove();
+      overlay.destroy();
+      popup.destroy();
+    });
+
+    // Close on overlay click
+    overlay.setInteractive({ useHandCursor: false });
+    overlay.on('pointerdown', () => {
+      window.removeEventListener('resize', resizeHandler);
+      this.scale.off('resize', scaleResizeHandler);
+      codeInput.remove();
+      overlay.destroy();
+      popup.destroy();
+    });
   }
 
   private async showLobbyUI(): Promise<void> {
@@ -304,13 +442,22 @@ export class Lobby extends Phaser.Scene {
         this.members = members;
         this.renderLobbyUI();
       },
-      onGameStart: (startedAt) => {
+      onGameStart: async (startedAt) => {
         console.log(`Game started at: ${startedAt}`);
         // Don't call startRun() here - host already called it when clicking button
         // Non-host clients will call it from here
         const isHost = this.members.find((m) => m.user_id === this.userId)?.is_host ?? false;
         if (!isHost) {
-          this.startRun();
+          // Fetch the seed from the lobby so all players use the same map
+          try {
+            const state = await getLobbyState(this.lobbyId!);
+            const seed = state.lobby.map_seed || undefined;
+            console.log(`Non-host received map seed: ${seed}`);
+            this.startRun(seed);
+          } catch (error) {
+            console.error('Failed to fetch lobby seed:', error);
+            this.startRun(); // Fallback to no seed
+          }
         }
       },
     });
@@ -354,10 +501,64 @@ export class Lobby extends Phaser.Scene {
     });
     this.lobbyContainer.add(copyBtn);
 
+    // Class selection title (left side)
+    const classTitle = this.add.text(150, 160, 'Select Your Class:', {
+      fontSize: '20px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    classTitle.setOrigin(0.5);
+    this.lobbyContainer.add(classTitle);
+
+    // Class selection buttons (vertical layout on left side)
+    const classes = ['Warrior', 'Huntress', 'Mage'];
+    const buttonWidth = 120;
+    const buttonHeight = 40;
+    const buttonGap = 15;
+    const startX = 150; // Left side position
+
+    classes.forEach((className, index) => {
+      const x = startX;
+      const y = 200 + (buttonHeight + buttonGap) * index;
+
+      // Check if class is taken by someone else
+      const isTaken = this.members.some(
+        (m) => m.selected_class === className && m.user_id !== this.userId
+      );
+
+      // Check if this is our selected class
+      const currentMember = this.members.find((m) => m.user_id === this.userId);
+      const isSelected = currentMember?.selected_class === className;
+
+      const classBtn = this.createClassButton(
+        x,
+        y,
+        buttonWidth,
+        50,
+        className,
+        isTaken,
+        isSelected,
+        async () => {
+          if (!this.lobbyId || isTaken) return;
+          
+          try {
+            // If already selected, deselect. Otherwise, select this class
+            const newClass = isSelected ? null : className;
+            await selectClass(this.lobbyId, newClass);
+          } catch (error: any) {
+            console.error('Failed to select class:', error);
+            alert(error.message || 'Failed to select class');
+          }
+        }
+      );
+      this.lobbyContainer.add(classBtn);
+    });
+
     // Render 3 slots
     for (let i = 0; i < 3; i++) {
       const member = this.members[i];
-      const slotY = startY + i * 100;
+      const slotY = startY + 140 + i * 100;
       const slot = this.renderMemberSlot(centerX, slotY, i + 1, member);
       this.lobbyContainer.add(slot);
     }
@@ -370,7 +571,7 @@ export class Lobby extends Phaser.Scene {
     // Ready button
     const readyBtn = this.createButtonObj(
       centerX - 120,
-      startY + 340,
+      startY + 480,
       200,
       50,
       this.isReady ? '✓ Ready' : 'Ready',
@@ -392,7 +593,7 @@ export class Lobby extends Phaser.Scene {
     this.lobbyContainer.add(readyBtn);
 
     // Leave button
-    const leaveBtn = this.createButtonObj(centerX + 120, startY + 340, 200, 50, 'Leave', async () => {
+    const leaveBtn = this.createButtonObj(centerX + 120, startY + 480, 200, 50, 'Leave', async () => {
       await this.handleLeaveLobby();
     });
     this.lobbyContainer.add(leaveBtn);
@@ -401,14 +602,15 @@ export class Lobby extends Phaser.Scene {
     if (isHost) {
       const allReady = this.members.every((m) => m.ready);
       const enough = this.members.length >= 1; // Allow single player
-      const canStart = allReady && enough;
+      const allHaveClass = this.members.every((m) => m.selected_class !== null);
+      const canStart = allReady && enough && allHaveClass;
 
       const startBtn = this.createButtonObj(
         centerX,
-        startY + 410,
+        startY + 550,
         250,
         60,
-        canStart ? 'Start Run' : `Need ${enough ? 'all ready' : '1+ players'}`,
+        canStart ? 'Start Run' : !allHaveClass ? 'All must pick class' : `Need ${enough ? 'all ready' : '1+ players'}`,
         async () => {
           if (!canStart || !this.lobbyId) return;
           try {
@@ -445,8 +647,27 @@ export class Lobby extends Phaser.Scene {
     container.add(bg);
 
     if (member) {
-      // Name
-      const nameText = this.add.text(-200, -10, member.name, {
+      // Character sprite (if class selected)
+      if (member.selected_class) {
+        const sprite = createCharacterSprite(
+          this,
+          -220, // Left side of slot
+          0,
+          member.selected_class as CharacterClass,
+          1.5 // Larger size for lobby display
+        );
+        
+        if (sprite) {
+          container.add(sprite);
+          console.log(`Created ${member.selected_class} sprite for ${member.name}`);
+        }
+      }
+      
+      // Name and Class
+      const displayText = member.selected_class 
+        ? `${member.name} - ${member.selected_class}`
+        : member.name;
+      const nameText = this.add.text(-160, -10, displayText, {
         fontSize: '24px',
         color: '#ffffff',
         fontFamily: 'Arial, sans-serif',
@@ -456,7 +677,7 @@ export class Lobby extends Phaser.Scene {
 
       // Host crown
       if (member.is_host) {
-        const crown = this.add.text(-200, 15, '👑 Host', {
+        const crown = this.add.text(-160, 15, '👑 Host', {
           fontSize: '16px',
           color: '#ffd700',
           fontFamily: 'Arial, sans-serif',
@@ -534,6 +755,79 @@ export class Lobby extends Phaser.Scene {
     return container;
   }
 
+  private createClassButton(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    className: string,
+    isTaken: boolean,
+    isSelected: boolean,
+    callback: () => void
+  ): Phaser.GameObjects.Container {
+    const container = this.add.container(x, y);
+
+    // Determine color based on state
+    let bgColor = COLORS.UI_ACCENT;
+    if (isTaken) {
+      bgColor = 0x555555; // Gray for taken
+    } else if (isSelected) {
+      bgColor = 0x27ae60; // Green for selected
+    }
+
+    const bg = this.add.rectangle(0, 0, width, height, bgColor, 1);
+    bg.setStrokeStyle(2, isSelected ? 0x44ff44 : 0xffffff, 0.8);
+    
+    if (!isTaken) {
+      bg.setInteractive({ useHandCursor: true });
+    }
+
+    const label = this.add.text(0, 0, className, {
+      fontSize: '18px',
+      color: isTaken ? '#888888' : '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    label.setOrigin(0.5);
+
+    if (!isTaken) {
+      bg.on('pointerover', () => {
+        if (!isSelected) {
+          bg.setFillStyle(COLORS.UI_ACCENT, 0.8);
+        }
+      });
+
+      bg.on('pointerout', () => {
+        bg.setFillStyle(isSelected ? 0x27ae60 : COLORS.UI_ACCENT, 1);
+      });
+
+      bg.on('pointerdown', callback);
+    }
+
+    // Add status text if taken or selected
+    if (isTaken) {
+      const takenText = this.add.text(0, 20, 'Taken', {
+        fontSize: '12px',
+        color: '#ff6666',
+        fontFamily: 'Arial, sans-serif',
+      });
+      takenText.setOrigin(0.5);
+      container.add(takenText);
+    } else if (isSelected) {
+      const selectedText = this.add.text(0, 20, '✓', {
+        fontSize: '14px',
+        color: '#44ff44',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+      });
+      selectedText.setOrigin(0.5);
+      container.add(selectedText);
+    }
+
+    container.add([bg, label]);
+    return container;
+  }
+
   private createButton(
     x: number,
     y: number,
@@ -566,6 +860,33 @@ export class Lobby extends Phaser.Scene {
       await this.handleLeaveLobby();
       this.scene.start('MainMenu');
     });
+
+    // Test Map button (for development)
+    if (import.meta.env.DEV) {
+      const testMapText = this.add.text(20, 50, '🗺️ Test Map', {
+        fontSize: '16px',
+        color: '#aaaaaa',
+        fontFamily: 'Arial, sans-serif',
+      });
+      testMapText.setScrollFactor(0);
+      testMapText.setInteractive({ useHandCursor: true });
+
+      testMapText.on('pointerover', () => {
+        testMapText.setColor('#4a90e2');
+      });
+
+      testMapText.on('pointerout', () => {
+        testMapText.setColor('#aaaaaa');
+      });
+
+      testMapText.on('pointerdown', () => {
+        this.scene.start('MapScene', {
+          lobbyId: 'test-lobby',
+          players: [{ userId: 'test-user', name: 'Test Player', isHost: true }],
+          mapSeed: Date.now() % 2147483647, // Keep within PostgreSQL integer range
+        });
+      });
+    }
   }
 
   private async handleLeaveLobby(): Promise<void> {
@@ -582,21 +903,19 @@ export class Lobby extends Phaser.Scene {
       this.unsubscribe();
       this.unsubscribe = null;
     }
-
-    if (this.codeInput) {
-      this.codeInput.remove();
-    }
   }
 
   private startRun(seed?: number): void {
-    // Prepare player data for card selection scene
+    // Prepare player data for card selection scene including class info
     const players = this.members.map((member) => ({
       userId: member.user_id,
       name: member.name,
       isHost: member.is_host,
+      selectedClass: member.selected_class || 'Warrior', // Fallback to Warrior if somehow null
     }));
 
     console.log(`Starting card selection with ${players.length} players:`, players);
+    console.log(`Map seed for this run: ${seed}`);
     
     // Fade out title music before transitioning to card selection
     if (this.soundManager) {
@@ -606,10 +925,11 @@ export class Lobby extends Phaser.Scene {
     
     // Delay scene transition to allow fade to start
     this.time.delayedCall(200, () => {
-      // Transition to CardSelectScene instead of directly to BattleScene
+      // Transition to CardSelectScene with map seed
       this.scene.start('CardSelectScene', { 
         lobbyId: this.lobbyId,
         players: players,
+        mapSeed: seed, // Pass the synchronized map seed
       });
     });
   }
@@ -620,9 +940,6 @@ export class Lobby extends Phaser.Scene {
     }
     if (this.nameInput) {
       this.nameInput.remove();
-    }
-    if (this.codeInput) {
-      this.codeInput.remove();
     }
     if (this.lobbyContainer) {
       this.lobbyContainer.destroy();

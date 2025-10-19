@@ -33,6 +33,8 @@ import { HandUI } from '../ui/handUi';
 import { getCardById, requiresTarget } from '../game/cards';
 import { startBattleAP, refreshAP, canAfford, spendAP } from '../game/economy';
 import { SoundManager } from '../game/sound';
+import { createCharacterAnimations, createCharacterSprite, hasSprite, CharacterClass } from '../game/characterSprites';
+import { preloadEnemySprites, createEnemyAnimations, createEnemySprite, hasEnemySprite, EnemyType } from '../game/enemySprites';
 
 /**
  * Side-view battle scene with deterministic combat pipeline
@@ -42,6 +44,7 @@ import { SoundManager } from '../game/sound';
 interface BattleActor extends Actor {
   userId?: string;
   isHost?: boolean;
+  selectedClass?: string; // 'Warrior', 'Huntress', or 'Mage'
 }
 
 export class BattleScene extends Phaser.Scene {
@@ -49,10 +52,14 @@ export class BattleScene extends Phaser.Scene {
   private userId: string | null = null;
   private isHost = false;
   private unsubscribe: (() => void) | null = null;
+  private mapSeed: number | undefined = undefined; // Persist map across battles
+  private visitedNodes: string[] = []; // Track visited nodes for map progression
+  private currentNodeId: string | null = null; // Track current position on map
 
   // Combat state
   private combatState: CombatState;
   private currentTurn = 1;
+  private currentStage = 1; // Track which battle this is (Stage 1, 2, 3, etc.)
   private phase: 'planning' | 'resolving' | 'idle' = 'planning';
   private playerPlans = new Map<ActorId, ActionPlan[]>(); // Multiple actions per player
   private isLocked = false;
@@ -85,6 +92,9 @@ export class BattleScene extends Phaser.Scene {
   private queuedActions: ActionPlan[] = []; // Multiple actions queued for this turn
   private queueDisplay: Phaser.GameObjects.Container | null = null; // UI showing queued cards
 
+  // Status effect indicators
+  private statusEffectContainers = new Map<ActorId, Phaser.GameObjects.Container>(); // Status icons per actor
+
   // Cursor tracking
   private remoteCursors = new Map<string, Phaser.GameObjects.Container>();
   private cursorThrottle = 0;
@@ -110,13 +120,66 @@ export class BattleScene extends Phaser.Scene {
     super('BattleScene');
   }
 
-  init(data: { lobbyId: string; players: any[]; loadouts?: Loadout[] }): void {
+  init(data: { lobbyId: string; players: any[]; loadouts?: Loadout[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number }): void {
     this.lobbyId = data.lobbyId;
     this.players = data.players || [];
+    this.mapSeed = data.mapSeed; // Store map seed for continuity
+    this.visitedNodes = data.visitedNodes || []; // Store visited nodes
+    this.currentNodeId = data.currentNodeId || null; // Store current position
+    this.currentStage = data.stage || 1; // Track battle stage number
+    
+    // 🔄 RESET ALL BATTLE STATE FOR FRESH BATTLE
+    console.log('🔄 Resetting battle state for new battle...');
+    console.log(`📊 Stage ${this.currentStage} - Turn 1`);
+    this.currentTurn = 1;
+    this.phase = 'planning';
+    this.isLocked = false;
+    this.selectedAction = null;
+    this.selectedTarget = null;
+    this.selectedCardId = null;
+    this.pendingPostState = null;
+    this.timeline = null;
+    
+    // Clear UI elements
+    if (this.handUI) {
+      this.handUI.destroy();
+      this.handUI = null;
+    }
+    if (this.queueDisplay) {
+      this.queueDisplay.destroy();
+      this.queueDisplay = null;
+    }
+    if (this.lockButton) {
+      this.lockButton.destroy();
+      this.lockButton = null;
+    }
+    if (this.targetSelector) {
+      this.targetSelector.destroy();
+      this.targetSelector = null;
+    }
+    
+    // Clear collections
+    this.combatLogEntries = [];
+    this.playerPlans.clear();
+    this.queuedActions = [];
+    this.loadouts.clear();
+    this.playerAP.clear();
+    this.statusEffectContainers.clear();
+    this.remoteCursors.clear();
+    this.partySlots = [];
+    this.enemySlots = [];
+    this.actionButtons = [];
+    
+    console.log('✅ Battle state reset complete');
     
     console.log('=== BATTLE SCENE INIT DEBUG ===');
+    console.log('🔄 Battle state RESET for fresh battle');
     console.log('Received data:', data);
+    console.log('Players data:', data.players);
+    console.log('Player classes:', data.players?.map(p => ({ name: p.name, class: p.selectedClass })));
     console.log('Loadouts in data:', data.loadouts);
+    console.log('Visited nodes:', this.visitedNodes);
+    console.log('Current node:', this.currentNodeId);
     
     // Initialize loadouts and AP
     if (data.loadouts) {
@@ -144,6 +207,63 @@ export class BattleScene extends Phaser.Scene {
     console.log('=== END INIT DEBUG ===');
   }
 
+  /**
+   * Generate enemies for the current stage
+   */
+  private generateEnemiesForStage(stage: number): Actor[] {
+    console.log(`🎯 Generating enemies for Stage ${stage}`);
+    
+    switch (stage) {
+      case 1:
+        // Stage 1: Single Flying Demon
+        return [
+          {
+            id: 'enemy_1',
+            side: 'enemy',
+            name: 'Flying Demon',
+            hp: 50,
+            maxHp: 50,
+            ap: 5,
+          },
+        ];
+      
+      case 2:
+        // Stage 2: Two Goblins
+        return [
+          {
+            id: 'enemy_1',
+            side: 'enemy',
+            name: 'Goblin Warrior',
+            hp: 40,
+            maxHp: 40,
+            ap: 5,
+          },
+          {
+            id: 'enemy_2',
+            side: 'enemy',
+            name: 'Goblin Archer',
+            hp: 35,
+            maxHp: 35,
+            ap: 5,
+          },
+        ];
+      
+      default:
+        // Stage 3+: Scale difficulty
+        const enemyCount = Math.min(1 + Math.floor(stage / 2), 3);
+        const baseHP = 40 + (stage * 5);
+        
+        return Array.from({ length: enemyCount }, (_, i) => ({
+          id: `enemy_${i + 1}`,
+          side: 'enemy' as const,
+          name: `Goblin ${i + 1}`,
+          hp: baseHP,
+          maxHp: baseHP,
+          ap: 5,
+        }));
+    }
+  }
+
   async create(): Promise<void> {
     console.log('Battle scene started');
 
@@ -158,17 +278,14 @@ export class BattleScene extends Phaser.Scene {
     // Determine if host (first player)
     this.isHost = this.players.length > 0 && this.players[0].userId === this.userId;
 
-    // Create initial enemies
-    this.enemies = [
-      {
-        id: 'enemy_1',
-        side: 'enemy',
-        name: 'Shadow Beast',
-        hp: 50,
-        maxHp: 50,
-        ap: 5,
-      },
-    ];
+    // Create character animations
+    createCharacterAnimations(this);
+    
+    // Create enemy animations
+    createEnemyAnimations(this);
+
+    // Create enemies based on stage
+    this.enemies = this.generateEnemiesForStage(this.currentStage);
 
     // Initialize combat state
     this.combatState = createCombatState(this.players, this.enemies, this.currentTurn);
@@ -190,8 +307,10 @@ export class BattleScene extends Phaser.Scene {
     const battleHeight = 600;
     const bottomMargin = 120; // Space for action buttons
     
-    // Add background image
-    const bg = this.add.image(0, 0, 'battleground1');
+    // Add background image based on stage
+    const bgKey = this.currentStage === 2 ? 'battleground2' : 'battleground1';
+    console.log(`Loading background for stage ${this.currentStage}: ${bgKey}`);
+    const bg = this.add.image(0, 0, bgKey);
     bg.setOrigin(0, 0);
     bg.setDepth(-1); // Behind everything
     
@@ -286,11 +405,11 @@ export class BattleScene extends Phaser.Scene {
     const centerX = this.scale.width / 2;
     const centerY = this.scale.height / 2;
 
-    // Create party slots (left side)
+    // Create party slots (left side) - moved further left with more spacing
     for (let i = 0; i < 3; i++) {
       const player = this.players[i];
       const slot = this.createPartySlot(
-        centerX - 200 + i * 100,
+        centerX - 450 + i * 180,
         centerY,
         player
       );
@@ -316,43 +435,71 @@ export class BattleScene extends Phaser.Scene {
   ): Phaser.GameObjects.Container {
     const container = this.add.container(x, y);
 
-    // Slot background
+    // Slot background (will be hidden if sprite is used)
     const bg = this.add.rectangle(0, 0, 80, 120, 0x1a1a1a, 0.8);
     bg.setStrokeStyle(2, 0xffffff, 0.8);
     container.add(bg);
 
     if (player) {
-      // Player avatar (simple robed figure)
-      const avatar = this.add.graphics();
-      avatar.lineStyle(2, 0xffffff, 0.8);
+      // Player avatar - use sprite if class has one, otherwise use stick figure
+      const battlePlayer = player as BattleActor;
+      const characterClass = battlePlayer.selectedClass as CharacterClass;
       
-      // Simple stick figure
-      avatar.beginPath();
-      avatar.moveTo(0, -40); // Head
-      avatar.lineTo(0, -20); // Body
-      avatar.moveTo(-15, -10); // Left arm
-      avatar.lineTo(15, -10); // Right arm
-      avatar.moveTo(-10, 20); // Left leg
-      avatar.lineTo(10, 20); // Right leg
-      avatar.strokePath();
+      let spriteCreated = false;
+      if (characterClass && hasSprite(characterClass)) {
+        // Try to use character sprite
+        try {
+          const sprite = createCharacterSprite(this, 0, -10, characterClass, 2.5);
+          if (sprite) {
+            container.add(sprite);
+            spriteCreated = true;
+            bg.setVisible(false); // Hide background box when using sprite
+            console.log(`✓ Using sprite for ${player.name} (${characterClass})`);
+          }
+        } catch (error) {
+          console.error(`Failed to create sprite for ${characterClass}:`, error);
+        }
+      }
+      
+      // Fallback to stick figure if sprite wasn't created
+      if (!spriteCreated) {
+        console.log(`Using fallback stick figure for ${player.name}`);
+        const avatar = this.add.graphics();
+        avatar.lineStyle(2, 0xffffff, 0.8);
+        
+        // Simple stick figure
+        avatar.beginPath();
+        avatar.moveTo(0, -40); // Head
+        avatar.lineTo(0, -20); // Body
+        avatar.moveTo(-15, -10); // Left arm
+        avatar.lineTo(15, -10); // Right arm
+        avatar.moveTo(-10, 20); // Left leg
+        avatar.lineTo(10, 20); // Right leg
+        avatar.strokePath();
 
-      // Robe
-      avatar.lineStyle(2, 0x4a90e2, 0.8);
-      avatar.beginPath();
-      avatar.moveTo(-20, -15);
-      avatar.lineTo(20, -15);
-      avatar.lineTo(15, 30);
-      avatar.lineTo(-15, 30);
-      avatar.closePath();
-      avatar.strokePath();
+        // Robe
+        avatar.lineStyle(2, 0x4a90e2, 0.8);
+        avatar.beginPath();
+        avatar.moveTo(-20, -15);
+        avatar.lineTo(20, -15);
+        avatar.lineTo(15, 30);
+        avatar.lineTo(-15, 30);
+        avatar.closePath();
+        avatar.strokePath();
 
-      container.add(avatar);
+        container.add(avatar);
+      }
 
-      // Player name
-      const nameText = this.add.text(0, 50, player.name, {
-        fontSize: '12px',
+      // Player name and class
+      console.log(`Creating party slot for ${player.name}, selectedClass:`, battlePlayer.selectedClass);
+      const displayName = battlePlayer.selectedClass 
+        ? `${player.name}\n(${battlePlayer.selectedClass})`
+        : player.name;
+      const nameText = this.add.text(0, 50, displayName, {
+        fontSize: '11px',
         color: '#ffffff',
         fontFamily: 'Arial, sans-serif',
+        align: 'center',
       });
       nameText.setOrigin(0.5);
       container.add(nameText);
@@ -384,6 +531,16 @@ export class BattleScene extends Phaser.Scene {
       lockIndicator.setOrigin(0.5);
       container.add(lockIndicator);
       container.setData('lockIndicator', lockIndicator);
+
+      // Status effect container (above character)
+      const statusContainer = this.add.container(0, -70);
+      container.add(statusContainer);
+      container.setData('statusContainer', statusContainer);
+      
+      // Store reference for easy access
+      if (player.id) {
+        this.statusEffectContainers.set(player.id, statusContainer);
+      }
     } else {
       // Empty slot
       const emptyText = this.add.text(0, 0, 'Empty', {
@@ -399,6 +556,23 @@ export class BattleScene extends Phaser.Scene {
     return container;
   }
 
+  /**
+   * Map enemy name to enemy type for sprite lookup
+   */
+  private getEnemyType(enemyName: string): EnemyType | null {
+    if (enemyName.includes('Flying Demon')) {
+      return 'FlyingDemon';
+    }
+    if (enemyName.includes('Goblin')) {
+      return 'Goblin';
+    }
+    // Future enemy types:
+    // if (enemyName.includes('Skeleton')) return 'Skeleton';
+    // if (enemyName.includes('Slime')) return 'Slime';
+    
+    return null;
+  }
+
   private createEnemySlot(x: number, y: number, enemy: Actor): Phaser.GameObjects.Container {
     const container = this.add.container(x, y);
 
@@ -407,25 +581,46 @@ export class BattleScene extends Phaser.Scene {
     bg.setStrokeStyle(2, 0xff4444, 0.8);
     container.add(bg);
 
-    // Enemy silhouette
-    const enemySprite = this.add.graphics();
-    enemySprite.lineStyle(3, 0xff4444, 0.8);
+    // Try to use enemy sprite based on name
+    let spriteCreated = false;
+    const enemyType = this.getEnemyType(enemy.name);
     
-    // Simple monster shape
-    enemySprite.beginPath();
-    enemySprite.moveTo(0, -50); // Top
-    enemySprite.lineTo(-20, -30); // Left ear
-    enemySprite.lineTo(-15, -10); // Left side
-    enemySprite.lineTo(-25, 10); // Left arm
-    enemySprite.lineTo(-10, 20); // Body
-    enemySprite.lineTo(10, 20); // Right side
-    enemySprite.lineTo(25, 10); // Right arm
-    enemySprite.lineTo(15, -10); // Right side
-    enemySprite.lineTo(20, -30); // Right ear
-    enemySprite.closePath();
-    enemySprite.strokePath();
+    if (enemyType && hasEnemySprite(enemyType)) {
+      try {
+        const sprite = createEnemySprite(this, 0, -10, enemyType, 1.5);
+        if (sprite) {
+          container.add(sprite);
+          spriteCreated = true;
+          bg.setVisible(false); // Hide background when using sprite
+          console.log(`✓ Using sprite for enemy: ${enemy.name} (${enemyType})`);
+        }
+      } catch (error) {
+        console.error(`Failed to create sprite for enemy ${enemyType}:`, error);
+      }
+    }
+    
+    // Fallback to generic monster shape if no sprite
+    if (!spriteCreated) {
+      console.log(`Using fallback graphics for enemy: ${enemy.name}`);
+      const enemySprite = this.add.graphics();
+      enemySprite.lineStyle(3, 0xff4444, 0.8);
+      
+      // Simple monster shape
+      enemySprite.beginPath();
+      enemySprite.moveTo(0, -50); // Top
+      enemySprite.lineTo(-20, -30); // Left ear
+      enemySprite.lineTo(-15, -10); // Left side
+      enemySprite.lineTo(-25, 10); // Left arm
+      enemySprite.lineTo(-10, 20); // Body
+      enemySprite.lineTo(10, 20); // Right side
+      enemySprite.lineTo(25, 10); // Right arm
+      enemySprite.lineTo(15, -10); // Right side
+      enemySprite.lineTo(20, -30); // Right ear
+      enemySprite.closePath();
+      enemySprite.strokePath();
 
-    container.add(enemySprite);
+      container.add(enemySprite);
+    }
 
     // Enemy name
     const nameText = this.add.text(0, 60, enemy.name, {
@@ -444,6 +639,16 @@ export class BattleScene extends Phaser.Scene {
     const hpFill = this.add.rectangle(-40, 75, 80 * (enemy.hp / enemy.maxHp), 10, 0xe74c3c, 1);
     hpFill.setOrigin(0, 0.5);
     container.add(hpFill);
+
+    // Status effect container (above enemy)
+    const statusContainer = this.add.container(0, -80);
+    container.add(statusContainer);
+    container.setData('statusContainer', statusContainer);
+    
+    // Store reference for easy access
+    if (enemy.id) {
+      this.statusEffectContainers.set(enemy.id, statusContainer);
+    }
 
     return container;
   }
@@ -483,8 +688,20 @@ export class BattleScene extends Phaser.Scene {
     // Add initial message
     this.addCombatLogEntry('Battle begins!', '#4a90e2');
 
-    // Turn indicator (top right) - with text shadow for visibility
-    const turnText = this.add.text(this.scale.width - 20, 20, `Turn ${this.currentTurn}`, {
+    // Stage and Turn indicator (top right) - with text shadow for visibility
+    const stageText = this.add.text(this.scale.width - 20, 20, `Stage ${this.currentStage}`, {
+      fontSize: '18px',
+      color: '#d4af37',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 4,
+    });
+    stageText.setOrigin(1, 0);
+    stageText.setDepth(1000);
+    this.hudContainer.add(stageText);
+
+    const turnText = this.add.text(this.scale.width - 20, 45, `Turn ${this.currentTurn}`, {
       fontSize: '20px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
@@ -1219,6 +1436,25 @@ export class BattleScene extends Phaser.Scene {
     // Store the post-turn state to apply after animations
     this.pendingPostState = payload.post;
     
+    // Deserialize and persist DOT effects for next turn
+    console.log('📦 Received payload.dots:', payload.dots);
+    if (payload.dots && payload.dots.length > 0) {
+      const dotsMap = new Map();
+      for (const entry of payload.dots) {
+        console.log(`🔮 Deserializing DOTs for actor ${entry.actorId}:`, entry.effects);
+        dotsMap.set(entry.actorId, entry.effects);
+      }
+      this.combatState.dots = dotsMap;
+      console.log('✅ DOT effects persisted for next turn:', Array.from(dotsMap.entries()));
+    } else {
+      // Clear DOT effects if none exist
+      console.log('🧹 No DOT effects in payload, clearing combatState.dots');
+      this.combatState.dots = new Map();
+    }
+    
+    // Update status indicators after DOT persistence
+    this.updateAllStatusIndicators();
+    
     // DON'T check for combat end here - wait until animations complete
     // This allows death animations to play out fully
     
@@ -1383,11 +1619,86 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Fire an arrow projectile from Huntress to target
+   */
+  private fireArrowProjectile(srcSlot: Phaser.GameObjects.Container, dstSlot: Phaser.GameObjects.Container): void {
+    // Create arrow sprite
+    const arrow = this.add.image(srcSlot.x, srcSlot.y, 'huntress_arrow');
+    arrow.setScale(2); // Scale up the small arrow
+    arrow.setDepth(50); // Above characters but below UI
+    
+    // Calculate angle to target
+    const angle = Phaser.Math.Angle.Between(srcSlot.x, srcSlot.y, dstSlot.x, dstSlot.y);
+    arrow.setRotation(angle);
+    
+    console.log(`🏹 Firing arrow from (${srcSlot.x}, ${srcSlot.y}) to (${dstSlot.x}, ${dstSlot.y})`);
+    
+    // Tween arrow to target
+    this.tweens.add({
+      targets: arrow,
+      x: dstSlot.x,
+      y: dstSlot.y,
+      duration: 200, // Fast arrow flight
+      ease: 'Linear',
+      onComplete: () => {
+        // Fade out and destroy arrow on impact
+        this.tweens.add({
+          targets: arrow,
+          alpha: 0,
+          duration: 100,
+          onComplete: () => arrow.destroy(),
+        });
+      },
+    });
+  }
+
   private playStrike(srcId: ActorId, dstId: ActorId, note?: string): void {
     const srcSlot = this.getActorSlot(srcId);
     const dstSlot = this.getActorSlot(dstId);
     
     if (srcSlot) {
+      // Try to play attack animation on character sprite
+      const actor = [...this.players, ...this.enemies].find(a => a.id === srcId);
+      if (actor && actor.side === 'party') {
+        const battleActor = actor as BattleActor;
+        const characterClass = battleActor.selectedClass;
+        
+        // Find sprite in the container
+        const sprite = srcSlot.list.find(obj => obj.type === 'Sprite') as Phaser.GameObjects.Sprite | undefined;
+        
+        if (sprite && characterClass) {
+          // Play attack animation if available
+          let attackAnimKey: string | null = null;
+          
+          if (characterClass === 'Mage') {
+            attackAnimKey = 'mage_attack_anim';
+          } else if (characterClass === 'Warrior') {
+            attackAnimKey = 'warrior_attack_anim';
+          } else if (characterClass === 'Huntress') {
+            attackAnimKey = 'huntress_attack_anim';
+            
+            // Fire arrow projectile for Huntress
+            if (dstSlot) {
+              this.fireArrowProjectile(srcSlot, dstSlot);
+            }
+          }
+          
+          if (attackAnimKey && this.anims.exists(attackAnimKey)) {
+            console.log(`Playing attack animation: ${attackAnimKey}`);
+            sprite.play(attackAnimKey);
+            
+            // Return to idle after attack animation completes
+            sprite.once('animationcomplete', () => {
+              const idleKey = `${characterClass.toLowerCase()}_idle_anim`;
+              if (this.anims.exists(idleKey)) {
+                sprite.play(idleKey);
+              }
+            });
+          }
+        }
+      }
+      
       // Strike animation - forward movement (slowed for visibility)
       this.tweens.add({
         targets: srcSlot,
@@ -1414,6 +1725,42 @@ export class BattleScene extends Phaser.Scene {
   private playHit(srcId: ActorId, dstId: ActorId, damage: number): void {
     const dstSlot = this.getActorSlot(dstId);
     if (dstSlot) {
+      // Try to play hurt animation on character sprite
+      const actor = [...this.players, ...this.enemies].find(a => a.id === dstId);
+      if (actor && actor.side === 'party') {
+        const battleActor = actor as BattleActor;
+        const characterClass = battleActor.selectedClass;
+        
+        // Find sprite in the container
+        const sprite = dstSlot.list.find(obj => obj.type === 'Sprite') as Phaser.GameObjects.Sprite | undefined;
+        
+        if (sprite && characterClass) {
+          // Play hurt animation if available
+          let hurtAnimKey: string | null = null;
+          
+          if (characterClass === 'Mage') {
+            hurtAnimKey = 'mage_hurt_anim';
+          } else if (characterClass === 'Warrior') {
+            hurtAnimKey = 'warrior_hurt_anim';
+          } else if (characterClass === 'Huntress') {
+            hurtAnimKey = 'huntress_hurt_anim';
+          }
+          
+          if (hurtAnimKey && this.anims.exists(hurtAnimKey)) {
+            console.log(`💔 Playing hurt animation: ${hurtAnimKey}`);
+            sprite.play(hurtAnimKey);
+            
+            // Return to idle after hurt animation completes
+            sprite.once('animationcomplete', () => {
+              const idleKey = `${characterClass.toLowerCase()}_idle_anim`;
+              if (this.anims.exists(idleKey)) {
+                sprite.play(idleKey);
+              }
+            });
+          }
+        }
+      }
+      
       // Damage number (larger and slower for visibility)
       const damageText = this.add.text(
         dstSlot.x + 50,
@@ -1436,6 +1783,75 @@ export class BattleScene extends Phaser.Scene {
         duration: 1500, // Was 1000ms
         ease: 'Power2',
         onComplete: () => damageText.destroy(),
+      });
+    }
+  }
+
+  /**
+   * Play death animation for an enemy
+   */
+  private playEnemyDeath(enemyId: ActorId): void {
+    const enemySlot = this.getActorSlot(enemyId);
+    if (!enemySlot) return;
+
+    const enemy = this.enemies.find(e => e.id === enemyId);
+    if (!enemy) return;
+
+    // Find sprite in the enemy slot
+    const sprite = enemySlot.list.find(obj => obj.type === 'Sprite') as Phaser.GameObjects.Sprite | undefined;
+    
+    if (sprite) {
+      const enemyType = this.getEnemyType(enemy.name);
+      
+      if (enemyType) {
+        let deathAnimKey: string | null = null;
+        
+        if (enemyType === 'Goblin') {
+          deathAnimKey = 'goblin_death_anim';
+        } else if (enemyType === 'FlyingDemon') {
+          deathAnimKey = 'flying_demon_death_anim';
+        }
+        
+        if (deathAnimKey && this.anims.exists(deathAnimKey)) {
+          console.log(`💀 Playing death animation: ${deathAnimKey}`);
+          
+          // Stop any existing animations and tweens
+          sprite.stop();
+          this.tweens.killTweensOf(sprite);
+          
+          // Play death animation
+          sprite.play(deathAnimKey);
+          
+          // Fade out after death animation completes
+          sprite.once('animationcomplete', () => {
+            this.tweens.add({
+              targets: enemySlot,
+              alpha: 0,
+              duration: 500,
+              ease: 'Power2',
+              onComplete: () => {
+                // Keep invisible but don't destroy (causes issues with targeting)
+                enemySlot.setVisible(false);
+              },
+            });
+          });
+        } else {
+          // Fallback: fade out without death animation
+          this.tweens.add({
+            targets: enemySlot,
+            alpha: 0,
+            duration: 500,
+            ease: 'Power2',
+          });
+        }
+      }
+    } else {
+      // No sprite found, just fade out the entire slot
+      this.tweens.add({
+        targets: enemySlot,
+        alpha: 0,
+        duration: 500,
+        ease: 'Power2',
       });
     }
   }
@@ -1674,12 +2090,16 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private updateUI(): void {
-    // Update turn text (index 0 in hudContainer after removing background)
-    const turnText = this.hudContainer.getAt(0) as Phaser.GameObjects.Text;
+    // Update stage text (index 0 in hudContainer)
+    const stageText = this.hudContainer.getAt(0) as Phaser.GameObjects.Text;
+    stageText.setText(`Stage ${this.currentStage}`);
+    
+    // Update turn text (index 1 in hudContainer)
+    const turnText = this.hudContainer.getAt(1) as Phaser.GameObjects.Text;
     turnText.setText(`Turn ${this.currentTurn}`);
     
-    // Update phase text (index 1 in hudContainer after removing background)
-    const phaseText = this.hudContainer.getAt(1) as Phaser.GameObjects.Text;
+    // Update phase text (index 2 in hudContainer)
+    const phaseText = this.hudContainer.getAt(2) as Phaser.GameObjects.Text;
     phaseText.setText(this.phase);
 
     // Update phase color
@@ -1925,6 +2345,12 @@ export class BattleScene extends Phaser.Scene {
         console.log(`Updated local enemy array: ${this.enemies[enemyIndex].name} HP = ${this.enemies[enemyIndex].hp}`);
       }
       
+      // Check if enemy died
+      if (combatEnemy.hp === 0 && oldHp > 0) {
+        console.log(`💀 ${combatEnemy.name} has died!`);
+        this.playEnemyDeath(targetId);
+      }
+      
       // Update health bar immediately
       this.updateTargetHealthBar(targetId);
       
@@ -2066,6 +2492,9 @@ export class BattleScene extends Phaser.Scene {
       this.queueDisplay = null;
     }
     
+    // Update status effect indicators
+    this.updateAllStatusIndicators();
+    
     // Refresh AP for all players at start of round (but not on turn 1)
     // Turn 1: Players start with their initial 5 AP
     // Turn 2+: Players gain +5 AP per round
@@ -2188,9 +2617,29 @@ export class BattleScene extends Phaser.Scene {
     );
     bannerText.setOrigin(0.5);
 
-    // Return to lobby after delay
+    // Return to map or lobby after delay
     this.time.delayedCall(3000, () => {
-      this.scene.start('Lobby');
+      if (result === 'victory') {
+        // Stop battle music before transitioning
+        if (this.soundManager) {
+          console.log('Victory - stopping battle music before returning to map');
+          this.soundManager.stopAll();
+        }
+        
+        // Continue to map on victory
+        // Use existing mapSeed if available, otherwise create new map
+        this.scene.start('MapScene', {
+          lobbyId: this.lobbyId,
+          players: this.players,
+          mapSeed: this.mapSeed || (Date.now() % 2147483647), // Keep within PostgreSQL integer range
+          visitedNodes: this.visitedNodes, // Pass visited nodes to restore progress
+          currentNodeId: this.currentNodeId, // Pass current position
+          stage: this.currentStage, // Pass current stage for next battle
+        });
+      } else {
+        // Return to lobby on defeat
+        this.scene.start('Lobby');
+      }
     });
   }
 
@@ -2322,17 +2771,27 @@ export class BattleScene extends Phaser.Scene {
   private showLockButton(): void {
     this.hideLockButton();
 
-    this.lockButton = this.add.container(this.scale.width / 2, this.scale.height - 150);
+    // Position button much higher to avoid covering cards (300px from bottom instead of 150px)
+    this.lockButton = this.add.container(this.scale.width / 2, this.scale.height - 300);
 
     // Show different text based on whether cards were played
-    const buttonText = this.queuedActions.length > 0 
-      ? `🔒 END TURN (${this.queuedActions.length} card${this.queuedActions.length > 1 ? 's' : ''})`
-      : '🔒 END TURN';
+    let buttonText: string;
+    let buttonColor: number;
+    
+    if (this.queuedActions.length > 0) {
+      // Cards queued - make it clear this locks in the turn
+      buttonText = `✅ LOCK IN TURN (${this.queuedActions.length} card${this.queuedActions.length > 1 ? 's' : ''})`;
+      buttonColor = 0x27ae60; // Green - ready to go
+    } else {
+      // No cards queued - make it clear this skips the turn
+      buttonText = '⏭️ SKIP TURN (No Cards)';
+      buttonColor = 0xe67e22; // Orange - warning color
+    }
     
     // Calculate button width based on text
-    const buttonWidth = Math.max(180, buttonText.length * 10);
+    const buttonWidth = Math.max(220, buttonText.length * 10);
     
-    const bg = this.add.rectangle(0, 0, buttonWidth, 50, 0x27ae60, 1);
+    const bg = this.add.rectangle(0, 0, buttonWidth, 50, buttonColor, 1);
     bg.setStrokeStyle(3, 0xffffff, 0.9);
     bg.setInteractive({ useHandCursor: true });
     this.lockButton.add(bg);
@@ -2346,22 +2805,24 @@ export class BattleScene extends Phaser.Scene {
     text.setOrigin(0.5);
     this.lockButton.add(text);
 
-    // Pulse animation
-    this.tweens.add({
-      targets: this.lockButton,
-      scale: 1.05,
-      duration: 500,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
-    });
+    // Only pulse if cards are queued (less distracting when no cards)
+    if (this.queuedActions.length > 0) {
+      this.tweens.add({
+        targets: this.lockButton,
+        scale: 1.05,
+        duration: 500,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
 
     bg.on('pointerover', () => {
-      bg.setFillStyle(0x2ecc71);
+      bg.setFillStyle(this.queuedActions.length > 0 ? 0x2ecc71 : 0xf39c12);
     });
 
     bg.on('pointerout', () => {
-      bg.setFillStyle(0x27ae60);
+      bg.setFillStyle(buttonColor);
     });
 
     bg.on('pointerdown', () => {
@@ -2380,9 +2841,10 @@ export class BattleScene extends Phaser.Scene {
   private showPendingActionText(text: string, color = '#f39c12'): void {
     this.hidePendingActionText();
 
+    // Move pending action text higher to not overlap with repositioned button
     this.pendingActionDisplay = this.add.text(
       this.scale.width / 2,
-      this.scale.height - 220,
+      this.scale.height - 350,
       text,
       {
         fontSize: '18px',
@@ -2790,6 +3252,12 @@ export class BattleScene extends Phaser.Scene {
 
   private refreshLogEntries(): void {
     if (!this.combatLogContainer) return;
+    
+    // Safety check: ensure scene is active
+    if (!this.scene.isActive()) {
+      console.warn('Cannot refresh log entries: scene not active');
+      return;
+    }
 
     const startY = 28;
     const lineHeight = this.isLogExpanded ? 20 : 14; // More spacing when expanded
@@ -2800,13 +3268,20 @@ export class BattleScene extends Phaser.Scene {
 
     // Remove all entries from container
     this.combatLogEntries.forEach(entry => {
-      if (this.combatLogContainer!.list.includes(entry)) {
+      // Safety check: ensure entry is valid and from this scene
+      if (entry && entry.scene === this && this.combatLogContainer!.list.includes(entry)) {
         this.combatLogContainer!.remove(entry, false);
       }
     });
 
     // Re-add and position visible entries
     entriesToShow.forEach((entry, index) => {
+      // Safety check: ensure entry is valid and from this scene
+      if (!entry || entry.scene !== this) {
+        console.warn('Skipping invalid log entry from old scene');
+        return;
+      }
+      
       const targetY = startY + (index * lineHeight);
       entry.setY(targetY);
       
@@ -2822,6 +3297,12 @@ export class BattleScene extends Phaser.Scene {
 
   private addCombatLogEntry(message: string, color: string = '#ffffff'): void {
     if (!this.combatLogContainer) return;
+    
+    // Safety check: ensure scene is active and ready
+    if (!this.scene.isActive() || !this.add) {
+      console.warn('Cannot add combat log entry: scene not ready');
+      return;
+    }
 
     // Create new log entry with proper positioning and word wrap
     const entry = this.add.text(10, 0, `• ${message}`, {
@@ -2861,7 +3342,15 @@ export class BattleScene extends Phaser.Scene {
 
   private getActorName(actorId: ActorId): string {
     const actor = [...this.players, ...this.enemies].find(a => a.id === actorId);
-    return actor?.name || 'Unknown';
+    if (!actor) return 'Unknown';
+    
+    // Include class for players
+    const battleActor = actor as BattleActor;
+    if (battleActor.selectedClass && actor.side === 'party') {
+      return `${actor.name} (${battleActor.selectedClass})`;
+    }
+    
+    return actor.name;
   }
 
   private showPlayerLockedNotification(playerName: string, actionType: ActionType, actionCount: number = 1): void {
@@ -3024,6 +3513,111 @@ export class BattleScene extends Phaser.Scene {
         onComplete: () => notification.destroy(),
       });
     });
+  }
+
+  /**
+   * Update status effect indicators for all actors
+   */
+  private updateAllStatusIndicators(): void {
+    // Update party members
+    for (const player of this.players) {
+      this.updateStatusIndicators(player.id);
+    }
+    
+    // Update enemies
+    for (const enemy of this.enemies) {
+      this.updateStatusIndicators(enemy.id);
+    }
+  }
+
+  /**
+   * Update status effect indicators for a specific actor
+   */
+  private updateStatusIndicators(actorId: ActorId): void {
+    const container = this.statusEffectContainers.get(actorId);
+    if (!container) return;
+
+    // Clear existing indicators
+    container.removeAll(true);
+
+    const statusIcons: { icon: string; color: number; text: string; bgColor: number }[] = [];
+
+    // Check for DOT effects
+    if (this.combatState.dots) {
+      const dots = this.combatState.dots.get(actorId);
+      if (dots && dots.length > 0) {
+        for (const dot of dots) {
+          if (dot.duration > 0) {
+            if (dot.type === 'poison') {
+              statusIcons.push({
+                icon: '☠️',
+                color: 0x00ff00,
+                text: `${dot.damage}x${dot.duration}`,
+                bgColor: 0x003300,
+              });
+            } else if (dot.type === 'burn') {
+              statusIcons.push({
+                icon: '🔥',
+                color: 0xff4400,
+                text: `${dot.damage}x${dot.duration}`,
+                bgColor: 0x330000,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // Check for guard/shield (simplified - you may want to track this in combat state)
+    // For now, we'll add this when guard effects are applied
+
+    // TODO: Add vulnerable, stun, and other status effects as they're implemented
+
+    // Create status icon badges
+    const iconSize = 24;
+    const spacing = 28;
+    const startX = -(statusIcons.length - 1) * spacing / 2;
+
+    statusIcons.forEach((status, index) => {
+      const x = startX + index * spacing;
+      
+      // Background circle
+      const bg = this.add.circle(x, 0, iconSize / 2, status.bgColor, 0.9);
+      bg.setStrokeStyle(2, status.color, 1);
+      container.add(bg);
+
+      // Icon emoji
+      const iconText = this.add.text(x, -2, status.icon, {
+        fontSize: '16px',
+        fontFamily: 'Arial, sans-serif',
+      });
+      iconText.setOrigin(0.5);
+      container.add(iconText);
+
+      // Duration/stack text
+      const durationText = this.add.text(x, 14, status.text, {
+        fontSize: '8px',
+        color: '#ffffff',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 2,
+      });
+      durationText.setOrigin(0.5);
+      container.add(durationText);
+    });
+  }
+
+  /**
+   * Add a guard status indicator
+   */
+  private addGuardIndicator(actorId: ActorId, shieldAmount: number): void {
+    const container = this.statusEffectContainers.get(actorId);
+    if (!container) return;
+
+    // For now, we'll trigger a full update
+    // In a more sophisticated system, you might track guard separately
+    this.updateStatusIndicators(actorId);
   }
 
   destroy(): void {

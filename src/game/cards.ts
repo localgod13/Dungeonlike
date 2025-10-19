@@ -2,9 +2,9 @@
  * Card catalog and type definitions
  */
 
-export type Target = 'none' | 'ally' | 'enemy' | 'all_enemies';
+export type Target = 'none' | 'ally' | 'enemy' | 'all_enemies' | 'all_allies';
 
-export type CardOpcode = 'DMG' | 'HEAL' | 'GUARD' | 'VULN' | 'STUN' | 'AOE_DMG';
+export type CardOpcode = 'DMG' | 'HEAL' | 'GUARD' | 'VULN' | 'STUN' | 'AOE_DMG' | 'TAUNT' | 'DOT' | 'SELF_GUARD';
 
 export type CardType = 'attack' | 'defense' | 'magic';
 
@@ -17,76 +17,254 @@ export interface Card {
   power: number;       // magnitude for effect
   desc: string;
   type: CardType;      // Visual card type for image selection
+  class?: string;      // Class restriction: 'Warrior', 'Huntress', 'Mage', or undefined for universal
 }
 
 /**
- * Shared pool of cards available for selection
+ * WARRIOR CARDS - Melee combat, defense, and tanking abilities
  */
-export const CARD_POOL: Card[] = [
+export const WARRIOR_CARDS: Card[] = [
   { 
-    id: 'Strike', 
-    name: 'Strike', 
+    id: 'Slash', 
+    name: 'Slash', 
     ap: 3, 
     target: 'enemy', 
     opcode: 'DMG', 
-    power: 6, 
-    desc: 'Deal 6 damage',
-    type: 'attack'
+    power: 7, 
+    desc: 'Deal 7 melee damage',
+    type: 'attack',
+    class: 'Warrior'
   },
   { 
-    id: 'Guard', 
-    name: 'Guard', 
+    id: 'ShieldWall', 
+    name: 'Shield Wall', 
     ap: 2, 
     target: 'ally', 
     opcode: 'GUARD', 
-    power: 3, 
-    desc: 'Give 3 Shield',
-    type: 'defense'
+    power: 5, 
+    desc: 'Give 5 Shield to an ally',
+    type: 'defense',
+    class: 'Warrior'
   },
   { 
-    id: 'Mend', 
-    name: 'Mend', 
-    ap: 3, 
-    target: 'ally', 
-    opcode: 'HEAL', 
-    power: 6, 
-    desc: 'Heal 6 HP',
-    type: 'magic'
-  },
-  { 
-    id: 'Weaken', 
-    name: 'Weaken', 
+    id: 'Taunt', 
+    name: 'Taunt', 
     ap: 2, 
     target: 'enemy', 
-    opcode: 'VULN', 
+    opcode: 'TAUNT', 
     power: 2, 
-    desc: 'Apply 2 Vulnerable (this turn)',
-    type: 'magic'
+    desc: 'Force enemy to target you for 2 turns',
+    type: 'defense',
+    class: 'Warrior'
   },
   { 
-    id: 'Bash', 
-    name: 'Bash', 
+    id: 'HeavyStrike', 
+    name: 'Heavy Strike', 
     ap: 4, 
     target: 'enemy', 
-    opcode: 'STUN', 
-    power: 1, 
-    desc: 'Stun target (skip next action)',
-    type: 'attack'
+    opcode: 'DMG', 
+    power: 11, 
+    desc: 'Deal 11 massive melee damage',
+    type: 'attack',
+    class: 'Warrior'
   },
   { 
-    id: 'Nova', 
-    name: 'Nova', 
+    id: 'DefensiveStance', 
+    name: 'Defensive Stance', 
+    ap: 3, 
+    target: 'none', 
+    opcode: 'SELF_GUARD', 
+    power: 8, 
+    desc: 'Grant yourself 8 Shield',
+    type: 'defense',
+    class: 'Warrior'
+  },
+  { 
+    id: 'Cleave', 
+    name: 'Cleave', 
     ap: 5, 
     target: 'all_enemies', 
     opcode: 'AOE_DMG', 
-    power: 4, 
-    desc: 'Deal 4 to all enemies',
-    type: 'attack'
+    power: 5, 
+    desc: 'Deal 5 damage to all enemies',
+    type: 'attack',
+    class: 'Warrior'
   },
 ];
 
 /**
- * Get a card by its ID
+ * HUNTRESS CARDS - Ranged combat with arrows and agility
+ */
+export const HUNTRESS_CARDS: Card[] = [
+  { 
+    id: 'ArrowShot', 
+    name: 'Arrow Shot', 
+    ap: 2, 
+    target: 'enemy', 
+    opcode: 'DMG', 
+    power: 5, 
+    desc: 'Fire an arrow for 5 damage',
+    type: 'attack',
+    class: 'Huntress'
+  },
+  { 
+    id: 'MultiShot', 
+    name: 'Multi-Shot', 
+    ap: 4, 
+    target: 'all_enemies', 
+    opcode: 'AOE_DMG', 
+    power: 3, 
+    desc: 'Fire arrows at all enemies for 3 each',
+    type: 'attack',
+    class: 'Huntress'
+  },
+  { 
+    id: 'PiercingArrow', 
+    name: 'Piercing Arrow', 
+    ap: 4, 
+    target: 'enemy', 
+    opcode: 'DMG', 
+    power: 10, 
+    desc: 'Pierce armor for 10 damage',
+    type: 'attack',
+    class: 'Huntress'
+  },
+  { 
+    id: 'PoisonArrow', 
+    name: 'Poison Arrow', 
+    ap: 3, 
+    target: 'enemy', 
+    opcode: 'DOT', 
+    power: 4, 
+    desc: 'Poison: 4 damage per turn for 2 turns',
+    type: 'attack',
+    class: 'Huntress'
+  },
+  { 
+    id: 'RapidFire', 
+    name: 'Rapid Fire', 
+    ap: 5, 
+    target: 'enemy', 
+    opcode: 'DMG', 
+    power: 13, 
+    desc: 'Unleash rapid arrows for 13 damage',
+    type: 'attack',
+    class: 'Huntress'
+  },
+  { 
+    id: 'EvasiveManeuver', 
+    name: 'Evasive Maneuver', 
+    ap: 2, 
+    target: 'none', 
+    opcode: 'SELF_GUARD', 
+    power: 4, 
+    desc: 'Dodge and gain 4 Shield',
+    type: 'defense',
+    class: 'Huntress'
+  },
+];
+
+/**
+ * MAGE CARDS - Fire magic and elemental spells
+ */
+export const MAGE_CARDS: Card[] = [
+  { 
+    id: 'Fireball', 
+    name: 'Fireball', 
+    ap: 3, 
+    target: 'enemy', 
+    opcode: 'DMG', 
+    power: 8, 
+    desc: 'Hurl a fireball for 8 damage',
+    type: 'magic',
+    class: 'Mage'
+  },
+  { 
+    id: 'FlameNova', 
+    name: 'Flame Nova', 
+    ap: 5, 
+    target: 'all_enemies', 
+    opcode: 'AOE_DMG', 
+    power: 6, 
+    desc: 'Explode flames dealing 6 to all',
+    type: 'magic',
+    class: 'Mage'
+  },
+  { 
+    id: 'Inferno', 
+    name: 'Inferno', 
+    ap: 4, 
+    target: 'enemy', 
+    opcode: 'DMG', 
+    power: 12, 
+    desc: 'Unleash inferno for 12 damage',
+    type: 'magic',
+    class: 'Mage'
+  },
+  { 
+    id: 'BurningCurse', 
+    name: 'Burning Curse', 
+    ap: 3, 
+    target: 'enemy', 
+    opcode: 'DOT', 
+    power: 5, 
+    desc: 'Curse: 5 burn damage per turn for 2 turns',
+    type: 'magic',
+    class: 'Mage'
+  },
+  { 
+    id: 'FireShield', 
+    name: 'Fire Shield', 
+    ap: 2, 
+    target: 'none', 
+    opcode: 'SELF_GUARD', 
+    power: 6, 
+    desc: 'Conjure fire shield for 6 defense',
+    type: 'defense',
+    class: 'Mage'
+  },
+  { 
+    id: 'MeteorStrike', 
+    name: 'Meteor Strike', 
+    ap: 6, 
+    target: 'enemy', 
+    opcode: 'DMG', 
+    power: 16, 
+    desc: 'Call down a meteor for 16 massive damage',
+    type: 'magic',
+    class: 'Mage'
+  },
+];
+
+/**
+ * Legacy shared pool - kept for backwards compatibility
+ * @deprecated Use class-specific card pools instead
+ */
+export const CARD_POOL: Card[] = [
+  ...WARRIOR_CARDS,
+  ...HUNTRESS_CARDS,
+  ...MAGE_CARDS,
+];
+
+/**
+ * Get cards for a specific class
+ */
+export function getCardsForClass(className: string): Card[] {
+  switch (className) {
+    case 'Warrior':
+      return WARRIOR_CARDS;
+    case 'Huntress':
+      return HUNTRESS_CARDS;
+    case 'Mage':
+      return MAGE_CARDS;
+    default:
+      console.warn(`Unknown class: ${className}, returning Warrior cards as default`);
+      return WARRIOR_CARDS;
+  }
+}
+
+/**
+ * Get a card by its ID (searches all class pools)
  */
 export function getCardById(id: string): Card | undefined {
   return CARD_POOL.find(c => c.id === id);
@@ -96,5 +274,5 @@ export function getCardById(id: string): Card | undefined {
  * Validate if a card requires a target selection
  */
 export function requiresTarget(card: Card): boolean {
-  return card.target !== 'none' && card.target !== 'all_enemies';
+  return card.target !== 'none' && card.target !== 'all_enemies' && card.target !== 'all_allies';
 }

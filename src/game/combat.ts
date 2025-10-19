@@ -6,6 +6,13 @@ import { Card, getCardById } from './cards';
  * Combat rules, AI, and deterministic resolution
  */
 
+export interface DotEffect {
+  damage: number;      // Damage per turn
+  duration: number;    // Remaining turns
+  source: ActorId;     // Who applied it
+  type: 'poison' | 'burn'; // Effect type for visuals
+}
+
 export interface CombatState {
   turn: number;
   party: Actor[];  // 1–3 members
@@ -13,6 +20,7 @@ export interface CombatState {
   shields?: Map<ActorId, number>; // Shield stacks per actor
   vulnerable?: Map<ActorId, number>; // Vulnerable stacks per actor
   stunned?: Set<ActorId>; // Stunned actors (skip action)
+  dots?: Map<ActorId, DotEffect[]>; // DOT effects per actor
 }
 
 export type Initiative = ActorId[];
@@ -63,6 +71,7 @@ export function resolveTurn(
     turn: state.turn,
     party: state.party.map(a => ({ ...a })),
     enemies: state.enemies.map(a => ({ ...a })),
+    dots: state.dots ? new Map(state.dots) : new Map(),
   };
   
   const order = rollInitiative(simState, rng);
@@ -79,6 +88,58 @@ export function resolveTurn(
   const effects: Effect[] = [];
   const getActor = (id: ActorId) => 
     simState.party.find(a => a.id === id) || simState.enemies.find(a => a.id === id);
+  
+  // Apply DOT effects at the start of the turn
+  let tCursor = 0;
+  const dotEffects = simState.dots || new Map();
+  
+  console.log(`[Combat] 🔥 DOT Tick Phase - Turn ${state.turn}`);
+  console.log(`[Combat] 📋 Total actors with DOTs: ${dotEffects.size}`);
+  
+  for (const [actorId, dots] of dotEffects.entries()) {
+    const actor = getActor(actorId);
+    if (!actor || actor.hp <= 0) {
+      console.log(`[Combat] ⚰️ Skipping DOTs for ${actorId} (dead or not found)`);
+      continue;
+    }
+    
+    console.log(`[Combat] 🎯 Processing DOTs for ${actor.name} (${dots.length} effects)`);
+    
+    // Apply each DOT effect
+    for (const dot of dots) {
+      const source = getActor(dot.source);
+      if (source && dot.duration > 0) {
+        console.log(`[Combat] ☠️ Applying ${dot.type} DOT to ${actor.name}: ${dot.damage} damage (${dot.duration} turns remaining)`);
+        console.log(`[Combat] 💚 ${actor.name} HP before DOT: ${actor.hp}/${actor.maxHp}`);
+        
+        // Create poison/burn visual effect
+        effects.push({ at: tCursor, kind: 'vfx', src: source.id, dst: actor.id, note: dot.type });
+        effects.push({ at: tCursor + 400, kind: 'hit', src: source.id, dst: actor.id, value: dot.damage });
+        
+        // Apply damage
+        actor.hp = Math.max(0, actor.hp - dot.damage);
+        console.log(`[Combat] ❤️ ${actor.name} HP after DOT: ${actor.hp}/${actor.maxHp}`);
+        
+        // Decrement duration
+        dot.duration--;
+        console.log(`[Combat] ⏱️ ${dot.type} duration decremented to: ${dot.duration}`);
+        
+        tCursor += 600; // Space out DOT effects
+      } else {
+        console.log(`[Combat] ⏭️ Skipping expired or invalid DOT (duration: ${dot.duration}, source found: ${!!source})`);
+      }
+    }
+    
+    // Remove expired DOT effects
+    const remainingDots = dots.filter(dot => dot.duration > 0);
+    console.log(`[Combat] 🧹 Cleaning DOTs for ${actor.name}: ${dots.length} -> ${remainingDots.length}`);
+    dotEffects.set(actorId, remainingDots);
+  }
+  
+  // Add delay after DOT phase before actions start
+  if (tCursor > 0) {
+    tCursor += 400;
+  }
 
   // Helper functions for creating effects (timing slowed for better visibility)
   const strike = (src: Actor, dst: Actor, dmg: number, t0: number, note = 'slash') => {
@@ -97,8 +158,7 @@ export function resolveTurn(
     effects.push({ at: t0 + 700, kind: 'heal', src: src.id, dst: dst.id, value: val }); // Was 250ms
   };
 
-  // Simulate turn
-  let tCursor = 0;
+  // Simulate turn - tCursor continues from DOT phase
   const GUARD_REDUCTION = 2;
   const guarded = new Set<ActorId>();
   const guardValues = new Map<ActorId, number>(); // Track actual guard values
@@ -256,6 +316,53 @@ export function resolveTurn(
                 target.hp = Math.max(0, target.hp - finalDamage);
               });
               break;
+            
+            case 'SELF_GUARD':
+              // Self-shield: grant shield to caster
+              const shieldValue = card.power;
+              guard(actor, shieldValue, tCursor);
+              guarded.add(actor.id);
+              guardValues.set(actor.id, shieldValue);
+              console.log(`[Combat] ${actor.name} gains ${shieldValue} shield from ${card.name}`);
+              break;
+            
+            case 'TAUNT':
+              // Taunt: force enemy to target the caster
+              // Note: This is a visual effect only in current implementation
+              // Full taunt mechanics would require AI modification
+              if (dst) {
+                console.log(`[Combat] ${actor.name} taunts ${dst.name}!`);
+                effects.push({ at: tCursor, kind: 'vfx', src: actor.id, dst: dst.id, note: 'taunt' });
+              }
+              break;
+            
+            case 'DOT':
+              // Damage over time: add status effect for multiple turns
+              if (dst) {
+                // Determine effect type based on card name
+                const effectType: 'poison' | 'burn' = card.name.toLowerCase().includes('poison') ? 'poison' : 'burn';
+                const damagePerTurn = card.power; // Full power value = damage per turn
+                const duration = 2; // 2 turns of damage
+                
+                // Add DOT effect to target
+                const targetDots = dotEffects.get(dst.id) || [];
+                targetDots.push({
+                  damage: damagePerTurn,
+                  duration: duration,
+                  source: actor.id,
+                  type: effectType,
+                });
+                dotEffects.set(dst.id, targetDots);
+                
+                console.log(`[Combat] ✨ ${actor.name} applies ${card.name} to ${dst.name}!`);
+                console.log(`[Combat] 🔮 DOT Effect: ${damagePerTurn} ${effectType} damage per turn for ${duration} turns`);
+                console.log(`[Combat] 📊 Total damage over time: ${damagePerTurn * duration}`);
+                console.log(`[Combat] 📊 Total DOTs on ${dst.name}: ${targetDots.length}`);
+                
+                // Show application visual effect
+                effects.push({ at: tCursor, kind: 'vfx', src: actor.id, dst: dst.id, note: effectType });
+              }
+              break;
           }
         }
       }
@@ -272,12 +379,22 @@ export function resolveTurn(
   // This contains the final HP values after all damage/healing
   const post = [...simState.party, ...simState.enemies].map(a => ({ ...a }));
   
+  // Update the simulation state's DOT effects for persistence
+  simState.dots = dotEffects;
+  
+  // Serialize DOT effects Map to array format for network transmission
+  const serializedDots = Array.from(dotEffects.entries()).map(([actorId, effects]) => ({
+    actorId,
+    effects: effects.map(e => ({ ...e })),
+  }));
+  
   return { 
     turn: state.turn, 
     seed, 
     order, 
     effects, 
-    post 
+    post,
+    dots: serializedDots, // Include DOT effects in payload for persistence
   };
 }
 
@@ -305,6 +422,7 @@ export function createCombatState(
     turn,
     party: party.map(a => ({ ...a })),
     enemies: enemies.map(a => ({ ...a })),
+    dots: new Map(),
   };
 }
 

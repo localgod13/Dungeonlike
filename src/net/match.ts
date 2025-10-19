@@ -29,6 +29,12 @@ export interface SelectionHandlers {
   onSelectionCommit?: (loadouts: Loadout[]) => void;
 }
 
+export interface MapHandlers {
+  onMapVote?: (userId: string, nodeId: string) => void;
+  onMapVoteResult?: (selectedNodeId: string, votes: { [nodeId: string]: string[] }) => void;
+  onCursorMove?: (cursor: CursorPosition) => void;
+}
+
 /**
  * Subscribe to battle match updates
  */
@@ -459,4 +465,154 @@ export async function sendSelectCommit(
   });
 
   console.log(`Sent selection commit with ${loadouts.length} loadouts`);
+}
+
+/**
+ * Subscribe to map updates
+ */
+export async function subscribeMap(
+  lobbyId: string,
+  handlers: MapHandlers
+): Promise<() => void> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
+  
+  if (!userId) {
+    throw new Error('Not authenticated');
+  }
+
+  // Create map channel
+  const channel = supabase.channel(`map:${lobbyId}`, {
+    config: {
+      broadcast: { self: true },
+      presence: { key: userId },
+    },
+  });
+
+  // Handle map votes
+  channel.on('broadcast', { event: 'map_vote' }, (payload) => {
+    console.log('Received map vote:', payload);
+    const { userId: voterId, nodeId } = payload.payload;
+    if (voterId !== userId) {
+      handlers.onMapVote?.(voterId, nodeId);
+    }
+  });
+
+  // Handle map vote results
+  channel.on('broadcast', { event: 'map_vote_result' }, (payload) => {
+    console.log('Received map vote result:', payload);
+    const { selectedNodeId, votes } = payload.payload;
+    handlers.onMapVoteResult?.(selectedNodeId, votes);
+  });
+
+  // Handle cursor movements
+  channel.on('broadcast', { event: 'map_cursor' }, (payload) => {
+    const cursor = payload.payload as CursorPosition;
+    // Don't process our own cursor
+    if (cursor.userId !== userId) {
+      handlers.onCursorMove?.(cursor);
+    }
+  });
+
+  // Subscribe to channel
+  const { error } = await channel.subscribe();
+  if (error) {
+    throw new Error(`Failed to subscribe to map channel: ${error.message}`);
+  }
+
+  console.log(`Subscribed to map channel: ${lobbyId}`);
+
+  // Return unsubscribe function
+  return () => {
+    channel.unsubscribe();
+  };
+}
+
+/**
+ * Send map vote
+ */
+export async function sendMapVote(lobbyId: string, nodeId: string): Promise<void> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
+  
+  if (!userId) {
+    throw new Error('Not authenticated');
+  }
+
+  const { error } = await supabase.channel(`map:${lobbyId}`).send({
+    type: 'broadcast',
+    event: 'map_vote',
+    payload: {
+      userId,
+      nodeId,
+    },
+  });
+
+  if (error) {
+    console.error('Failed to send map vote:', error);
+    throw new Error(`Failed to send map vote: ${error.message}`);
+  }
+
+  console.log(`Sent map vote: ${nodeId}`);
+}
+
+/**
+ * Send map vote result (host only)
+ */
+export async function sendMapVoteResult(
+  lobbyId: string, 
+  selectedNodeId: string, 
+  votes: { [nodeId: string]: string[] }
+): Promise<void> {
+  const supabase = getSupabase();
+
+  const { error } = await supabase.channel(`map:${lobbyId}`).send({
+    type: 'broadcast',
+    event: 'map_vote_result',
+    payload: {
+      selectedNodeId,
+      votes,
+    },
+  });
+
+  if (error) {
+    console.error('Failed to send map vote result:', error);
+    throw new Error(`Failed to send map vote result: ${error.message}`);
+  }
+
+  console.log(`Sent map vote result: ${selectedNodeId}`, votes);
+}
+
+/**
+ * Send cursor position update for map scene
+ */
+export async function sendMapCursor(
+  lobbyId: string,
+  x: number,
+  y: number,
+  userName?: string,
+  color?: string
+): Promise<void> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
+
+  if (!userId) {
+    return; // Silently fail if not authenticated
+  }
+
+  const cursor: CursorPosition = {
+    x,
+    y,
+    userId,
+    userName,
+    color,
+  };
+
+  const channel = supabase.channel(`map:${lobbyId}`);
+  // Fire and forget - don't await
+  channel.send({
+    type: 'broadcast',
+    event: 'map_cursor',
+    payload: cursor,
+  });
 }
