@@ -405,11 +405,24 @@ export class BattleScene extends Phaser.Scene {
     const centerX = this.scale.width / 2;
     const centerY = this.scale.height / 2;
 
-    // Create party slots (left side) - moved further left with more spacing
-    for (let i = 0; i < 3; i++) {
+    // Create party slots (left side) - dynamic positioning based on player count
+    const playerCount = this.players.length;
+    
+    for (let i = 0; i < playerCount; i++) {
       const player = this.players[i];
+      let positionIndex: number;
+      
+      // Determine position index based on player count
+      if (playerCount === 1) {
+        positionIndex = 1; // Center position
+      } else if (playerCount === 2) {
+        positionIndex = i; // Front two positions (0 and 1)
+      } else {
+        positionIndex = i; // All three positions (0, 1, 2)
+      }
+      
       const slot = this.createPartySlot(
-        centerX - 450 + i * 180,
+        centerX - 450 + positionIndex * 180,
         centerY,
         player
       );
@@ -431,7 +444,7 @@ export class BattleScene extends Phaser.Scene {
   private createPartySlot(
     x: number,
     y: number,
-    player: Actor | undefined
+    player: Actor
   ): Phaser.GameObjects.Container {
     const container = this.add.container(x, y);
 
@@ -440,117 +453,105 @@ export class BattleScene extends Phaser.Scene {
     bg.setStrokeStyle(2, 0xffffff, 0.8);
     container.add(bg);
 
-    if (player) {
-      // Player avatar - use sprite if class has one, otherwise use stick figure
-      const battlePlayer = player as BattleActor;
-      const characterClass = battlePlayer.selectedClass as CharacterClass;
-      
-      let spriteCreated = false;
-      if (characterClass && hasSprite(characterClass)) {
-        // Try to use character sprite
-        try {
-          const sprite = createCharacterSprite(this, 0, -10, characterClass, 2.5);
-          if (sprite) {
-            container.add(sprite);
-            spriteCreated = true;
-            bg.setVisible(false); // Hide background box when using sprite
-            console.log(`✓ Using sprite for ${player.name} (${characterClass})`);
-          }
-        } catch (error) {
-          console.error(`Failed to create sprite for ${characterClass}:`, error);
+    // Player avatar - use sprite if class has one, otherwise use stick figure
+    const battlePlayer = player as BattleActor;
+    const characterClass = battlePlayer.selectedClass as CharacterClass;
+    
+    let spriteCreated = false;
+    if (characterClass && hasSprite(characterClass)) {
+      // Try to use character sprite
+      try {
+        const sprite = createCharacterSprite(this, 0, -10, characterClass, 2.5);
+        if (sprite) {
+          container.add(sprite);
+          spriteCreated = true;
+          bg.setVisible(false); // Hide background box when using sprite
+          console.log(`✓ Using sprite for ${player.name} (${characterClass})`);
         }
+      } catch (error) {
+        console.error(`Failed to create sprite for ${characterClass}:`, error);
       }
+    }
+    
+    // Fallback to stick figure if sprite wasn't created
+    if (!spriteCreated) {
+      console.log(`Using fallback stick figure for ${player.name}`);
+      const avatar = this.add.graphics();
+      avatar.lineStyle(2, 0xffffff, 0.8);
       
-      // Fallback to stick figure if sprite wasn't created
-      if (!spriteCreated) {
-        console.log(`Using fallback stick figure for ${player.name}`);
-        const avatar = this.add.graphics();
-        avatar.lineStyle(2, 0xffffff, 0.8);
-        
-        // Simple stick figure
-        avatar.beginPath();
-        avatar.moveTo(0, -40); // Head
-        avatar.lineTo(0, -20); // Body
-        avatar.moveTo(-15, -10); // Left arm
-        avatar.lineTo(15, -10); // Right arm
-        avatar.moveTo(-10, 20); // Left leg
-        avatar.lineTo(10, 20); // Right leg
-        avatar.strokePath();
+      // Simple stick figure
+      avatar.beginPath();
+      avatar.moveTo(0, -40); // Head
+      avatar.lineTo(0, -20); // Body
+      avatar.moveTo(-15, -10); // Left arm
+      avatar.lineTo(15, -10); // Right arm
+      avatar.moveTo(-10, 20); // Left leg
+      avatar.lineTo(10, 20); // Right leg
+      avatar.strokePath();
 
-        // Robe
-        avatar.lineStyle(2, 0x4a90e2, 0.8);
-        avatar.beginPath();
-        avatar.moveTo(-20, -15);
-        avatar.lineTo(20, -15);
-        avatar.lineTo(15, 30);
-        avatar.lineTo(-15, 30);
-        avatar.closePath();
-        avatar.strokePath();
+      // Robe
+      avatar.lineStyle(2, 0x4a90e2, 0.8);
+      avatar.beginPath();
+      avatar.moveTo(-20, -15);
+      avatar.lineTo(20, -15);
+      avatar.lineTo(15, 30);
+      avatar.lineTo(-15, 30);
+      avatar.closePath();
+      avatar.strokePath();
 
-        container.add(avatar);
-      }
+      container.add(avatar);
+    }
 
-      // Player name and class
-      console.log(`Creating party slot for ${player.name}, selectedClass:`, battlePlayer.selectedClass);
-      const displayName = battlePlayer.selectedClass 
-        ? `${player.name}\n(${battlePlayer.selectedClass})`
-        : player.name;
-      const nameText = this.add.text(0, 50, displayName, {
-        fontSize: '11px',
-        color: '#ffffff',
-        fontFamily: 'Arial, sans-serif',
-        align: 'center',
-      });
-      nameText.setOrigin(0.5);
-      container.add(nameText);
+    // Player name and class
+    console.log(`Creating party slot for ${player.name}, selectedClass:`, battlePlayer.selectedClass);
+    const displayName = battlePlayer.selectedClass 
+      ? `${player.name}\n(${battlePlayer.selectedClass})`
+      : player.name;
+    const nameText = this.add.text(0, 50, displayName, {
+      fontSize: '11px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      align: 'center',
+    });
+    nameText.setOrigin(0.5);
+    container.add(nameText);
 
-      // HP bar
-      const hpBar = this.add.rectangle(0, 65, 60, 8, 0x2a2a2a, 1);
-      hpBar.setStrokeStyle(1, 0xffffff, 0.5);
-      container.add(hpBar);
+    // HP bar
+    const hpBar = this.add.rectangle(0, 65, 60, 8, 0x2a2a2a, 1);
+    hpBar.setStrokeStyle(1, 0xffffff, 0.5);
+    container.add(hpBar);
 
-      const hpFill = this.add.rectangle(-30, 65, 60 * (player.hp / player.maxHp), 8, 0x27ae60, 1);
-      hpFill.setOrigin(0, 0.5);
-      container.add(hpFill);
+    const hpFill = this.add.rectangle(-30, 65, 60 * (player.hp / player.maxHp), 8, 0x27ae60, 1);
+    hpFill.setOrigin(0, 0.5);
+    container.add(hpFill);
 
-      // Action indicator (will be updated)
-      const actionIndicator = this.add.text(0, 80, '', {
-        fontSize: '16px',
-        fontFamily: 'Arial, sans-serif',
-      });
-      actionIndicator.setOrigin(0.5);
-      container.add(actionIndicator);
-      container.setData('actionIndicator', actionIndicator);
+    // Action indicator (will be updated)
+    const actionIndicator = this.add.text(0, 80, '', {
+      fontSize: '16px',
+      fontFamily: 'Arial, sans-serif',
+    });
+    actionIndicator.setOrigin(0.5);
+    container.add(actionIndicator);
+    container.setData('actionIndicator', actionIndicator);
 
-      // Lock indicator
-      const lockIndicator = this.add.text(0, 95, '', {
-        fontSize: '12px',
-        color: '#f39c12',
-        fontFamily: 'Arial, sans-serif',
-      });
-      lockIndicator.setOrigin(0.5);
-      container.add(lockIndicator);
-      container.setData('lockIndicator', lockIndicator);
+    // Lock indicator
+    const lockIndicator = this.add.text(0, 95, '', {
+      fontSize: '12px',
+      color: '#f39c12',
+      fontFamily: 'Arial, sans-serif',
+    });
+    lockIndicator.setOrigin(0.5);
+    container.add(lockIndicator);
+    container.setData('lockIndicator', lockIndicator);
 
-      // Status effect container (above character)
-      const statusContainer = this.add.container(0, -70);
-      container.add(statusContainer);
-      container.setData('statusContainer', statusContainer);
-      
-      // Store reference for easy access
-      if (player.id) {
-        this.statusEffectContainers.set(player.id, statusContainer);
-      }
-    } else {
-      // Empty slot
-      const emptyText = this.add.text(0, 0, 'Empty', {
-        fontSize: '14px',
-        color: '#666666',
-        fontFamily: 'Arial, sans-serif',
-        fontStyle: 'italic',
-      });
-      emptyText.setOrigin(0.5);
-      container.add(emptyText);
+    // Status effect container (above character)
+    const statusContainer = this.add.container(0, -70);
+    container.add(statusContainer);
+    container.setData('statusContainer', statusContainer);
+    
+    // Store reference for easy access
+    if (player.id) {
+      this.statusEffectContainers.set(player.id, statusContainer);
     }
 
     return container;
