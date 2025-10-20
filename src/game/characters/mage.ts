@@ -40,8 +40,12 @@ export const MAGE_SPRITES: Record<string, SpriteSheetConfig> = {
     frameWidth: 150,  // 600 / 4 columns
     frameHeight: 150, // 1 row
   },
-  // Future animations can be added here:
-  // death: { ... },
+  meteor: {
+    key: 'mage_meteor',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/wizard2/fireball.png',
+    frameWidth: 64,  // 320 / 5 columns
+    frameHeight: 32, // 1 row
+  },
 };
 
 // Mage animations
@@ -66,6 +70,13 @@ export const MAGE_ANIMATIONS: Record<string, AnimationConfig> = {
     frameCount: 4,
     frameRate: 10,
     repeat: 0, // Play once
+  },
+  meteor: {
+    key: 'mage_meteor_anim',
+    spriteKey: 'mage_meteor',
+    frameCount: 5,
+    frameRate: 12,
+    repeat: -1, // Loop for projectile
   },
 };
 

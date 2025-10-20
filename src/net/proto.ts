@@ -50,6 +50,11 @@ export const DotEntrySchema = z.object({
   effects: z.array(DotEffectSchema),
 });
 
+export const ShieldEntrySchema = z.object({
+  actorId: ActorIdSchema,
+  shieldValue: z.number(),
+});
+
 export const ResolvePayloadSchema = z.object({
   turn: z.number(),
   seed: z.number(),
@@ -57,6 +62,7 @@ export const ResolvePayloadSchema = z.object({
   effects: z.array(EffectSchema),
   post: z.array(ActorSchema),
   dots: z.array(DotEntrySchema).optional(), // Serialized DOT effects
+  shields: z.array(ShieldEntrySchema).optional(), // Serialized shield values
 });
 
 // Cursor position schema

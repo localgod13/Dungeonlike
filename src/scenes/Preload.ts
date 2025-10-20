@@ -76,6 +76,21 @@ export class Preload extends Phaser.Scene {
       'lobbybg',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/lobby.png'
     );
+    
+    // Class selection icon images
+    this.load.image(
+      'class_warrior_icon',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@feature-branch/assets/images/sword2.png'
+    );
+    this.load.image(
+      'class_wizard_icon',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@feature-branch/assets/images/staff.png'
+    );
+    this.load.image(
+      'class_huntress_icon',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@feature-branch/assets/images/bow.png'
+    );
+    
     this.load.image(
       'battleground1',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/Battleground1.png'

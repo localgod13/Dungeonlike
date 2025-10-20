@@ -34,14 +34,24 @@ export const WARRIOR_SPRITES: Record<string, SpriteSheetConfig> = {
     frameWidth: 162,  // 1134 / 7 columns
     frameHeight: 162, // 1 row
   },
+  attack2: {
+    key: 'warrior_attack2',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/warrior/Attack2.png',
+    frameWidth: 162,  // 1135 / 7 columns
+    frameHeight: 162, // 1 row
+  },
+  attack3: {
+    key: 'warrior_attack3',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/warrior/Attack3.png',
+    frameWidth: 162,  // 1296 / 8 columns
+    frameHeight: 162, // 1 row
+  },
   hurt: {
     key: 'warrior_hurt',
     url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/warrior/Take hit.png',
     frameWidth: 162,  // 485 / 3 columns (rounded: 162)
     frameHeight: 162, // 1 row
   },
-  // Future animations can be added here:
-  // death: { ... },
 };
 
 // Warrior animations
@@ -57,6 +67,20 @@ export const WARRIOR_ANIMATIONS: Record<string, AnimationConfig> = {
     key: 'warrior_attack_anim',
     spriteKey: 'warrior_attack',
     frameCount: 7,
+    frameRate: 14,
+    repeat: 0, // Play once
+  },
+  attack2: {
+    key: 'warrior_attack2_anim',
+    spriteKey: 'warrior_attack2',
+    frameCount: 7,
+    frameRate: 14,
+    repeat: 0, // Play once
+  },
+  attack3: {
+    key: 'warrior_attack3_anim',
+    spriteKey: 'warrior_attack3',
+    frameCount: 8,
     frameRate: 14,
     repeat: 0, // Play once
   },
@@ -127,5 +151,34 @@ export function createWarriorSprite(
     console.error('Failed to create Warrior sprite:', error);
     return null;
   }
+}
+
+// Track last attack animation played per sprite to avoid repeats
+const lastAttackAnimations = new Map<Phaser.GameObjects.Sprite, string>();
+
+/**
+ * Get a random warrior attack animation key (never the same one twice in a row)
+ */
+export function getRandomWarriorAttackAnim(sprite: Phaser.GameObjects.Sprite): string {
+  const attackAnims = [
+    'warrior_attack_anim',
+    'warrior_attack2_anim',
+    'warrior_attack3_anim',
+  ];
+  
+  const lastAnim = lastAttackAnimations.get(sprite);
+  
+  // Filter out the last played animation
+  const availableAnims = lastAnim 
+    ? attackAnims.filter(anim => anim !== lastAnim)
+    : attackAnims;
+  
+  // Pick random from available
+  const selectedAnim = availableAnims[Math.floor(Math.random() * availableAnims.length)];
+  
+  // Store for next time
+  lastAttackAnimations.set(sprite, selectedAnim);
+  
+  return selectedAnim;
 }
 

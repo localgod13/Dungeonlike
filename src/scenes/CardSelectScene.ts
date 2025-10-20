@@ -11,6 +11,7 @@ import { Loadout } from '../net/proto';
 import { CardSelectUI } from '../ui/cardSelectUi';
 import { SoundManager } from '../game/sound';
 import { getCardsForClass } from '../game/cards';
+import { clearPersistedUltimatePower } from '../game/ultimate';
 
 /**
  * Card selection scene - players choose up to 4 cards before battle
@@ -58,6 +59,15 @@ export class CardSelectScene extends Phaser.Scene {
     this.players = data.players || [];
     this.mapSeed = data.mapSeed; // Store map seed for continuity
     this.visitedNodes = data.visitedNodes || []; // Store visited nodes
+    
+    // Clear persisted ultimate power when starting a NEW run (stage 1 or no visited nodes)
+    const isNewRun = !data.visitedNodes || data.visitedNodes.length === 0 || (data.stage && data.stage <= 1);
+    if (isNewRun) {
+      clearPersistedUltimatePower();
+      console.log('🆕 New run detected - Ultimate power reset to 0%');
+    } else {
+      console.log('↪️ Continuing run - Ultimate power will carry over');
+    }
     this.currentNodeId = data.currentNodeId || null; // Store current position
     this.currentStage = data.stage || 1; // Store battle stage number
     
