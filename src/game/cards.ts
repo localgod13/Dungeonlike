@@ -237,6 +237,51 @@ export const MAGE_CARDS: Card[] = [
 ];
 
 /**
+ * ULTIMATE CARDS - Powerful abilities that require ultimate meter (0 AP cost)
+ * Defined before CARD_POOL so they can be included
+ */
+export const ULTIMATE_CARDS: Card[] = [
+  // Warrior Ultimate
+  { 
+    id: 'BerserkRage', 
+    name: 'Berserk Rage', 
+    ap: 0, // Costs ultimate meter instead
+    target: 'all_enemies', 
+    opcode: 'AOE_DMG', 
+    power: 28, // 3 single hits + 1 AOE finisher × 7 damage each
+    desc: '⚡ ULTIMATE: 4-hit combo! 7 damage per strike. Final hit is AOE to ALL enemies!',
+    type: 'attack',
+    class: 'Warrior'
+  },
+  
+  // Huntress Ultimate
+  { 
+    id: 'RainOfArrows', 
+    name: 'Rain of Arrows', 
+    ap: 0, // Costs ultimate meter instead
+    target: 'all_enemies', 
+    opcode: 'AOE_DMG', 
+    power: 15, 
+    desc: '⚡ ULTIMATE: Rain down 15 arrows dealing 15 damage to ALL enemies!',
+    type: 'magic', // Use magic card with glow
+    class: 'Huntress'
+  },
+  
+  // Mage Ultimate
+  { 
+    id: 'Meteor', 
+    name: 'Meteor Shower', 
+    ap: 0, // Costs ultimate meter instead
+    target: 'all_enemies', 
+    opcode: 'AOE_DMG', 
+    power: 18, 
+    desc: '⚡ ULTIMATE: Summon a METEOR SHOWER dealing 18 damage to ALL enemies!',
+    type: 'magic',
+    class: 'Mage'
+  },
+];
+
+/**
  * Legacy shared pool - kept for backwards compatibility
  * @deprecated Use class-specific card pools instead
  */
@@ -244,6 +289,7 @@ export const CARD_POOL: Card[] = [
   ...WARRIOR_CARDS,
   ...HUNTRESS_CARDS,
   ...MAGE_CARDS,
+  ...ULTIMATE_CARDS, // Include ultimate cards so getCardById can find them
 ];
 
 /**
@@ -268,6 +314,13 @@ export function getCardsForClass(className: string): Card[] {
  */
 export function getCardById(id: string): Card | undefined {
   return CARD_POOL.find(c => c.id === id);
+}
+
+/**
+ * Get ultimate card for a specific class
+ */
+export function getUltimateCardForClass(characterClass: string): Card | undefined {
+  return ULTIMATE_CARDS.find(c => c.class === characterClass);
 }
 
 /**

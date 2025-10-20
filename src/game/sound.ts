@@ -319,6 +319,28 @@ export class SoundManager {
   }
 
   /**
+   * Play a random mage fire spell sound effect
+   */
+  playMageFireSpell(): void {
+    // Randomly choose between fire1 and fire2
+    const fireSound = Math.random() < 0.5 ? 'sfx_mage_fire1' : 'sfx_mage_fire2';
+    // Add pitch variation (0.85 to 1.15) for variety
+    const pitchVariation = 0.85 + Math.random() * 0.3;
+    console.log(`[SoundManager] Playing mage fire spell: ${fireSound} at rate ${pitchVariation.toFixed(2)}`);
+    this.playSfx(fireSound, { volume: 0.7, rate: pitchVariation });
+  }
+
+  /**
+   * Play huntress arrow sound effect
+   */
+  playHuntressArrow(): void {
+    // Add pitch variation (0.9 to 1.1) for variety
+    const pitchVariation = 0.9 + Math.random() * 0.2;
+    console.log(`[SoundManager] Playing huntress arrow sound at rate ${pitchVariation.toFixed(2)}`);
+    this.playSfx('sfx_huntress_arrow', { volume: 0.6, rate: pitchVariation });
+  }
+
+  /**
    * Map card names to sound keys
    */
   private getCardSoundKey(cardName: string): string | null {
@@ -353,6 +375,11 @@ export const SOUND_ASSETS = {
   sfx_guard: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/guard.mp3',
   sfx_bash: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/bash.mp3',
   sfx_weaken: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/weaken.mp3',
+  
+  // Character attack sound effects
+  sfx_mage_fire1: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/wizard/fire1.mp3',
+  sfx_mage_fire2: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/wizard/fire2.mp3',
+  sfx_huntress_arrow: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/huntress/arrow1.mp3',
   
   // Background music (converted to jsDelivr CDN)
   music_battle: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/music/battle1.mp3',

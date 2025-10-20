@@ -35,6 +35,9 @@ import { startBattleAP, refreshAP, canAfford, spendAP } from '../game/economy';
 import { SoundManager } from '../game/sound';
 import { createCharacterAnimations, createCharacterSprite, hasSprite, CharacterClass } from '../game/characterSprites';
 import { preloadEnemySprites, createEnemyAnimations, createEnemySprite, hasEnemySprite, EnemyType } from '../game/enemySprites';
+import { createUltimatePowerManager, destroyUltimatePowerManager, UltimatePowerManager, hasPersistedPower } from '../game/ultimate';
+import { UltimatePowerBar, getClassColor } from '../ui/ultimateUi';
+import { getRandomWarriorAttackAnim } from '../game/characters/warrior';
 
 /**
  * Side-view battle scene with deterministic combat pipeline
@@ -45,6 +48,16 @@ interface BattleActor extends Actor {
   userId?: string;
   isHost?: boolean;
   selectedClass?: string; // 'Warrior', 'Huntress', or 'Mage'
+}
+
+interface ShieldAura {
+  container: Phaser.GameObjects.Container;
+  hexagon: Phaser.GameObjects.Graphics;
+  glow: Phaser.GameObjects.Graphics;
+  particles: Phaser.GameObjects.Graphics[];
+  shieldText: Phaser.GameObjects.Text;
+  pulseAnim?: Phaser.Tweens.Tween;
+  rotateAnim?: Phaser.Tweens.Tween;
 }
 
 export class BattleScene extends Phaser.Scene {
@@ -110,6 +123,12 @@ export class BattleScene extends Phaser.Scene {
 
   // Sound manager
   private soundManager: SoundManager | null = null;
+
+  // Ultimate power system
+  private ultimatePowerManager: UltimatePowerManager | null = null;
+  private powerBars: Map<ActorId, UltimatePowerBar> = new Map();
+  private debugUltimateButton: Phaser.GameObjects.Container | null = null;
+  private shieldAuras: Map<ActorId, ShieldAura> = new Map();
 
   // Player stat displays (bottom left HUD)
   private playerHpText: Phaser.GameObjects.Text | null = null;
@@ -340,6 +359,15 @@ export class BattleScene extends Phaser.Scene {
     this.soundManager = new SoundManager(this);
     console.log('Sound manager initialized');
 
+    // Initialize ultimate power manager (restore power from previous battle if available)
+    const shouldRestorePower = hasPersistedPower();
+    this.ultimatePowerManager = createUltimatePowerManager(shouldRestorePower);
+    if (shouldRestorePower) {
+      console.log('Ultimate power manager initialized - RESTORING POWER FROM PREVIOUS BATTLE');
+    } else {
+      console.log('Ultimate power manager initialized - STARTING FRESH');
+    }
+
     // Stop any card selection music that might still be playing
     console.log('Checking for card selection music...');
     const allSounds = this.sound.getAllPlaying();
@@ -397,6 +425,9 @@ export class BattleScene extends Phaser.Scene {
       this.handleLocalCursorMove(pointer.x, pointer.y);
     });
 
+    // Create debug ultimate button
+    this.createDebugUltimateButton();
+
     // Start planning phase
     this.startPlanningPhase();
   }
@@ -405,11 +436,24 @@ export class BattleScene extends Phaser.Scene {
     const centerX = this.scale.width / 2;
     const centerY = this.scale.height / 2;
 
-    // Create party slots (left side) - moved further left with more spacing
-    for (let i = 0; i < 3; i++) {
+    // Create party slots (left side) - dynamic positioning based on player count
+    const playerCount = this.players.length;
+    
+    for (let i = 0; i < playerCount; i++) {
       const player = this.players[i];
+      let positionIndex: number;
+      
+      // Determine position index based on player count
+      if (playerCount === 1) {
+        positionIndex = 1; // Center position
+      } else if (playerCount === 2) {
+        positionIndex = i; // Front two positions (0 and 1)
+      } else {
+        positionIndex = i; // All three positions (0, 1, 2)
+      }
+      
       const slot = this.createPartySlot(
-        centerX - 450 + i * 180,
+        centerX - 450 + positionIndex * 180,
         centerY,
         player
       );
@@ -431,7 +475,7 @@ export class BattleScene extends Phaser.Scene {
   private createPartySlot(
     x: number,
     y: number,
-    player: Actor | undefined
+    player: Actor
   ): Phaser.GameObjects.Container {
     const container = this.add.container(x, y);
 
@@ -440,117 +484,140 @@ export class BattleScene extends Phaser.Scene {
     bg.setStrokeStyle(2, 0xffffff, 0.8);
     container.add(bg);
 
-    if (player) {
-      // Player avatar - use sprite if class has one, otherwise use stick figure
-      const battlePlayer = player as BattleActor;
-      const characterClass = battlePlayer.selectedClass as CharacterClass;
-      
-      let spriteCreated = false;
-      if (characterClass && hasSprite(characterClass)) {
-        // Try to use character sprite
-        try {
-          const sprite = createCharacterSprite(this, 0, -10, characterClass, 2.5);
-          if (sprite) {
-            container.add(sprite);
-            spriteCreated = true;
-            bg.setVisible(false); // Hide background box when using sprite
-            console.log(`✓ Using sprite for ${player.name} (${characterClass})`);
-          }
-        } catch (error) {
-          console.error(`Failed to create sprite for ${characterClass}:`, error);
+    // Player avatar - use sprite if class has one, otherwise use stick figure
+    const battlePlayer = player as BattleActor;
+    const characterClass = battlePlayer.selectedClass as CharacterClass;
+    
+    let spriteCreated = false;
+    if (characterClass && hasSprite(characterClass)) {
+      // Try to use character sprite
+      try {
+        const sprite = createCharacterSprite(this, 0, -10, characterClass, 2.5);
+        if (sprite) {
+          container.add(sprite);
+          spriteCreated = true;
+          bg.setVisible(false); // Hide background box when using sprite
+          console.log(`✓ Using sprite for ${player.name} (${characterClass})`);
         }
+      } catch (error) {
+        console.error(`Failed to create sprite for ${characterClass}:`, error);
+      }
+    }
+    
+    // Fallback to stick figure if sprite wasn't created
+    if (!spriteCreated) {
+      console.log(`Using fallback stick figure for ${player.name}`);
+      const avatar = this.add.graphics();
+      avatar.lineStyle(2, 0xffffff, 0.8);
+      
+      // Simple stick figure
+      avatar.beginPath();
+      avatar.moveTo(0, -40); // Head
+      avatar.lineTo(0, -20); // Body
+      avatar.moveTo(-15, -10); // Left arm
+      avatar.lineTo(15, -10); // Right arm
+      avatar.moveTo(-10, 20); // Left leg
+      avatar.lineTo(10, 20); // Right leg
+      avatar.strokePath();
+
+      // Robe
+      avatar.lineStyle(2, 0x4a90e2, 0.8);
+      avatar.beginPath();
+      avatar.moveTo(-20, -15);
+      avatar.lineTo(20, -15);
+      avatar.lineTo(15, 30);
+      avatar.lineTo(-15, 30);
+      avatar.closePath();
+      avatar.strokePath();
+
+      container.add(avatar);
+    }
+
+    // Player name and class
+    console.log(`Creating party slot for ${player.name}, selectedClass:`, battlePlayer.selectedClass);
+    const displayName = battlePlayer.selectedClass 
+      ? `${player.name}\n(${battlePlayer.selectedClass})`
+      : player.name;
+    const nameText = this.add.text(0, 50, displayName, {
+      fontSize: '11px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      align: 'center',
+    });
+    nameText.setOrigin(0.5);
+    container.add(nameText);
+
+    // HP bar
+    const hpBar = this.add.rectangle(0, 65, 60, 8, 0x2a2a2a, 1);
+    hpBar.setStrokeStyle(1, 0xffffff, 0.5);
+    container.add(hpBar);
+
+    const hpFill = this.add.rectangle(-30, 65, 60 * (player.hp / player.maxHp), 8, 0x27ae60, 1);
+    hpFill.setOrigin(0, 0.5);
+    container.add(hpFill);
+
+    // Action indicator (will be updated)
+    const actionIndicator = this.add.text(0, 80, '', {
+      fontSize: '16px',
+      fontFamily: 'Arial, sans-serif',
+    });
+    actionIndicator.setOrigin(0.5);
+    container.add(actionIndicator);
+    container.setData('actionIndicator', actionIndicator);
+
+    // Lock indicator
+    const lockIndicator = this.add.text(0, 95, '', {
+      fontSize: '12px',
+      color: '#f39c12',
+      fontFamily: 'Arial, sans-serif',
+    });
+    lockIndicator.setOrigin(0.5);
+    container.add(lockIndicator);
+    container.setData('lockIndicator', lockIndicator);
+
+    // Status effect container (above character)
+    const statusContainer = this.add.container(0, -70);
+    container.add(statusContainer);
+    container.setData('statusContainer', statusContainer);
+    
+    // Store reference for easy access
+    if (player.id) {
+      this.statusEffectContainers.set(player.id, statusContainer);
+    }
+
+    // Create ultimate power bar (below HP bar)
+    if (this.ultimatePowerManager && player.id) {
+      const characterClass = battlePlayer.selectedClass;
+      const classColor = getClassColor(characterClass);
+      
+      // Initialize actor in ultimate power manager (or get existing state if restored)
+      const existingState = this.ultimatePowerManager.getPowerState(player.id);
+      if (!existingState) {
+        this.ultimatePowerManager.initializeActor(player.id, characterClass);
       }
       
-      // Fallback to stick figure if sprite wasn't created
-      if (!spriteCreated) {
-        console.log(`Using fallback stick figure for ${player.name}`);
-        const avatar = this.add.graphics();
-        avatar.lineStyle(2, 0xffffff, 0.8);
-        
-        // Simple stick figure
-        avatar.beginPath();
-        avatar.moveTo(0, -40); // Head
-        avatar.lineTo(0, -20); // Body
-        avatar.moveTo(-15, -10); // Left arm
-        avatar.lineTo(15, -10); // Right arm
-        avatar.moveTo(-10, 20); // Left leg
-        avatar.lineTo(10, 20); // Right leg
-        avatar.strokePath();
-
-        // Robe
-        avatar.lineStyle(2, 0x4a90e2, 0.8);
-        avatar.beginPath();
-        avatar.moveTo(-20, -15);
-        avatar.lineTo(20, -15);
-        avatar.lineTo(15, 30);
-        avatar.lineTo(-15, 30);
-        avatar.closePath();
-        avatar.strokePath();
-
-        container.add(avatar);
-      }
-
-      // Player name and class
-      console.log(`Creating party slot for ${player.name}, selectedClass:`, battlePlayer.selectedClass);
-      const displayName = battlePlayer.selectedClass 
-        ? `${player.name}\n(${battlePlayer.selectedClass})`
-        : player.name;
-      const nameText = this.add.text(0, 50, displayName, {
-        fontSize: '11px',
-        color: '#ffffff',
-        fontFamily: 'Arial, sans-serif',
-        align: 'center',
+      // Create power bar UI
+      const powerBar = new UltimatePowerBar(this, {
+        x: 0,
+        y: 90, // Below action indicator
+        width: 80,
+        height: 12,
+        actorId: player.id,
+        actorName: player.name,
+        classColor: classColor,
       });
-      nameText.setOrigin(0.5);
-      container.add(nameText);
-
-      // HP bar
-      const hpBar = this.add.rectangle(0, 65, 60, 8, 0x2a2a2a, 1);
-      hpBar.setStrokeStyle(1, 0xffffff, 0.5);
-      container.add(hpBar);
-
-      const hpFill = this.add.rectangle(-30, 65, 60 * (player.hp / player.maxHp), 8, 0x27ae60, 1);
-      hpFill.setOrigin(0, 0.5);
-      container.add(hpFill);
-
-      // Action indicator (will be updated)
-      const actionIndicator = this.add.text(0, 80, '', {
-        fontSize: '16px',
-        fontFamily: 'Arial, sans-serif',
-      });
-      actionIndicator.setOrigin(0.5);
-      container.add(actionIndicator);
-      container.setData('actionIndicator', actionIndicator);
-
-      // Lock indicator
-      const lockIndicator = this.add.text(0, 95, '', {
-        fontSize: '12px',
-        color: '#f39c12',
-        fontFamily: 'Arial, sans-serif',
-      });
-      lockIndicator.setOrigin(0.5);
-      container.add(lockIndicator);
-      container.setData('lockIndicator', lockIndicator);
-
-      // Status effect container (above character)
-      const statusContainer = this.add.container(0, -70);
-      container.add(statusContainer);
-      container.setData('statusContainer', statusContainer);
       
-      // Store reference for easy access
-      if (player.id) {
-        this.statusEffectContainers.set(player.id, statusContainer);
+      container.add(powerBar.getContainer());
+      this.powerBars.set(player.id, powerBar);
+      
+      // Restore visual state if power was persisted
+      const powerState = this.ultimatePowerManager.getPowerState(player.id);
+      if (powerState && powerState.power > 0) {
+        powerBar.updatePower(powerState.power, powerState);
+        console.log(`Created ultimate power bar for ${player.name} (${characterClass}) - RESTORED TO ${powerState.power.toFixed(1)}%`);
+      } else {
+        console.log(`Created ultimate power bar for ${player.name} (${characterClass}) - STARTING AT 0%`);
       }
-    } else {
-      // Empty slot
-      const emptyText = this.add.text(0, 0, 'Empty', {
-        fontSize: '14px',
-        color: '#666666',
-        fontFamily: 'Arial, sans-serif',
-        fontStyle: 'italic',
-      });
-      emptyText.setOrigin(0.5);
-      container.add(emptyText);
     }
 
     return container;
@@ -1048,7 +1115,60 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    // Deduct AP
+    // Check if this is an ultimate card (0 AP cost)
+    const isUltimateCard = card.ap === 0;
+    
+    if (isUltimateCard) {
+      // Handle ultimate card - use ultimate power instead of AP
+      if (!this.ultimatePowerManager) {
+        console.error('Ultimate power manager not found');
+        return;
+      }
+      
+      const canUseUltimate = this.ultimatePowerManager.isUltimateReady(playerActor.id);
+      if (!canUseUltimate) {
+        this.showPendingActionText('❌ Ultimate not ready!', '#e74c3c');
+        return;
+      }
+      
+      // Consume ultimate power
+      this.ultimatePowerManager.useUltimate(playerActor.id);
+      this.updatePowerBar(playerActor.id);
+      
+      // Trigger ultimate animation immediately (not queued)
+      console.log(`🔥 ULTIMATE ACTIVATED: ${card.name}!`);
+      this.triggerUltimateAnimation(card.id);
+      
+      // Show epic feedback that auto-hides
+      this.showPendingActionText(
+        `⚡ ${card.name} UNLEASHED! ⚡`,
+        '#ffff00'
+      );
+      
+      // Auto-hide the text after the ultimate animation completes
+      let hideDelay = 2000;
+      if (card.id === 'RainOfArrows') {
+        hideDelay = 2000; // Arrow rain duration
+      } else if (card.id === 'Meteor') {
+        hideDelay = 2500; // Meteor shower duration
+      } else if (card.id === 'BerserkRage') {
+        hideDelay = 4500; // 4-hit combo with slow-mo + finisher
+      }
+      
+      this.time.delayedCall(hideDelay, () => {
+        this.hidePendingActionText();
+      });
+      
+      // Clear selection
+      this.selectedCardId = null;
+      this.selectedAction = null;
+      this.selectedTarget = null;
+      
+      // Don't queue ultimate - it plays immediately
+      return;
+    }
+
+    // Regular card - deduct AP and queue
     const currentAP = this.playerAP.get(this.userId) || 0;
     const newAP = spendAP(currentAP, card.ap);
     this.playerAP.set(this.userId, newAP);
@@ -1090,6 +1210,685 @@ export class BattleScene extends Phaser.Scene {
 
     // Show lock button to end turn
     this.showLockButton();
+  }
+
+  /**
+   * Trigger ultimate animation based on card ID
+   */
+  private triggerUltimateAnimation(ultimateCardId: string): void {
+    if (ultimateCardId === 'RainOfArrows') {
+      // Huntress ultimate - rain of arrows
+      this.playArrowRain();
+      
+      // Deal damage to all enemies after animation
+      this.time.delayedCall(1500, () => {
+        this.enemies.forEach(enemy => {
+          if (enemy.hp > 0) {
+            const damage = 15;
+            this.applyDamageToActor(enemy.id, damage);
+            this.addCombatLogEntry(`Rain of Arrows hits ${enemy.name} for ${damage} damage!`, '#44ff44');
+          }
+        });
+        
+        // Check if combat ended from ultimate damage
+        this.checkCombatEndAfterUltimate();
+      });
+    } else if (ultimateCardId === 'Meteor') {
+      // Mage ultimate - meteor shower
+      this.playMeteorShower();
+      
+      // Deal damage to all enemies after animation
+      this.time.delayedCall(1800, () => {
+        this.enemies.forEach(enemy => {
+          if (enemy.hp > 0) {
+            const damage = 18;
+            this.applyDamageToActor(enemy.id, damage);
+            this.addCombatLogEntry(`Meteor Shower hits ${enemy.name} for ${damage} damage!`, '#4444ff');
+          }
+        });
+        
+        // Check if combat ended from ultimate damage
+        this.checkCombatEndAfterUltimate();
+      });
+    } else if (ultimateCardId === 'BerserkRage') {
+      // Warrior ultimate - berserk rage combo
+      this.playBerserkRage();
+    }
+  }
+
+  /**
+   * ULTIMATE: Berserk Rage - 4-hit combo with all 3 attack animations
+   */
+  private playBerserkRage(): void {
+    console.log('⚔️ BERSERK RAGE ULTIMATE!');
+    
+    if (!this.userId) return;
+    
+    // Find the warrior player
+    const warriorPlayer = this.players.find(p => p.userId === this.userId);
+    if (!warriorPlayer) return;
+    
+    // Get warrior's slot and sprite
+    const warriorIndex = this.players.findIndex(p => p.id === warriorPlayer.id);
+    const warriorSlot = this.partySlots[warriorIndex];
+    if (!warriorSlot) return;
+    
+    const warriorSprite = warriorSlot.list.find(obj => obj.type === 'Sprite') as Phaser.GameObjects.Sprite | undefined;
+    if (!warriorSprite) return;
+    
+    // 🎬 DRAMATIC SLOW MOTION EFFECT
+    this.time.timeScale = 0.5; // EXTREME slow motion for maximum drama
+    
+    // MASSIVE Red screen flash and vignette
+    this.cameras.main.flash(300, 255, 0, 0); // Pure red flash
+    
+    // Camera zoom in slightly for drama
+    const originalZoom = this.cameras.main.zoom;
+    this.tweens.add({
+      targets: this.cameras.main,
+      zoom: originalZoom * 1.15,
+      duration: 400,
+      ease: 'Power2',
+    });
+    
+    // Zoom back out at end
+    this.time.delayedCall(3500, () => {
+      this.tweens.add({
+        targets: this.cameras.main,
+        zoom: originalZoom,
+        duration: 500,
+        ease: 'Power2',
+      });
+    });
+    
+    // Add INTENSE pulsing red screen vignette
+    const vignette = this.add.rectangle(
+      this.scale.width / 2,
+      this.scale.height / 2,
+      this.scale.width,
+      this.scale.height,
+      0xff0000,
+      0
+    );
+    vignette.setDepth(150);
+    
+    this.tweens.add({
+      targets: vignette,
+      alpha: { from: 0.4, to: 0 },
+      duration: 400,
+      yoyo: true,
+      repeat: 3,
+      ease: 'Sine.easeInOut',
+    });
+    
+    this.time.delayedCall(4000, () => {
+      vignette.destroy();
+    });
+    
+    // Lightning/energy bolts around warrior
+    for (let i = 0; i < 6; i++) {
+      const lightning = this.add.graphics();
+      lightning.lineStyle(3, 0xffff00, 0.9);
+      lightning.setDepth(50);
+      
+      const angle = (Math.PI * 2 * i) / 6;
+      const startRadius = 60;
+      const endRadius = 100;
+      
+      lightning.beginPath();
+      lightning.moveTo(
+        warriorSlot.x + Math.cos(angle) * startRadius,
+        warriorSlot.y + Math.sin(angle) * startRadius
+      );
+      lightning.lineTo(
+        warriorSlot.x + Math.cos(angle) * endRadius,
+        warriorSlot.y + Math.sin(angle) * endRadius
+      );
+      lightning.strokePath();
+      
+      this.tweens.add({
+        targets: lightning,
+        alpha: { from: 1, to: 0 },
+        duration: 300,
+        delay: i * 100,
+        repeat: 2,
+        ease: 'Sine.easeInOut',
+        onComplete: () => lightning.destroy(),
+      });
+    }
+    
+    // Add massive red aura around warrior with particles
+    const rageAura = this.add.circle(warriorSlot.x, warriorSlot.y, 70, 0xff0000, 0);
+    rageAura.setStrokeStyle(5, 0xff4444, 1);
+    rageAura.setDepth(49);
+    
+    this.tweens.add({
+      targets: rageAura,
+      scale: { from: 0.8, to: 1.5 },
+      alpha: { from: 0.8, to: 0 },
+      duration: 3000,
+      ease: 'Power2',
+      onComplete: () => rageAura.destroy(),
+    });
+    
+    // Pulsing rage circles
+    for (let i = 0; i < 3; i++) {
+      const rageCircle = this.add.circle(warriorSlot.x, warriorSlot.y, 50, 0xff0000, 0);
+      rageCircle.setStrokeStyle(3, 0xff6666, 0.8);
+      rageCircle.setDepth(48);
+      
+      this.tweens.add({
+        targets: rageCircle,
+        scale: { from: 1, to: 2 },
+        alpha: { from: 0.6, to: 0 },
+        duration: 800,
+        delay: i * 200,
+        repeat: 3,
+        ease: 'Power2',
+        onComplete: () => rageCircle.destroy(),
+      });
+    }
+    
+    // Combo sequence: Attack1 → Attack2 → Attack3 → Attack1
+    const comboSequence = [
+      'warrior_attack_anim',
+      'warrior_attack2_anim',
+      'warrior_attack3_anim',
+      'warrior_attack_anim',
+    ];
+    
+    let comboStep = 0;
+    const damagePerHit = 7;
+    
+    // Execute combo with timing between attacks
+    const executeComboStep = () => {
+      if (comboStep >= comboSequence.length) {
+        // Combo complete - return to idle
+        console.log('✅ Berserk Rage combo complete!');
+        warriorSprite.play('warrior_idle_anim');
+        
+        // Restore normal time speed immediately
+        this.time.timeScale = 1.0;
+        console.log('⏱️ Time speed restored');
+        
+        // Final victory pose effect
+        const victoryFlash = this.add.circle(warriorSlot.x, warriorSlot.y, 80, 0xff4444, 0.5);
+        victoryFlash.setDepth(49);
+        
+        this.tweens.add({
+          targets: victoryFlash,
+          scale: 2,
+          alpha: 0,
+          duration: 600,
+          ease: 'Power3',
+          onComplete: () => victoryFlash.destroy(),
+        });
+        
+        // Check if combat ended from Berserk Rage damage
+        this.checkCombatEndAfterUltimate();
+        
+        return;
+      }
+      
+      const attackAnim = comboSequence[comboStep];
+      console.log(`🗡️ Berserk combo step ${comboStep + 1}: ${attackAnim}`);
+      
+      // Pick a random living enemy to attack
+      const livingEnemies = this.enemies.filter(e => e.hp > 0);
+      if (livingEnemies.length === 0) {
+        // No enemies left, end combo early
+        console.log('All enemies defeated mid-combo!');
+        warriorSprite.play('warrior_idle_anim');
+        
+        // Restore time speed
+        this.time.timeScale = 1.0;
+        
+        // Check if combat ended from Berserk Rage damage
+        this.checkCombatEndAfterUltimate();
+        
+        return;
+      }
+      
+      const targetEnemy = Phaser.Utils.Array.GetRandom(livingEnemies);
+      const enemyIndex = this.enemies.findIndex(e => e.id === targetEnemy.id);
+      const enemySlot = this.enemySlots[enemyIndex];
+      
+      // Check if this is the final hit
+      const isFinalHit = comboStep === comboSequence.length - 1;
+      
+      // 🎬 BRIEF PAUSE before hit (use actual pause, not timeScale = 0)
+      // Skip freeze frame to avoid stuck animation issues
+      // The slow-mo effect is dramatic enough!
+      
+      // Chromatic aberration effect (RGB split)
+      const chromaticR = this.add.rectangle(
+        this.scale.width / 2 + 3,
+        this.scale.height / 2,
+        this.scale.width,
+        this.scale.height,
+        0xff0000,
+        isFinalHit ? 0.15 : 0.08
+      );
+      chromaticR.setDepth(151);
+      
+      const chromaticB = this.add.rectangle(
+        this.scale.width / 2 - 3,
+        this.scale.height / 2,
+        this.scale.width,
+        this.scale.height,
+        0x0000ff,
+        isFinalHit ? 0.15 : 0.08
+      );
+      chromaticB.setDepth(151);
+      
+      this.tweens.add({
+        targets: [chromaticR, chromaticB],
+        alpha: 0,
+        duration: 200,
+        ease: 'Power2',
+        onComplete: () => {
+          chromaticR.destroy();
+          chromaticB.destroy();
+        },
+      });
+      
+      // Play attack animation
+      if (this.anims.exists(attackAnim)) {
+        warriorSprite.play(attackAnim);
+      }
+      
+      // Create MULTIPLE afterimages/ghost trails for more intensity
+      for (let a = 0; a < (isFinalHit ? 3 : 2); a++) {
+        const afterimage = this.add.sprite(warriorSlot.x, warriorSlot.y, warriorSprite.texture.key);
+        afterimage.setFrame(warriorSprite.frame.name);
+        afterimage.setScale(warriorSprite.scaleX, warriorSprite.scaleY);
+        afterimage.setAlpha(0.6 - (a * 0.2));
+        afterimage.setTint(0xff0000);
+        afterimage.setDepth(48 - a);
+        
+        this.tweens.add({
+          targets: afterimage,
+          alpha: 0,
+          x: afterimage.x - (a * 20),
+          duration: 500 + (a * 100),
+          ease: 'Power2',
+          onComplete: () => afterimage.destroy(),
+        });
+      }
+      
+      // Play slash sound with increasing pitch
+      if (this.soundManager) {
+        this.soundManager.playCardSound('Strike');
+        if (isFinalHit) {
+          // Extra sound for finisher
+          this.time.delayedCall(100, () => {
+            if (this.soundManager) {
+              this.soundManager.playCardSound('Bash');
+            }
+          });
+        }
+      }
+      
+      // Screen shake for each hit (gets MUCH stronger as combo builds)
+      const shakeIntensity = isFinalHit ? 0.012 : (0.003 + (comboStep * 0.002));
+      const shakeDuration = isFinalHit ? 300 : 100;
+      this.cameras.main.shake(shakeDuration, shakeIntensity);
+      
+      // Speed lines during dash
+      for (let i = 0; i < 5; i++) {
+        const speedLine = this.add.line(
+          warriorSlot.x - 50 + (i * 15),
+          warriorSlot.y + Phaser.Math.Between(-30, 30),
+          0, 0,
+          -40, 0,
+          0xff4444,
+          0.6
+        );
+        speedLine.setLineWidth(3);
+        speedLine.setDepth(47);
+        
+        this.tweens.add({
+          targets: speedLine,
+          alpha: 0,
+          x: speedLine.x + 60,
+          duration: 200,
+          ease: 'Power2',
+          onComplete: () => speedLine.destroy(),
+        });
+      }
+      
+      // Dash toward enemy (faster and further for finisher)
+      const originalX = warriorSlot.x;
+      const dashDistance = isFinalHit ? 120 : 80;
+      this.tweens.add({
+        targets: warriorSlot,
+        x: originalX + dashDistance,
+        duration: isFinalHit ? 200 : 150,
+        ease: 'Power2',
+        yoyo: true,
+      });
+      
+      // Apply damage and visual effects
+      if (enemySlot) {
+        // Shake enemy (more intense for finisher)
+        const enemyShakeDuration = isFinalHit ? 400 : 150;
+        this.tweens.add({
+          targets: enemySlot,
+          scaleX: isFinalHit ? 0.7 : 0.9,
+          scaleY: isFinalHit ? 0.7 : 0.9,
+          duration: enemyShakeDuration,
+          yoyo: true,
+          ease: 'Power2',
+        });
+        
+        // Slash VFX
+        const slashSize = isFinalHit ? 100 : 60;
+        const slash = this.add.graphics();
+        slash.lineStyle(isFinalHit ? 8 : 5, 0xffffff, 1);
+        slash.strokeCircle(enemySlot.x, enemySlot.y, slashSize);
+        slash.setDepth(99);
+        
+        // Animated slash marks
+        const slashAngle = Math.random() * Math.PI * 2;
+        const slashLine = this.add.line(
+          enemySlot.x,
+          enemySlot.y,
+          0, 0,
+          Math.cos(slashAngle) * slashSize,
+          Math.sin(slashAngle) * slashSize,
+          0xff4444,
+          1
+        );
+        slashLine.setLineWidth(isFinalHit ? 6 : 4);
+        slashLine.setDepth(99);
+        
+        this.tweens.add({
+          targets: [slash, slashLine],
+          alpha: 0,
+          duration: isFinalHit ? 400 : 200,
+          ease: 'Power2',
+          onComplete: () => {
+            slash.destroy();
+            slashLine.destroy();
+          },
+        });
+        
+        // Final hit gets ABSOLUTELY MASSIVE explosion
+        if (isFinalHit) {
+          // 💥 ULTRA FINISHER EXPLOSION 💥
+          
+          // White screen flash for impact
+          this.cameras.main.flash(200, 255, 255, 255);
+          
+          // Multiple explosion layers
+          const explosionLayers = [
+            { radius: 30, color: 0xffff00, scale: 6, duration: 500 },   // Bright core
+            { radius: 50, color: 0xff4400, scale: 5, duration: 600 },   // Inner blast
+            { radius: 70, color: 0xff0000, scale: 4.5, duration: 700 }, // Outer blast
+          ];
+          
+          explosionLayers.forEach((layer, idx) => {
+            const explosion = this.add.circle(enemySlot.x, enemySlot.y, layer.radius, layer.color, 0.9 - (idx * 0.2));
+            explosion.setDepth(98 - idx);
+            
+            this.tweens.add({
+              targets: explosion,
+              scale: layer.scale,
+              alpha: 0,
+              duration: layer.duration,
+              ease: 'Power3',
+              onComplete: () => explosion.destroy(),
+            });
+          });
+          
+          // Expanding shockwave rings
+          for (let r = 0; r < 3; r++) {
+            const shockwave = this.add.circle(enemySlot.x, enemySlot.y, 40 + (r * 10), 0xff6666, 0);
+            shockwave.setStrokeStyle(8 - (r * 2), 0xff8888, 1);
+            shockwave.setDepth(95 - r);
+            
+            this.tweens.add({
+              targets: shockwave,
+              scale: 6 + r,
+              alpha: 0,
+              duration: 800 + (r * 100),
+              delay: r * 100,
+              ease: 'Power2',
+              onComplete: () => shockwave.destroy(),
+            });
+          }
+          
+          // EXPLOSION PARTICLES EVERYWHERE
+          for (let p = 0; p < 20; p++) {
+            const particle = this.add.circle(
+              enemySlot.x, 
+              enemySlot.y, 
+              Phaser.Math.Between(4, 8), 
+              Phaser.Math.Between(0, 1) > 0.5 ? 0xff4444 : 0xffff00, 
+              1
+            );
+            particle.setDepth(96);
+            
+            const pAngle = (Math.PI * 2 * p) / 20;
+            const pDist = Phaser.Math.Between(80, 150);
+            
+            this.tweens.add({
+              targets: particle,
+              x: enemySlot.x + Math.cos(pAngle) * pDist,
+              y: enemySlot.y + Math.sin(pAngle) * pDist,
+              alpha: 0,
+              scale: 0.3,
+              duration: Phaser.Math.Between(600, 900),
+              ease: 'Power2',
+              onComplete: () => particle.destroy(),
+            });
+          }
+          
+          // Explosion sparks (smaller particles)
+          for (let s = 0; s < 30; s++) {
+            const spark = this.add.circle(
+              enemySlot.x, 
+              enemySlot.y, 
+              2, 
+              0xffff00, 
+              1
+            );
+            spark.setDepth(95);
+            
+            const sAngle = Math.random() * Math.PI * 2;
+            const sDist = Phaser.Math.Between(50, 200);
+            
+            this.tweens.add({
+              targets: spark,
+              x: enemySlot.x + Math.cos(sAngle) * sDist,
+              y: enemySlot.y + Math.sin(sAngle) * sDist,
+              alpha: 0,
+              duration: Phaser.Math.Between(400, 700),
+              ease: 'Linear',
+              onComplete: () => spark.destroy(),
+            });
+          }
+          
+          // Ground impact cracks (radiating lines from impact)
+          for (let c = 0; c < 8; c++) {
+            const crackAngle = (Math.PI * 2 * c) / 8;
+            const crack = this.add.line(
+              enemySlot.x,
+              enemySlot.y,
+              0, 0,
+              Math.cos(crackAngle) * 120,
+              Math.sin(crackAngle) * 120,
+              0xff4444,
+              0.8
+            );
+            crack.setLineWidth(4);
+            crack.setDepth(94);
+            
+            this.tweens.add({
+              targets: crack,
+              alpha: 0,
+              duration: 800,
+              delay: 200,
+              ease: 'Power2',
+              onComplete: () => crack.destroy(),
+            });
+          }
+        }
+        
+        // Create afterimage/ghost trail
+        const afterimage = this.add.sprite(warriorSlot.x, warriorSlot.y, warriorSprite.texture.key);
+        afterimage.setFrame(warriorSprite.frame.name);
+        afterimage.setScale(warriorSprite.scaleX, warriorSprite.scaleY);
+        afterimage.setAlpha(0.5);
+        afterimage.setTint(0xff0000);
+        afterimage.setDepth(48);
+        
+        this.tweens.add({
+          targets: afterimage,
+          alpha: 0,
+          duration: 400,
+          ease: 'Power2',
+          onComplete: () => afterimage.destroy(),
+        });
+        
+        // Damage number with combo counter
+        const fontSize = isFinalHit ? '36px' : '24px';
+        const damageText = this.add.text(
+          enemySlot.x + 40,
+          enemySlot.y - 30,
+          `-${damagePerHit}`,
+          {
+            fontSize: fontSize,
+            color: isFinalHit ? '#ff0000' : '#ff4444',
+            fontFamily: 'Arial Black',
+            fontStyle: 'bold',
+            stroke: '#000000',
+            strokeThickness: isFinalHit ? 6 : 4,
+          }
+        );
+        damageText.setOrigin(0.5);
+        damageText.setDepth(100);
+        
+        // Combo counter text
+        const comboTextContent = isFinalHit ? '💥 FINISHER! 💥' : `HIT ${comboStep + 1}!`;
+        const comboText = this.add.text(
+          enemySlot.x + 40,
+          enemySlot.y + 10,
+          comboTextContent,
+          {
+            fontSize: isFinalHit ? '22px' : '18px',
+            color: isFinalHit ? '#ffff00' : '#ffaa00',
+            fontFamily: 'Arial Black',
+            fontStyle: 'bold',
+            stroke: '#000000',
+            strokeThickness: isFinalHit ? 4 : 3,
+          }
+        );
+        comboText.setOrigin(0.5);
+        comboText.setDepth(100);
+        
+        this.tweens.add({
+          targets: damageText,
+          y: damageText.y - (isFinalHit ? 70 : 50),
+          scaleX: isFinalHit ? 1.3 : 1,
+          scaleY: isFinalHit ? 1.3 : 1,
+          alpha: 0,
+          duration: isFinalHit ? 1000 : 800,
+          ease: 'Power2',
+          onComplete: () => damageText.destroy(),
+        });
+        
+        this.tweens.add({
+          targets: comboText,
+          y: comboText.y - (isFinalHit ? 50 : 30),
+          scaleX: isFinalHit ? 1.2 : 1,
+          scaleY: isFinalHit ? 1.2 : 1,
+          alpha: 0,
+          duration: isFinalHit ? 800 : 600,
+          ease: 'Power2',
+          onComplete: () => comboText.destroy(),
+        });
+      }
+      
+      // Apply actual damage
+      this.time.delayedCall(150, () => {
+        if (isFinalHit) {
+          // 💥 FINAL HIT: AOE DAMAGE TO ALL ENEMIES! 💥
+          console.log('💥 FINISHER AOE - Damaging ALL enemies!');
+          
+          this.enemies.forEach((enemy, idx) => {
+            if (enemy.hp > 0) {
+              this.applyDamageToActor(enemy.id, damagePerHit);
+              
+              // Show AOE damage numbers on ALL enemies
+              const enemySlotForAOE = this.enemySlots[idx];
+              if (enemySlotForAOE) {
+                const aoeDamageText = this.add.text(
+                  enemySlotForAOE.x,
+                  enemySlotForAOE.y - 30,
+                  `-${damagePerHit}`,
+                  {
+                    fontSize: '32px',
+                    color: '#ff0000',
+                    fontFamily: 'Arial Black',
+                    fontStyle: 'bold',
+                    stroke: '#000000',
+                    strokeThickness: 5,
+                  }
+                );
+                aoeDamageText.setOrigin(0.5);
+                aoeDamageText.setDepth(100);
+                
+                this.tweens.add({
+                  targets: aoeDamageText,
+                  y: aoeDamageText.y - 60,
+                  scaleX: 1.3,
+                  scaleY: 1.3,
+                  alpha: 0,
+                  duration: 1000,
+                  ease: 'Power2',
+                  onComplete: () => aoeDamageText.destroy(),
+                });
+                
+                // AOE impact flash on each enemy
+                const impactFlash = this.add.circle(enemySlotForAOE.x, enemySlotForAOE.y, 40, 0xffff00, 0.7);
+                impactFlash.setDepth(97);
+                this.tweens.add({
+                  targets: impactFlash,
+                  scale: 2.5,
+                  alpha: 0,
+                  duration: 500,
+                  ease: 'Power3',
+                  onComplete: () => impactFlash.destroy(),
+                });
+              }
+            }
+          });
+          
+          this.addCombatLogEntry(`💥 BERSERK FINISHER hits ALL enemies for ${damagePerHit} damage each!`, '#ffff00');
+          
+          // Check if combat ended after AOE damage
+          this.time.delayedCall(500, () => {
+            this.checkCombatEndAfterUltimate();
+          });
+        } else {
+          // Regular hits: single target damage
+          this.applyDamageToActor(targetEnemy.id, damagePerHit);
+          this.addCombatLogEntry(`Berserk Rage hits ${targetEnemy.name} for ${damagePerHit} damage! (${comboStep + 1}/4)`, '#ff4444');
+        }
+      });
+      
+      // Move to next combo step
+      comboStep++;
+      
+      // Wait for animation to complete before next attack
+      warriorSprite.once('animationcomplete', () => {
+        this.time.delayedCall(100, executeComboStep);
+      });
+    };
+    
+    // Start the combo!
+    executeComboStep();
   }
 
   private selectAction(actionType: ActionType): void {
@@ -1534,6 +2333,25 @@ export class BattleScene extends Phaser.Scene {
         // Both clients receive the same damage values from the resolve payload, so this stays in sync
         console.log(`Applying damage to ${dstId} during animation`);
         this.applyDamageToActor(dstId, damage);
+        
+        // Grant ultimate power for attacker (card played)
+        if (this.ultimatePowerManager && srcId) {
+          const actor = [...this.players, ...this.enemies].find(a => a.id === srcId);
+          if (actor && actor.side === 'party') {
+            this.ultimatePowerManager.onCardPlayed(srcId);
+            this.updatePowerBar(srcId);
+          }
+        }
+        
+        // Grant ultimate power for defender (damage taken)
+        if (this.ultimatePowerManager && dstId) {
+          const dstActor = [...this.players, ...this.enemies].find(a => a.id === dstId);
+          if (dstActor && dstActor.side === 'party') {
+            this.ultimatePowerManager.onDamageTaken(dstId, damage, dstActor);
+            this.updatePowerBar(dstId);
+          }
+        }
+        
         console.log(`=== END HIT ANIMATION CALLBACK ===`);
       },
       onGuard: (srcId, value) => {
@@ -1653,6 +2471,243 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * ULTIMATE: Rain of Arrows - 15 arrows fall from sky hitting all enemies
+   */
+  private playArrowRain(): void {
+    console.log('🏹 RAIN OF ARROWS ULTIMATE!');
+    
+    // Get all enemy slots
+    const enemySlots = this.enemySlots;
+    if (enemySlots.length === 0) return;
+    
+    // Create 15 arrows that fall from the sky
+    const arrowCount = 15;
+    const skyY = -100; // Start above screen
+    
+    for (let i = 0; i < arrowCount; i++) {
+      // Delay each arrow slightly for cascade effect
+      this.time.delayedCall(i * 80, () => {
+        // Pick a random enemy to target
+        const targetSlot = Phaser.Utils.Array.GetRandom(enemySlots);
+        
+        // Random X offset around the target
+        const offsetX = Phaser.Math.Between(-40, 40);
+        const startX = targetSlot.x + offsetX;
+        const endX = targetSlot.x + offsetX * 0.3; // Slight drift
+        const endY = targetSlot.y;
+        
+        // Create arrow pointing downward
+        const arrow = this.add.image(startX, skyY, 'huntress_arrow');
+        arrow.setScale(2.5); // Slightly larger for ultimate
+        arrow.setRotation(Math.PI / 2); // Point downward
+        arrow.setDepth(100);
+        arrow.setTint(0xffdd00); // Slight golden tint for ultimate
+        
+        // Animate arrow falling
+        this.tweens.add({
+          targets: arrow,
+          x: endX,
+          y: endY,
+          duration: 500,
+          ease: 'Cubic.easeIn', // Accelerate as it falls
+          onComplete: () => {
+            // Impact effect - small flash
+            const impact = this.add.circle(endX, endY, 15, 0xffff00, 0.8);
+            impact.setDepth(99);
+            
+            this.tweens.add({
+              targets: impact,
+              scale: 2,
+              alpha: 0,
+              duration: 200,
+              ease: 'Power2',
+              onComplete: () => impact.destroy(),
+            });
+            
+            // Destroy arrow
+            arrow.destroy();
+          },
+        });
+      });
+    }
+    
+    // Play sound effect for ultimate
+    if (this.soundManager) {
+      this.soundManager.playHuntressArrow();
+      // Play additional sound after a moment for epic feel
+      this.time.delayedCall(400, () => {
+        if (this.soundManager) {
+          this.soundManager.playHuntressArrow();
+        }
+      });
+    }
+  }
+
+  /**
+   * ULTIMATE: Meteor Shower - Animated fireballs fall from sky hitting all enemies
+   */
+  private playMeteorShower(): void {
+    console.log('☄️ METEOR SHOWER ULTIMATE!');
+    
+    // Get all enemy slots
+    const enemySlots = this.enemySlots;
+    if (enemySlots.length === 0) return;
+    
+    // Create 12 meteors that fall from the sky
+    const meteorCount = 12;
+    const skyY = -150; // Start higher above screen
+    
+    for (let i = 0; i < meteorCount; i++) {
+      // Delay each meteor slightly for cascade effect
+      this.time.delayedCall(i * 100, () => {
+        // Pick a random enemy to target
+        const targetSlot = Phaser.Utils.Array.GetRandom(enemySlots);
+        
+        // Random X offset around the target
+        const offsetX = Phaser.Math.Between(-60, 60);
+        const startX = targetSlot.x + offsetX;
+        const endX = targetSlot.x + offsetX * 0.2; // Slight drift
+        const endY = targetSlot.y;
+        
+        // Create animated meteor sprite
+        const meteor = this.add.sprite(startX, skyY, 'mage_meteor');
+        meteor.setScale(3); // Scale up the meteor
+        meteor.setRotation(Math.PI / 2); // Point downward (90 degrees)
+        meteor.setDepth(100);
+        meteor.setTint(0xff8800); // Orange/fire tint
+        
+        // Play meteor animation
+        if (this.anims.exists('mage_meteor_anim')) {
+          meteor.play('mage_meteor_anim');
+        }
+        
+        // Animate meteor falling straight down (slightly slower for impact)
+        this.tweens.add({
+          targets: meteor,
+          x: endX,
+          y: endY,
+          duration: 800, // Slowed down from 600ms
+          ease: 'Cubic.easeIn', // Accelerate as it falls
+          onUpdate: () => {
+            // Add trail effect by spawning smaller particles
+            if (Math.random() < 0.3) {
+              const trail = this.add.circle(meteor.x, meteor.y, 4, 0xff8800, 0.8);
+              trail.setDepth(99);
+              this.tweens.add({
+                targets: trail,
+                alpha: 0,
+                scale: 0.5,
+                duration: 200,
+                onComplete: () => trail.destroy(),
+              });
+            }
+          },
+          onComplete: () => {
+            // Screen shake on impact for extra oomph
+            this.cameras.main.shake(100, 0.003);
+            
+            // Core explosion (bright orange)
+            const explosionCore = this.add.circle(endX, endY, 20, 0xffff00, 1);
+            explosionCore.setDepth(101);
+            
+            // Middle explosion layer (orange)
+            const explosion = this.add.circle(endX, endY, 30, 0xff4400, 0.9);
+            explosion.setDepth(100);
+            
+            // Outer explosion ring (yellow-orange)
+            const explosionRing = this.add.circle(endX, endY, 30, 0xff8800, 0);
+            explosionRing.setStrokeStyle(4, 0xffaa00, 1);
+            explosionRing.setDepth(99);
+            
+            // Second outer ring for extra impact
+            const explosionRing2 = this.add.circle(endX, endY, 35, 0xff6600, 0);
+            explosionRing2.setStrokeStyle(3, 0xff8800, 0.8);
+            explosionRing2.setDepth(98);
+            
+            // Animate core explosion
+            this.tweens.add({
+              targets: explosionCore,
+              scale: 3,
+              alpha: 0,
+              duration: 250,
+              ease: 'Power3',
+              onComplete: () => explosionCore.destroy(),
+            });
+            
+            // Animate middle explosion
+            this.tweens.add({
+              targets: explosion,
+              scale: 3.5,
+              alpha: 0,
+              duration: 350,
+              ease: 'Power2',
+              onComplete: () => explosion.destroy(),
+            });
+            
+            // Animate outer ring
+            this.tweens.add({
+              targets: explosionRing,
+              scale: 4,
+              alpha: 0,
+              duration: 450,
+              ease: 'Power2',
+              onComplete: () => explosionRing.destroy(),
+            });
+            
+            // Animate second ring
+            this.tweens.add({
+              targets: explosionRing2,
+              scale: 4.5,
+              alpha: 0,
+              duration: 500,
+              ease: 'Power2',
+              onComplete: () => explosionRing2.destroy(),
+            });
+            
+            // Debris particles
+            for (let j = 0; j < 8; j++) {
+              const debris = this.add.circle(endX, endY, 3, 0xff6600, 1);
+              debris.setDepth(97);
+              
+              const angle = (Math.PI * 2 * j) / 8;
+              const distance = Phaser.Math.Between(30, 60);
+              
+              this.tweens.add({
+                targets: debris,
+                x: endX + Math.cos(angle) * distance,
+                y: endY + Math.sin(angle) * distance,
+                alpha: 0,
+                duration: 400,
+                ease: 'Power2',
+                onComplete: () => debris.destroy(),
+              });
+            }
+            
+            // Destroy meteor
+            meteor.destroy();
+          },
+        });
+      });
+    }
+    
+    // Play sound effects for ultimate
+    if (this.soundManager) {
+      this.soundManager.playMageFireSpell();
+      // Play additional sounds for epic feel
+      this.time.delayedCall(300, () => {
+        if (this.soundManager) {
+          this.soundManager.playMageFireSpell();
+        }
+      });
+      this.time.delayedCall(600, () => {
+        if (this.soundManager) {
+          this.soundManager.playMageFireSpell();
+        }
+      });
+    }
+  }
+
   private playStrike(srcId: ActorId, dstId: ActorId, note?: string): void {
     const srcSlot = this.getActorSlot(srcId);
     const dstSlot = this.getActorSlot(dstId);
@@ -1673,10 +2728,22 @@ export class BattleScene extends Phaser.Scene {
           
           if (characterClass === 'Mage') {
             attackAnimKey = 'mage_attack_anim';
+            
+            // Play mage fire spell sound
+            if (this.soundManager) {
+              this.soundManager.playMageFireSpell();
+            }
           } else if (characterClass === 'Warrior') {
-            attackAnimKey = 'warrior_attack_anim';
+            // Randomly select from 3 warrior attack animations (no repeats)
+            attackAnimKey = getRandomWarriorAttackAnim(sprite);
+            console.log(`🗡️ Warrior using attack: ${attackAnimKey}`);
           } else if (characterClass === 'Huntress') {
             attackAnimKey = 'huntress_attack_anim';
+            
+            // Play huntress arrow sound
+            if (this.soundManager) {
+              this.soundManager.playHuntressArrow();
+            }
             
             // Fire arrow projectile for Huntress
             if (dstSlot) {
@@ -1856,59 +2923,419 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Create or update a persistent shield aura on an actor
+   */
   private playGuard(srcId: ActorId, value: number): void {
     const srcSlot = this.getActorSlot(srcId);
-    if (srcSlot) {
-      // Shield icon - more prominent and lasts longer
-      const shield = this.add.graphics();
-      shield.lineStyle(4, 0x3498db, 1.0);
-      shield.fillStyle(0x3498db, 0.3);
-      
-      // Draw a shield shape
-      shield.beginPath();
-      shield.arc(srcSlot.x, srcSlot.y, 40, 0, Math.PI * 2);
-      shield.strokePath();
-      shield.fillPath();
-      
-      // Shield value text (shows how much damage is blocked)
-      const shieldText = this.add.text(
-        srcSlot.x,
-        srcSlot.y,
-        `🛡️ ${value}`,
-        {
-          fontSize: '24px',
-          color: '#3498db',
-          fontFamily: 'Arial, sans-serif',
-          fontStyle: 'bold',
-        }
-      );
-      shieldText.setOrigin(0.5);
-      shieldText.setDepth(100);
+    if (!srcSlot) return;
 
-      // Pulse effect for shield
+    // Remove existing shield aura if any
+    this.removeShieldAura(srcId);
+
+    // Create persistent shield aura
+    const aura = this.createShieldAura(srcSlot.x, srcSlot.y, value);
+    this.shieldAuras.set(srcId, aura);
+
+    // Initial spawn animation (burst effect)
+    this.playShieldSpawnEffect(srcSlot.x, srcSlot.y);
+  }
+
+  /**
+   * Create a beautiful persistent shield aura
+   */
+  private createShieldAura(x: number, y: number, shieldValue: number): ShieldAura {
+    const container = this.add.container(x, y);
+    container.setDepth(49); // Just behind damage text
+
+    // Outer glow (much more subtle)
+    const glow = this.add.graphics();
+    glow.fillStyle(0x4da6ff, 0.08); // Much more transparent
+    glow.fillCircle(0, 0, 70);
+    glow.fillStyle(0x4da6ff, 0.12); // Subtle inner glow
+    glow.fillCircle(0, 0, 50);
+    container.add(glow);
+
+    // Hexagon shield pattern (wireframe style - more transparent)
+    const hexagon = this.add.graphics();
+    hexagon.lineStyle(4, 0x3498db, 0.6); // Thicker lines, more transparent
+    this.drawHexagonStroke(hexagon, 0, 0, 45);
+    container.add(hexagon);
+
+    // Inner hexagon (smaller, more transparent)
+    const innerHex = this.add.graphics();
+    innerHex.lineStyle(2, 0x5dade2, 0.5);
+    this.drawHexagonStroke(innerHex, 0, 0, 30);
+    container.add(innerHex);
+
+    // Floating particles around shield (smaller and more subtle)
+    const particles: Phaser.GameObjects.Graphics[] = [];
+    for (let i = 0; i < 6; i++) { // Fewer particles
+      const angle = (Math.PI * 2 * i) / 6;
+      const distance = 50; // Closer to center
+      const particle = this.add.graphics();
+      particle.fillStyle(0x5dade2, 0.6); // More transparent
+      particle.fillCircle(
+        Math.cos(angle) * distance,
+        Math.sin(angle) * distance,
+        2 // Smaller particles
+      );
+      container.add(particle);
+      particles.push(particle);
+
+      // Animate particles floating (slower)
       this.tweens.add({
-        targets: shield,
-        scaleX: 1.2,
-        scaleY: 1.2,
-        duration: 300,
+        targets: particle,
+        x: Math.cos(angle) * (distance + 8),
+        y: Math.sin(angle) * (distance + 8),
+        alpha: 0.3,
+        duration: 1500 + (i * 100),
         yoyo: true,
-        repeat: 2,
+        repeat: -1,
         ease: 'Sine.easeInOut',
       });
+    }
 
-      // Fade out after showing for a while
+    // Shield value text (positioned below character)
+    const shieldText = this.add.text(0, 35, `🛡️${shieldValue}`, {
+      fontSize: '16px', // Smaller text
+      color: '#ffffff',
+      fontFamily: 'Arial Black',
+      fontStyle: 'bold',
+      stroke: '#3498db',
+      strokeThickness: 3,
+    });
+    shieldText.setOrigin(0.5);
+    container.add(shieldText);
+
+    // Gentle pulse animation (much subtler)
+    const pulseAnim = this.tweens.add({
+      targets: container,
+      scaleX: 1.02, // Much smaller pulse
+      scaleY: 1.02,
+      duration: 2000, // Slower pulse
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    // Slow rotation for hexagon
+    const rotateAnim = this.tweens.add({
+      targets: [hexagon, innerHex],
+      angle: 360,
+      duration: 8000,
+      repeat: -1,
+      ease: 'Linear',
+    });
+
+    // Add energy ring at character's feet (doesn't cover character)
+    const energyRing = this.add.graphics();
+    energyRing.lineStyle(3, 0x4da6ff, 0.4);
+    energyRing.strokeCircle(0, 20, 25); // Below the character
+    energyRing.lineStyle(2, 0x5dade2, 0.3);
+    energyRing.strokeCircle(0, 20, 35); // Outer ring
+    container.add(energyRing);
+
+    // Animate energy ring pulsing
+    this.tweens.add({
+      targets: energyRing,
+      alpha: 0.7,
+      duration: 1000,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    return {
+      container,
+      hexagon,
+      glow,
+      particles,
+      shieldText,
+      pulseAnim,
+      rotateAnim,
+    };
+  }
+
+  /**
+   * Draw a hexagon shape
+   */
+  private drawHexagon(graphics: Phaser.GameObjects.Graphics, x: number, y: number, size: number, color: number, alpha: number): void {
+    graphics.fillStyle(color, alpha);
+    graphics.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI / 3) * i;
+      const px = x + size * Math.cos(angle);
+      const py = y + size * Math.sin(angle);
+      if (i === 0) {
+        graphics.moveTo(px, py);
+      } else {
+        graphics.lineTo(px, py);
+      }
+    }
+    graphics.closePath();
+    graphics.fillPath();
+  }
+
+  /**
+   * Draw a hexagon stroke
+   */
+  private drawHexagonStroke(graphics: Phaser.GameObjects.Graphics, x: number, y: number, size: number): void {
+    graphics.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI / 3) * i;
+      const px = x + size * Math.cos(angle);
+      const py = y + size * Math.sin(angle);
+      if (i === 0) {
+        graphics.moveTo(px, py);
+      } else {
+        graphics.lineTo(px, py);
+      }
+    }
+    graphics.closePath();
+    graphics.strokePath();
+  }
+
+  /**
+   * Shield spawn burst effect
+   */
+  private playShieldSpawnEffect(x: number, y: number): void {
+    // Blue flash
+    const flash = this.add.circle(x, y, 30, 0x3498db, 0.8);
+    flash.setDepth(50);
+
+    this.tweens.add({
+      targets: flash,
+      scale: 3,
+      alpha: 0,
+      duration: 500,
+      ease: 'Power2',
+      onComplete: () => flash.destroy(),
+    });
+
+    // Expanding rings
+    for (let i = 0; i < 3; i++) {
+      const ring = this.add.circle(x, y, 40, 0x5dade2, 0);
+      ring.setStrokeStyle(3, 0x5dade2, 1);
+      ring.setDepth(50);
+
       this.tweens.add({
-        targets: [shield, shieldText],
+        targets: ring,
+        scale: 2 + (i * 0.3),
         alpha: 0,
-        duration: 800,
-        delay: 1200, // Stay visible longer
+        duration: 600 + (i * 100),
+        delay: i * 80,
         ease: 'Power2',
-        onComplete: () => {
-          shield.destroy();
-          shieldText.destroy();
-        },
+        onComplete: () => ring.destroy(),
       });
     }
+
+    // Burst particles
+    for (let p = 0; p < 12; p++) {
+      const angle = (Math.PI * 2 * p) / 12;
+      const particle = this.add.circle(x, y, 4, 0x85c1e9, 1);
+      particle.setDepth(50);
+
+      this.tweens.add({
+        targets: particle,
+        x: x + Math.cos(angle) * 60,
+        y: y + Math.sin(angle) * 60,
+        alpha: 0,
+        scale: 0.5,
+        duration: 500,
+        ease: 'Power2',
+        onComplete: () => particle.destroy(),
+      });
+    }
+
+    // "+SHIELD" text popup
+    const shieldPopup = this.add.text(x, y - 60, '+SHIELD', {
+      fontSize: '22px',
+      color: '#3498db',
+      fontFamily: 'Arial Black',
+      fontStyle: 'bold',
+      stroke: '#ffffff',
+      strokeThickness: 4,
+    });
+    shieldPopup.setOrigin(0.5);
+    shieldPopup.setDepth(100);
+
+    this.tweens.add({
+      targets: shieldPopup,
+      y: shieldPopup.y - 30,
+      alpha: 0,
+      duration: 1000,
+      ease: 'Power2',
+      onComplete: () => shieldPopup.destroy(),
+    });
+  }
+
+  /**
+   * Remove shield aura from an actor
+   */
+  private removeShieldAura(actorId: ActorId): void {
+    const aura = this.shieldAuras.get(actorId);
+    if (aura) {
+      // Stop animations
+      if (aura.pulseAnim) aura.pulseAnim.stop();
+      if (aura.rotateAnim) aura.rotateAnim.stop();
+
+      // Fade out effect
+      this.tweens.add({
+        targets: aura.container,
+        alpha: 0,
+        scale: 0.8,
+        duration: 300,
+        ease: 'Power2',
+        onComplete: () => {
+          aura.container.destroy();
+        },
+      });
+
+      this.shieldAuras.delete(actorId);
+    }
+  }
+
+  /**
+   * Update shield aura value (when shield amount changes)
+   */
+  private updateShieldAura(actorId: ActorId, newValue: number): void {
+    const aura = this.shieldAuras.get(actorId);
+    if (aura) {
+      aura.shieldText.setText(`🛡️${newValue}`);
+      
+      // Flash effect on update
+      this.tweens.add({
+        targets: aura.shieldText,
+        scaleX: 1.3,
+        scaleY: 1.3,
+        duration: 200,
+        yoyo: true,
+        ease: 'Back.easeOut',
+      });
+    }
+  }
+
+  /**
+   * Update shield aura from combat state (when damage is applied)
+   */
+  private updateShieldAuraFromCombatState(actorId: ActorId): void {
+    // Get current shield value from combat state
+    const shieldValue = this.combatState.shields?.get(actorId) || 0;
+    
+    if (shieldValue > 0) {
+      // Update existing shield aura or create new one
+      const aura = this.shieldAuras.get(actorId);
+      if (aura) {
+        this.updateShieldAura(actorId, shieldValue);
+        
+        // Show shield absorption effect
+        this.playShieldAbsorbEffect(actorId);
+      } else {
+        // Create new shield aura if it doesn't exist
+        const slot = this.getActorSlot(actorId);
+        if (slot) {
+          const newAura = this.createShieldAura(slot.x, slot.y, shieldValue);
+          this.shieldAuras.set(actorId, newAura);
+        }
+      }
+    } else {
+      // Remove shield aura if shield is depleted
+      this.removeShieldAura(actorId);
+      
+      // Show shield break effect
+      this.playShieldBreakEffect(actorId);
+    }
+  }
+
+  /**
+   * Play shield absorption effect when shield takes damage
+   */
+  private playShieldAbsorbEffect(actorId: ActorId): void {
+    const slot = this.getActorSlot(actorId);
+    if (!slot) return;
+
+    // Blue spark effect when shield absorbs damage
+    const spark = this.add.circle(slot.x, slot.y, 8, 0x4da6ff, 0.8);
+    spark.setDepth(50);
+
+    this.tweens.add({
+      targets: spark,
+      scale: 2,
+      alpha: 0,
+      duration: 400,
+      ease: 'Power2',
+      onComplete: () => spark.destroy(),
+    });
+
+    // Shield absorption text
+    const absorbText = this.add.text(slot.x, slot.y - 40, 'SHIELD ABSORBED', {
+      fontSize: '14px',
+      color: '#4da6ff',
+      fontFamily: 'Arial Black',
+      fontStyle: 'bold',
+      stroke: '#ffffff',
+      strokeThickness: 2,
+    });
+    absorbText.setOrigin(0.5);
+    absorbText.setDepth(100);
+
+    this.tweens.add({
+      targets: absorbText,
+      y: absorbText.y - 20,
+      alpha: 0,
+      duration: 800,
+      ease: 'Power2',
+      onComplete: () => absorbText.destroy(),
+    });
+  }
+
+  /**
+   * Play shield break effect when shield is destroyed
+   */
+  private playShieldBreakEffect(actorId: ActorId): void {
+    const slot = this.getActorSlot(actorId);
+    if (!slot) return;
+
+    // Explosion of blue particles when shield breaks
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI * 2 * i) / 8;
+      const particle = this.add.circle(slot.x, slot.y, 4, 0x4da6ff, 1);
+      particle.setDepth(50);
+
+      this.tweens.add({
+        targets: particle,
+        x: slot.x + Math.cos(angle) * 40,
+        y: slot.y + Math.sin(angle) * 40,
+        alpha: 0,
+        scale: 0.3,
+        duration: 600,
+        ease: 'Power2',
+        onComplete: () => particle.destroy(),
+      });
+    }
+
+    // Shield break text
+    const breakText = this.add.text(slot.x, slot.y - 50, 'SHIELD BROKEN!', {
+      fontSize: '16px',
+      color: '#ff4444',
+      fontFamily: 'Arial Black',
+      fontStyle: 'bold',
+      stroke: '#ffffff',
+      strokeThickness: 3,
+    });
+    breakText.setOrigin(0.5);
+    breakText.setDepth(100);
+
+    this.tweens.add({
+      targets: breakText,
+      y: breakText.y - 30,
+      alpha: 0,
+      scale: 1.2,
+      duration: 1000,
+      ease: 'Power2',
+      onComplete: () => breakText.destroy(),
+    });
   }
 
   private playHeal(srcId: ActorId, dstId: ActorId, value: number): void {
@@ -2327,6 +3754,9 @@ export class BattleScene extends Phaser.Scene {
       // Update health bar immediately
       this.updateTargetHealthBar(targetId);
       
+      // Update shield aura if it exists (shield amount may have changed)
+      this.updateShieldAuraFromCombatState(targetId);
+      
       // Update player stats display if this is the current player
       this.updatePlayerStatsDisplay();
       return;
@@ -2349,10 +3779,24 @@ export class BattleScene extends Phaser.Scene {
       if (combatEnemy.hp === 0 && oldHp > 0) {
         console.log(`💀 ${combatEnemy.name} has died!`);
         this.playEnemyDeath(targetId);
+        
+        // Grant ultimate power to all party members for kill/assist
+        if (this.ultimatePowerManager) {
+          this.players.forEach(player => {
+            if (player.id && this.ultimatePowerManager) {
+              // Everyone gets assist power, could track actual killer for bonus
+              this.ultimatePowerManager.onKill(player.id);
+              this.updatePowerBar(player.id);
+            }
+          });
+        }
       }
       
       // Update health bar immediately
       this.updateTargetHealthBar(targetId);
+      
+      // Update shield aura if it exists (shield amount may have changed)
+      this.updateShieldAuraFromCombatState(targetId);
       
       // Update player stats display in case this affected the current player
       this.updatePlayerStatsDisplay();
@@ -2381,6 +3825,9 @@ export class BattleScene extends Phaser.Scene {
       // Update health bar immediately
       this.updateTargetHealthBar(targetId);
       
+      // Update shield aura if it exists (shield amount may have changed)
+      this.updateShieldAuraFromCombatState(targetId);
+      
       // Update player stats display if this is the current player
       this.updatePlayerStatsDisplay();
       return;
@@ -2400,6 +3847,9 @@ export class BattleScene extends Phaser.Scene {
       
       // Update health bar immediately
       this.updateTargetHealthBar(targetId);
+      
+      // Update shield aura if it exists (shield amount may have changed)
+      this.updateShieldAuraFromCombatState(targetId);
       
       // Update player stats display in case this affected the current player
       this.updatePlayerStatsDisplay();
@@ -2590,8 +4040,29 @@ export class BattleScene extends Phaser.Scene {
     skipButton.setData('skipButton', true);
   }
 
+  /**
+   * Check if combat should end after an ultimate ability
+   */
+  private checkCombatEndAfterUltimate(): void {
+    // Check if all enemies are dead
+    const allEnemiesDead = this.enemies.every(e => e.hp <= 0);
+    const allPlayersDead = this.players.every(p => p.hp <= 0);
+    
+    if (allEnemiesDead) {
+      console.log('🎉 All enemies defeated by ultimate! Victory!');
+      this.time.delayedCall(1000, () => {
+        this.endCombat('victory');
+      });
+    } else if (allPlayersDead) {
+      console.log('💀 All players defeated! Defeat!');
+      this.time.delayedCall(1000, () => {
+        this.endCombat('defeat');
+      });
+    }
+  }
+
   private endCombat(result: 'victory' | 'defeat'): void {
-    console.log(`Combat ended: ${result}`);
+    console.log(`Combat ended: ${result} (Stage ${this.currentStage})`);
     
     // Show result banner
     const banner = this.add.rectangle(
@@ -2626,6 +4097,13 @@ export class BattleScene extends Phaser.Scene {
           this.soundManager.stopAll();
         }
         
+        // Save ultimate power state for next battle (carries over between stages)
+        if (this.ultimatePowerManager) {
+          destroyUltimatePowerManager(true); // Save power on victory
+          this.ultimatePowerManager = null;
+          console.log('💾 Ultimate power saved for next battle!');
+        }
+        
         // Continue to map on victory
         // Use existing mapSeed if available, otherwise create new map
         this.scene.start('MapScene', {
@@ -2637,7 +4115,12 @@ export class BattleScene extends Phaser.Scene {
           stage: this.currentStage, // Pass current stage for next battle
         });
       } else {
-        // Return to lobby on defeat
+        // Return to lobby on defeat - DON'T save ultimate power (fresh start)
+        if (this.ultimatePowerManager) {
+          destroyUltimatePowerManager(false); // Don't save power on defeat
+          this.ultimatePowerManager = null;
+          console.log('❌ Ultimate power cleared (defeat)');
+        }
         this.scene.start('Lobby');
       }
     });
@@ -2921,6 +4404,145 @@ export class BattleScene extends Phaser.Scene {
         retryButton.destroy();
       }
     });
+  }
+
+  /**
+   * Create debug button to fill ultimate bar (for testing)
+   */
+  private createDebugUltimateButton(): void {
+    const x = this.scale.width - 120;
+    const y = 80;
+    
+    const container = this.add.container(x, y);
+    
+    // Background
+    const bg = this.add.rectangle(0, 0, 100, 40, 0xff00ff, 0.8);
+    bg.setStrokeStyle(2, 0xffffff, 1);
+    bg.setInteractive({ useHandCursor: true });
+    container.add(bg);
+    
+    // Text
+    const text = this.add.text(0, 0, 'DEBUG:\nFill ULT', {
+      fontSize: '12px',
+      color: '#ffffff',
+      fontFamily: 'Arial',
+      fontStyle: 'bold',
+      align: 'center',
+    });
+    text.setOrigin(0.5);
+    container.add(text);
+    
+    // Hover effects
+    bg.on('pointerover', () => {
+      bg.setFillStyle(0xff44ff, 1);
+      container.setScale(1.1);
+    });
+    
+    bg.on('pointerout', () => {
+      bg.setFillStyle(0xff00ff, 0.8);
+      container.setScale(1);
+    });
+    
+    // Click handler
+    bg.on('pointerdown', () => {
+      if (!this.userId || !this.ultimatePowerManager) return;
+      
+      // Find current player
+      const playerActor = this.players.find(p => p.userId === this.userId);
+      if (!playerActor || !playerActor.id) return;
+      
+      // Fill ultimate to 100%
+      const currentPower = this.ultimatePowerManager.getPower(playerActor.id);
+      const powerToAdd = 100 - currentPower;
+      
+      if (powerToAdd > 0) {
+        this.ultimatePowerManager.addPower(playerActor.id, powerToAdd, 'debug');
+        this.updatePowerBar(playerActor.id);
+        
+        // Flash effect
+        this.tweens.add({
+          targets: container,
+          scale: 1.3,
+          duration: 100,
+          yoyo: true,
+          ease: 'Back.easeOut',
+        });
+        
+        console.log(`🔧 DEBUG: Filled ${playerActor.name}'s ultimate to 100%`);
+      }
+    });
+    
+    this.debugUltimateButton = container;
+  }
+
+  /**
+   * Update a player's ultimate power bar visually
+   */
+  private updatePowerBar(actorId: ActorId): void {
+    if (!this.ultimatePowerManager) return;
+    
+    const powerBar = this.powerBars.get(actorId);
+    const powerState = this.ultimatePowerManager.getPowerState(actorId);
+    
+    if (powerBar && powerState) {
+      const wasPreviouslyReady = powerBar.getContainer().getData('wasReady') || false;
+      const isNowReady = powerState.isReady;
+      
+      powerBar.updatePower(powerState.power, powerState);
+      
+      // Trigger cinematic effect when ultimate becomes ready
+      if (!wasPreviouslyReady && isNowReady) {
+        powerBar.triggerReadyEffect();
+        powerBar.getContainer().setData('wasReady', true);
+        
+        // Play ultimate ready sound
+        if (this.soundManager) {
+          // TODO: Add ultimate ready sound effect
+          console.log(`🔥 ${actorId} ULTIMATE READY! Playing sound...`);
+        }
+        
+        // Add ultimate card to hand if this is the current player
+        const actor = this.players.find(p => p.id === actorId);
+        console.log(`[Ultimate] Checking if should add card: actor=${actor?.name}, userId match=${actor?.userId === this.userId}, handUI exists=${!!this.handUI}`);
+        
+        if (actor && actor.userId === this.userId && this.handUI) {
+          const battleActor = actor as BattleActor;
+          const characterClass = battleActor.selectedClass;
+          console.log(`[Ultimate] Character class: ${characterClass}`);
+          
+          // Get the appropriate ultimate card for this class
+          if (characterClass === 'Huntress') {
+            console.log(`[Ultimate] Attempting to add Rain of Arrows...`);
+            this.handUI.addUltimateCard('RainOfArrows');
+            console.log(`✨ Added Rain of Arrows to ${actor.name}'s hand!`);
+          } else if (characterClass === 'Mage') {
+            console.log(`[Ultimate] Attempting to add Meteor...`);
+            this.handUI.addUltimateCard('Meteor');
+            console.log(`✨ Added Meteor to ${actor.name}'s hand!`);
+          } else if (characterClass === 'Warrior') {
+            console.log(`[Ultimate] Attempting to add Berserk Rage...`);
+            this.handUI.addUltimateCard('BerserkRage');
+            console.log(`✨ Added Berserk Rage to ${actor.name}'s hand!`);
+          } else {
+            console.warn(`[Ultimate] Unknown class: ${characterClass}`);
+          }
+        } else {
+          console.log(`[Ultimate] Not adding card - conditions not met`);
+        }
+      }
+      
+      // Reset the wasReady flag if power drops below 100
+      if (wasPreviouslyReady && !isNowReady) {
+        powerBar.getContainer().setData('wasReady', false);
+        
+        // Remove ultimate card from hand if this is the current player
+        const actor = this.players.find(p => p.id === actorId);
+        if (actor && actor.userId === this.userId && this.handUI) {
+          this.handUI.removeUltimateCard();
+          console.log(`Removed ultimate card from ${actor.name}'s hand`);
+        }
+      }
+    }
   }
 
   update(): void {
@@ -3634,6 +5256,29 @@ export class BattleScene extends Phaser.Scene {
       this.soundManager.destroy();
       this.soundManager = null;
     }
+    
+    // Clean up ultimate power system (don't save - already handled in endCombat)
+    if (this.ultimatePowerManager) {
+      this.ultimatePowerManager.resetAll();
+      destroyUltimatePowerManager(false); // Don't save in generic cleanup
+      this.ultimatePowerManager = null;
+    }
+    this.powerBars.forEach(bar => bar.destroy());
+    this.powerBars.clear();
+    
+    // Clean up debug button
+    if (this.debugUltimateButton) {
+      this.debugUltimateButton.destroy();
+      this.debugUltimateButton = null;
+    }
+    
+    // Clean up shield auras
+    this.shieldAuras.forEach(aura => {
+      if (aura.pulseAnim) aura.pulseAnim.stop();
+      if (aura.rotateAnim) aura.rotateAnim.stop();
+      aura.container.destroy();
+    });
+    this.shieldAuras.clear();
     
     // Clean up UI elements
     this.remoteCursors.forEach(cursor => cursor.destroy());

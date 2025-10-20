@@ -513,14 +513,14 @@ export class Lobby extends Phaser.Scene {
 
     // Class selection buttons (vertical layout on left side)
     const classes = ['Warrior', 'Huntress', 'Mage'];
-    const buttonWidth = 120;
-    const buttonHeight = 40;
-    const buttonGap = 15;
+    const buttonWidth = 100;
+    const buttonHeight = 100;
+    const buttonGap = 20;
     const startX = 150; // Left side position
 
     classes.forEach((className, index) => {
       const x = startX;
-      const y = 200 + (buttonHeight + buttonGap) * index;
+      const y = 240 + (buttonHeight + buttonGap) * index;
 
       // Check if class is taken by someone else
       const isTaken = this.members.some(
@@ -531,14 +531,19 @@ export class Lobby extends Phaser.Scene {
       const currentMember = this.members.find((m) => m.user_id === this.userId);
       const isSelected = currentMember?.selected_class === className;
 
+      // Find who has selected this class
+      const classOwner = this.members.find((m) => m.selected_class === className);
+      const ownerName = classOwner?.name || null;
+
       const classBtn = this.createClassButton(
         x,
         y,
         buttonWidth,
-        50,
+        buttonHeight,
         className,
         isTaken,
         isSelected,
+        ownerName,
         async () => {
           if (!this.lobbyId || isTaken) return;
           
@@ -763,68 +768,104 @@ export class Lobby extends Phaser.Scene {
     className: string,
     isTaken: boolean,
     isSelected: boolean,
+    ownerName: string | null,
     callback: () => void
   ): Phaser.GameObjects.Container {
     const container = this.add.container(x, y);
 
-    // Determine color based on state
-    let bgColor = COLORS.UI_ACCENT;
-    if (isTaken) {
-      bgColor = 0x555555; // Gray for taken
-    } else if (isSelected) {
-      bgColor = 0x27ae60; // Green for selected
-    }
+    // Map class names to icon keys
+    const iconMap: { [key: string]: string } = {
+      'Warrior': 'class_warrior_icon',
+      'Huntress': 'class_huntress_icon',
+      'Mage': 'class_wizard_icon',
+    };
 
-    const bg = this.add.rectangle(0, 0, width, height, bgColor, 1);
-    bg.setStrokeStyle(2, isSelected ? 0x44ff44 : 0xffffff, 0.8);
+    // Transparent background for interaction area (no visible background or border)
+    const bg = this.add.rectangle(0, 0, width, height, 0x000000, 0);
     
     if (!isTaken) {
       bg.setInteractive({ useHandCursor: true });
     }
 
-    const label = this.add.text(0, 0, className, {
-      fontSize: '18px',
-      color: isTaken ? '#888888' : '#ffffff',
+    // Add the class icon image instead of text
+    const iconKey = iconMap[className];
+    const icon = this.add.image(0, 0, iconKey);
+    icon.setDisplaySize(width, height); // Full button size
+    
+    // Apply tint if taken
+    if (isTaken) {
+      icon.setTint(0x666666);
+      icon.setAlpha(0.5);
+    }
+
+    // Create hover text (class name) - initially hidden
+    const hoverText = this.add.text(0, -height * 0.5, className, {
+      fontSize: '16px',
+      color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 4,
     });
-    label.setOrigin(0.5);
+    hoverText.setOrigin(0.5);
+    hoverText.setVisible(false);
+
+    // Add player name text if class is selected (always visible)
+    let playerNameText: Phaser.GameObjects.Text | null = null;
+    if (ownerName) {
+      playerNameText = this.add.text(0, 0, ownerName, {
+        fontSize: '20px',
+        color: isSelected ? '#44ff44' : '#ffffff',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 5,
+      });
+      playerNameText.setOrigin(0.5);
+    }
 
     if (!isTaken) {
       bg.on('pointerover', () => {
-        if (!isSelected) {
-          bg.setFillStyle(COLORS.UI_ACCENT, 0.8);
-        }
+        icon.setScale(icon.scale * 1.15); // Larger scale on hover
+        hoverText.setVisible(true); // Show class name on hover
       });
 
       bg.on('pointerout', () => {
-        bg.setFillStyle(isSelected ? 0x27ae60 : COLORS.UI_ACCENT, 1);
+        icon.setDisplaySize(width, height); // Reset scale
+        hoverText.setVisible(false); // Hide class name
       });
 
       bg.on('pointerdown', callback);
+    } else {
+      // Also show hover text for taken classes
+      bg.on('pointerover', () => {
+        hoverText.setVisible(true);
+      });
+
+      bg.on('pointerout', () => {
+        hoverText.setVisible(false);
+      });
     }
 
-    // Add status text if taken or selected
+    // Add status text only if taken
     if (isTaken) {
-      const takenText = this.add.text(0, 20, 'Taken', {
+      const takenText = this.add.text(0, height * 0.52, 'Taken', {
         fontSize: '12px',
         color: '#ff6666',
         fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 3,
       });
       takenText.setOrigin(0.5);
       container.add(takenText);
-    } else if (isSelected) {
-      const selectedText = this.add.text(0, 20, '✓', {
-        fontSize: '14px',
-        color: '#44ff44',
-        fontFamily: 'Arial, sans-serif',
-        fontStyle: 'bold',
-      });
-      selectedText.setOrigin(0.5);
-      container.add(selectedText);
     }
 
-    container.add([bg, label]);
+    if (playerNameText) {
+      container.add([bg, icon, hoverText, playerNameText]);
+    } else {
+      container.add([bg, icon, hoverText]);
+    }
     return container;
   }
 

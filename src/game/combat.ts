@@ -72,6 +72,7 @@ export function resolveTurn(
     party: state.party.map(a => ({ ...a })),
     enemies: state.enemies.map(a => ({ ...a })),
     dots: state.dots ? new Map(state.dots) : new Map(),
+    shields: state.shields ? new Map(state.shields) : new Map(),
   };
   
   const order = rollInitiative(simState, rng);
@@ -88,6 +89,11 @@ export function resolveTurn(
   const effects: Effect[] = [];
   const getActor = (id: ActorId) => 
     simState.party.find(a => a.id === id) || simState.enemies.find(a => a.id === id);
+  
+  // Initialize shields map if it doesn't exist
+  if (!simState.shields) {
+    simState.shields = new Map();
+  }
   
   // Apply DOT effects at the start of the turn
   let tCursor = 0;
@@ -243,16 +249,37 @@ export function resolveTurn(
                   console.log(`[Combat] ${dst.name} is vulnerable! ${card.name} damage increased by 2 (${card.power} -> ${damage})`);
                 }
                 
-                // Apply guard reduction
-                const guardValue = guardValues.get(dst.id) || 0;
-                const finalDamage = Math.max(0, damage - guardValue);
+                // Apply shield absorption
+                const currentShield = simState.shields?.get(dst.id) || 0;
+                let remainingDamage = damage;
+                let newShieldValue = currentShield;
                 
-                if (guardValue > 0) {
-                  console.log(`[Combat] ${dst.name} is guarded! ${card.name} damage reduced by ${guardValue} (${damage} -> ${finalDamage})`);
+                if (currentShield > 0) {
+                  if (damage >= currentShield) {
+                    // Shield is completely destroyed
+                    remainingDamage = damage - currentShield;
+                    newShieldValue = 0;
+                    console.log(`[Combat] ${dst.name}'s shield (${currentShield}) is destroyed! ${damage} damage reduced to ${remainingDamage}`);
+                  } else {
+                    // Shield absorbs all damage
+                    newShieldValue = currentShield - damage;
+                    remainingDamage = 0;
+                    console.log(`[Combat] ${dst.name}'s shield absorbs ${damage} damage! Shield reduced from ${currentShield} to ${newShieldValue}`);
+                  }
+                  
+                  // Update shield value
+                  simState.shields!.set(dst.id, newShieldValue);
                 }
                 
-                strike(actor, dst, finalDamage, tCursor, card.name); // Pass card name for sound
-                dst.hp = Math.max(0, dst.hp - finalDamage);
+                // Apply damage to HP
+                const finalDamage = Math.max(0, remainingDamage);
+                if (finalDamage > 0) {
+                  strike(actor, dst, finalDamage, tCursor, card.name); // Pass card name for sound
+                  dst.hp = Math.max(0, dst.hp - finalDamage);
+                } else if (currentShield > 0) {
+                  // Shield absorbed all damage - still show the strike effect but no HP damage
+                  strike(actor, dst, 0, tCursor, card.name);
+                }
               }
               break;
           
@@ -266,10 +293,14 @@ export function resolveTurn(
             case 'GUARD':
               if (dst) {
                 const shieldValue = card.power; // Use the card's power value
+                const currentShield = simState.shields?.get(dst.id) || 0;
+                const newShieldTotal = currentShield + shieldValue;
+                
                 guard(dst, shieldValue, tCursor);
                 guarded.add(dst.id);
-                guardValues.set(dst.id, shieldValue);
-                console.log(`[Combat] ${dst.name} gains ${shieldValue} shield from ${card.name}`);
+                guardValues.set(dst.id, shieldValue); // Keep for compatibility
+                simState.shields!.set(dst.id, newShieldTotal);
+                console.log(`[Combat] ${dst.name} gains ${shieldValue} shield from ${card.name}. Total shield: ${newShieldTotal}`);
               }
               break;
             
@@ -320,10 +351,14 @@ export function resolveTurn(
             case 'SELF_GUARD':
               // Self-shield: grant shield to caster
               const shieldValue = card.power;
+              const currentShield = simState.shields?.get(actor.id) || 0;
+              const newShieldTotal = currentShield + shieldValue;
+              
               guard(actor, shieldValue, tCursor);
               guarded.add(actor.id);
-              guardValues.set(actor.id, shieldValue);
-              console.log(`[Combat] ${actor.name} gains ${shieldValue} shield from ${card.name}`);
+              guardValues.set(actor.id, shieldValue); // Keep for compatibility
+              simState.shields!.set(actor.id, newShieldTotal);
+              console.log(`[Combat] ${actor.name} gains ${shieldValue} shield from ${card.name}. Total shield: ${newShieldTotal}`);
               break;
             
             case 'TAUNT':
@@ -388,6 +423,12 @@ export function resolveTurn(
     effects: effects.map(e => ({ ...e })),
   }));
   
+  // Serialize shields Map to array format for network transmission
+  const serializedShields = Array.from((simState.shields || new Map()).entries()).map(([actorId, shieldValue]) => ({
+    actorId,
+    shieldValue,
+  }));
+  
   return { 
     turn: state.turn, 
     seed, 
@@ -395,6 +436,7 @@ export function resolveTurn(
     effects, 
     post,
     dots: serializedDots, // Include DOT effects in payload for persistence
+    shields: serializedShields, // Include shields in payload for persistence
   };
 }
 
@@ -422,6 +464,9 @@ export function createCombatState(
     turn,
     party: party.map(a => ({ ...a })),
     enemies: enemies.map(a => ({ ...a })),
+    shields: new Map(),
+    vulnerable: new Map(),
+    stunned: new Set(),
     dots: new Map(),
   };
 }
