@@ -267,3 +267,6 @@ I've added comprehensive logging to track the entire animation pipeline:
 
 
 
+
+
+

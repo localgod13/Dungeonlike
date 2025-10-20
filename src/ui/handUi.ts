@@ -17,6 +17,7 @@ export class HandUI {
   private currentAP = 0;
   private onCardSelect?: (cardId: string) => void;
   private selectedCardId: string | null = null;
+  private ultimateCardId: string | null = null; // Track if ultimate is in hand
 
   constructor(
     scene: Phaser.Scene,
@@ -285,6 +286,134 @@ export class HandUI {
 
   public setVisible(visible: boolean): void {
     this.container.setVisible(visible);
+  }
+
+  /**
+   * Add an ultimate card to the hand (displayed as rightmost card with glow)
+   */
+  public addUltimateCard(ultimateCardId: string): void {
+    // Don't add if already present
+    if (this.ultimateCardId === ultimateCardId) {
+      console.log(`Ultimate card ${ultimateCardId} already in hand`);
+      return;
+    }
+
+    const card = getCardById(ultimateCardId);
+    if (!card) {
+      console.error(`Ultimate card not found: ${ultimateCardId}`);
+      return;
+    }
+
+    this.ultimateCardId = ultimateCardId;
+
+    // Position ultimate card to the right of existing cards
+    const centerX = this.scene.scale.width / 2;
+    const y = this.scene.scale.height - CARD_HEIGHT / 2 - 20;
+    
+    // Calculate position for ultimate card (rightmost)
+    const existingCardsCount = this.cardContainers.size;
+    const totalWidth = existingCardsCount * (CARD_WIDTH + CARD_SPACING) - CARD_SPACING;
+    const x = centerX + totalWidth / 2 + CARD_SPACING + CARD_WIDTH / 2 + 30; // Extra spacing
+
+    const cardContainer = this.createCardDisplay(card, x, y);
+    
+    // Add glowing effect to ultimate card
+    this.addGlowEffect(cardContainer);
+    
+    this.container.add(cardContainer);
+    this.cardContainers.set(ultimateCardId, cardContainer);
+
+    console.log(`✨ Added ULTIMATE card to hand: ${card.name}`);
+  }
+
+  /**
+   * Remove the ultimate card from the hand
+   */
+  public removeUltimateCard(): void {
+    if (!this.ultimateCardId) return;
+
+    const container = this.cardContainers.get(this.ultimateCardId);
+    if (container) {
+      container.destroy();
+      this.cardContainers.delete(this.ultimateCardId);
+      console.log(`Removed ultimate card: ${this.ultimateCardId}`);
+    }
+
+    this.ultimateCardId = null;
+  }
+
+  /**
+   * Check if ultimate card is in hand
+   */
+  public hasUltimateCard(): boolean {
+    return this.ultimateCardId !== null;
+  }
+
+  /**
+   * Add pulsing glow effect to a card container
+   */
+  private addGlowEffect(cardContainer: Phaser.GameObjects.Container): void {
+    const bg = cardContainer.getByName('bg') as Phaser.GameObjects.Rectangle;
+    
+    // Set initial glow
+    bg.setStrokeStyle(5, 0xffff00, 1);
+    
+    // Pulse animation on border
+    this.scene.tweens.add({
+      targets: bg,
+      alpha: { from: 1, to: 0.6 },
+      duration: 800,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    // Don't scale the card image - just keep it at normal size
+    // Add a subtle brightness pulse instead
+    const cardImage = cardContainer.getByName('cardImage') as Phaser.GameObjects.Image;
+    if (cardImage) {
+      this.scene.tweens.add({
+        targets: cardImage,
+        alpha: { from: 1, to: 0.85 },
+        duration: 800,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
+
+    // Add glow circles around the card (instead of particles that expand bounds)
+    const glowCircle1 = this.scene.add.circle(0, 0, 70, 0xffff00, 0);
+    glowCircle1.setStrokeStyle(2, 0xffff00, 0.3);
+    glowCircle1.setName('glowCircle1');
+    
+    const glowCircle2 = this.scene.add.circle(0, 0, 80, 0xffff00, 0);
+    glowCircle2.setStrokeStyle(2, 0xffff00, 0.2);
+    glowCircle2.setName('glowCircle2');
+    
+    cardContainer.add([glowCircle1, glowCircle2]);
+    
+    // Animate glow circles
+    this.scene.tweens.add({
+      targets: glowCircle1,
+      scale: { from: 1, to: 1.1 },
+      alpha: { from: 0.3, to: 0 },
+      duration: 1000,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    
+    this.scene.tweens.add({
+      targets: glowCircle2,
+      scale: { from: 1, to: 1.15 },
+      alpha: { from: 0.2, to: 0 },
+      duration: 1200,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+      delay: 200,
+    });
   }
 }
 
