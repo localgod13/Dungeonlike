@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { COLORS } from '../game/config';
 import { SoundManager } from '../game/sound';
 import { subscribeMap, sendMapVote, sendMapVoteResult } from '../net/match';
+import { getGold, spendGold, initializeInventory } from '../game/inventory';
+import { getCurrentUserId } from '../net/supa';
 
 /**
  * Shop scene - Template for item purchasing
@@ -17,7 +19,8 @@ export class ShopScene extends Phaser.Scene {
   
   // Shop data
   private items: ShopItem[] = [];
-  private playerGold = 100; // TODO: Get from player data
+  private playerGold = 0;
+  private userId: string = '';
   
   // UI elements
   private titleText: Phaser.GameObjects.Text | null = null;
@@ -63,8 +66,12 @@ export class ShopScene extends Phaser.Scene {
     // Generate shop items
     this.generateShopItems();
 
-    // Get current user and determine if host
-    this.userId = await this.getCurrentUserId();
+    // Get current user and load gold from inventory
+    this.userId = await getCurrentUserId();
+    initializeInventory(this.userId);
+    this.playerGold = getGold(this.userId);
+    console.log('[ShopScene] Player gold:', this.playerGold);
+    
     this.isHost = this.players.length > 0 && this.players[0].userId === this.userId;
 
     // Create UI
@@ -80,16 +87,6 @@ export class ShopScene extends Phaser.Scene {
 
     // Play shop music (if available)
     this.soundManager?.playMusic('shop', { loop: true, volume: 0.3 });
-  }
-
-  private async getCurrentUserId(): Promise<string | null> {
-    try {
-      const { getCurrentUserId } = await import('../net/supa');
-      return await getCurrentUserId();
-    } catch (error) {
-      console.error('Failed to get current user:', error);
-      return null;
-    }
   }
 
   private setupVoting(): void {
@@ -520,7 +517,15 @@ export class ShopScene extends Phaser.Scene {
       return;
     }
     
-    this.playerGold -= item.cost;
+    // Use inventory system to spend gold
+    const success = spendGold(this.userId, item.cost);
+    if (!success) {
+      console.log('Failed to spend gold');
+      return;
+    }
+    
+    // Update local gold tracking
+    this.playerGold = getGold(this.userId);
     console.log(`✅ Purchased ${item.name} for ${item.cost} gold. New balance: ${this.playerGold}`);
     
     // TODO: Add item to player inventory

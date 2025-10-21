@@ -4,10 +4,10 @@ import { COLORS } from '../game/config';
 
 /**
  * Card selection UI for pre-battle phase
- * Allows players to choose up to 4 cards from their class-specific pool
+ * Allows players to choose up to 10 cards for their deck (class-specific + neutral)
  */
 
-const SLOT_COUNT = 4;
+const SLOT_COUNT = 10;
 const CARD_WIDTH = 140;
 const CARD_HEIGHT = 210; // Match 2:3 aspect ratio (1024x1536)
 const CARD_SPACING = 20;
@@ -47,14 +47,15 @@ export class CardSelectUI {
 
   private createUI(): void {
     const centerX = this.scene.scale.width / 2;
+    const screenHeight = this.scene.scale.height;
     
     // Title
     this.titleText = this.scene.add.text(
       centerX,
-      50,
-      'Choose up to 4 cards',
+      30,
+      'Build Your Deck - Choose 10 Cards',
       {
-        fontSize: '32px',
+        fontSize: '28px',
         color: '#ffffff',
         fontFamily: 'Arial, sans-serif',
         fontStyle: 'bold',
@@ -63,16 +64,17 @@ export class CardSelectUI {
     this.titleText.setOrigin(0.5);
     this.container.add(this.titleText);
 
-    // Card pool section
-    const poolY = 150;
+    // Card pool section - AVAILABLE CARDS (top half)
+    const poolY = 80;
     const poolTitle = this.scene.add.text(
       centerX,
       poolY,
-      'Card Pool',
+      '═══ AVAILABLE CARDS ═══',
       {
-        fontSize: '24px',
-        color: '#aaaaaa',
+        fontSize: '20px',
+        color: '#ffdd00',
         fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
       }
     );
     poolTitle.setOrigin(0.5);
@@ -81,18 +83,20 @@ export class CardSelectUI {
     // Pool container
     this.poolContainer = this.scene.add.container(0, 0);
     this.container.add(this.poolContainer);
-    this.createCardPool(poolY + 50);
+    this.createCardPool(poolY + 30);
 
-    // Loadout section
-    const loadoutY = this.scene.scale.height - 250;
+    // Loadout section - SELECTED DECK (bottom area)
+    // Position at bottom with enough space for 2 rows
+    const loadoutY = screenHeight - 430;
     const loadoutTitle = this.scene.add.text(
       centerX,
-      loadoutY - 40,
-      `Your Loadout (0/${SLOT_COUNT})`,
+      loadoutY - 50,
+      `═══ YOUR DECK (0/${SLOT_COUNT}) ═══`,
       {
-        fontSize: '24px',
-        color: '#aaaaaa',
+        fontSize: '20px',
+        color: '#00ff88',
         fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
       }
     );
     loadoutTitle.setOrigin(0.5);
@@ -107,17 +111,73 @@ export class CardSelectUI {
 
   private createCardPool(startY: number): void {
     const centerX = this.scene.scale.width / 2;
-    const totalWidth = this.cardPool.length * (CARD_WIDTH + CARD_SPACING) - CARD_SPACING;
-    const startX = centerX - totalWidth / 2;
-
-    this.cardPool.forEach((card, index) => {
-      const x = startX + index * (CARD_WIDTH + CARD_SPACING) + CARD_WIDTH / 2;
-      const y = startY + CARD_HEIGHT / 2;
+    
+    // Separate class cards and neutral cards
+    const classCards = this.cardPool.filter(c => c.class !== undefined);
+    const neutralCards = this.cardPool.filter(c => c.class === undefined);
+    
+    console.log(`[CardPool] Class cards: ${classCards.length}, Neutral cards: ${neutralCards.length}`);
+    
+    // Display class cards in first row
+    if (classCards.length > 0) {
+      const classWidth = classCards.length * (CARD_WIDTH + CARD_SPACING) - CARD_SPACING;
+      const classStartX = centerX - classWidth / 2;
       
-      const cardButton = this.createCardButton(card, x, y);
-      this.poolContainer.add(cardButton);
-      this.cardButtons.set(card.id, cardButton);
-    });
+      // Class cards label
+      const classLabel = this.scene.add.text(
+        centerX,
+        startY - 20,
+        'Class Cards',
+        {
+          fontSize: '18px',
+          color: '#ffaa00',
+          fontFamily: 'Arial, sans-serif',
+          fontStyle: 'bold',
+        }
+      );
+      classLabel.setOrigin(0.5);
+      this.poolContainer.add(classLabel);
+      
+      classCards.forEach((card, index) => {
+        const x = classStartX + index * (CARD_WIDTH + CARD_SPACING) + CARD_WIDTH / 2;
+        const y = startY + CARD_HEIGHT / 2;
+        
+        const cardButton = this.createCardButton(card, x, y);
+        this.poolContainer.add(cardButton);
+        this.cardButtons.set(card.id, cardButton);
+      });
+    }
+    
+    // Display neutral cards in second row
+    if (neutralCards.length > 0) {
+      const neutralY = startY + CARD_HEIGHT + 80;
+      const neutralWidth = neutralCards.length * (CARD_WIDTH + CARD_SPACING) - CARD_SPACING;
+      const neutralStartX = centerX - neutralWidth / 2;
+      
+      // Neutral cards label
+      const neutralLabel = this.scene.add.text(
+        centerX,
+        neutralY - 40,
+        'Neutral Items',
+        {
+          fontSize: '18px',
+          color: '#888888',
+          fontFamily: 'Arial, sans-serif',
+          fontStyle: 'bold',
+        }
+      );
+      neutralLabel.setOrigin(0.5);
+      this.poolContainer.add(neutralLabel);
+      
+      neutralCards.forEach((card, index) => {
+        const x = neutralStartX + index * (CARD_WIDTH + CARD_SPACING) + CARD_WIDTH / 2;
+        const y = neutralY + CARD_HEIGHT / 2;
+        
+        const cardButton = this.createCardButton(card, x, y);
+        this.poolContainer.add(cardButton);
+        this.cardButtons.set(card.id, cardButton);
+      });
+    }
   }
 
   private createCardButton(card: Card, x: number, y: number): Phaser.GameObjects.Container {
@@ -130,6 +190,12 @@ export class CardSelectUI {
     const cardImage = this.scene.add.image(0, 0, imageKey);
     cardImage.setDisplaySize(CARD_WIDTH, CARD_HEIGHT);
     cardImage.setName('cardImage');
+    
+    // Apply gray tint to neutral cards for visual distinction
+    if (card.type === 'neutral') {
+      cardImage.setTint(0x888888); // Gray tint for neutral items
+    }
+    
     container.add(cardImage);
 
     // Border frame (for hover/selection effects)
@@ -196,6 +262,27 @@ export class CardSelectUI {
     targetText.setOrigin(0.5);
     targetText.setDepth(10);
     container.add(targetText);
+    
+    // Consumable count badge (if applicable)
+    if ((card as any).consumableCount !== undefined) {
+      const count = (card as any).consumableCount;
+      const countBadge = this.scene.add.container(CARD_WIDTH / 2 - 26, -CARD_HEIGHT / 2 + 26);
+      countBadge.setDepth(15);
+      
+      const countBg = this.scene.add.circle(0, 0, 18, 0xe74c3c, 1);
+      countBg.setStrokeStyle(2, 0xffffff, 1);
+      countBadge.add(countBg);
+      
+      const countText = this.scene.add.text(0, 0, `x${count}`, {
+        fontSize: '16px',
+        color: '#ffffff',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+      });
+      countText.setOrigin(0.5);
+      countBadge.add(countText);
+      container.add(countBadge);
+    }
 
     // Make interactive
     bg.setInteractive({ useHandCursor: true });
@@ -216,12 +303,19 @@ export class CardSelectUI {
 
   private createLoadoutSlots(y: number): void {
     const centerX = this.scene.scale.width / 2;
-    const totalWidth = SLOT_COUNT * (SLOT_WIDTH + CARD_SPACING) - CARD_SPACING;
+    const SLOTS_PER_ROW = 5;
+    const ROWS = 2;
+    const totalWidth = SLOTS_PER_ROW * (SLOT_WIDTH + CARD_SPACING) - CARD_SPACING;
     const startX = centerX - totalWidth / 2;
+    const ROW_SPACING = SLOT_HEIGHT + 30;
 
     for (let i = 0; i < SLOT_COUNT; i++) {
-      const x = startX + i * (SLOT_WIDTH + CARD_SPACING) + SLOT_WIDTH / 2;
-      const slot = this.createLoadoutSlot(x, y, i);
+      const row = Math.floor(i / SLOTS_PER_ROW);
+      const col = i % SLOTS_PER_ROW;
+      const x = startX + col * (SLOT_WIDTH + CARD_SPACING) + SLOT_WIDTH / 2;
+      const slotY = y + row * ROW_SPACING;
+      
+      const slot = this.createLoadoutSlot(x, slotY, i);
       this.loadoutContainer.add(slot);
       this.loadoutSlots.push(slot);
     }
@@ -348,6 +442,12 @@ export class CardSelectUI {
     const imageKey = `card_${card.type}`;
     const cardImage = this.scene.add.image(0, 0, imageKey);
     cardImage.setDisplaySize(SLOT_WIDTH, SLOT_HEIGHT);
+    
+    // Apply gray tint to neutral cards for visual distinction
+    if (card.type === 'neutral') {
+      cardImage.setTint(0x888888); // Gray tint for neutral items
+    }
+    
     cardContent.add(cardImage);
 
     // Card name with shadow
@@ -392,6 +492,27 @@ export class CardSelectUI {
     });
     descText.setOrigin(0.5);
     cardContent.add(descText);
+    
+    // Consumable count badge (if applicable)
+    if ((card as any).consumableCount !== undefined) {
+      const count = (card as any).consumableCount;
+      const countBadge = this.scene.add.container(SLOT_WIDTH / 2 - 20, -SLOT_HEIGHT / 2 + 20);
+      countBadge.setDepth(15);
+      
+      const countBg = this.scene.add.circle(0, 0, 14, 0xe74c3c, 1);
+      countBg.setStrokeStyle(2, 0xffffff, 1);
+      countBadge.add(countBg);
+      
+      const countText = this.scene.add.text(0, 0, `x${count}`, {
+        fontSize: '13px',
+        color: '#ffffff',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+      });
+      countText.setOrigin(0.5);
+      countBadge.add(countText);
+      cardContent.add(countBadge);
+    }
 
     slot.add(cardContent);
     bg.setStrokeStyle(3, 0x66ff66, 1);
@@ -442,7 +563,7 @@ export class CardSelectUI {
   private updateLoadoutTitle(): void {
     const titleObj = this.container.getByName('loadoutTitle') as Phaser.GameObjects.Text;
     if (titleObj) {
-      titleObj.setText(`Your Loadout (${this.selectedCards.length}/${SLOT_COUNT})`);
+      titleObj.setText(`═══ YOUR DECK (${this.selectedCards.length}/${SLOT_COUNT}) ═══`);
     }
   }
 

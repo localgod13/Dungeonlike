@@ -119,6 +119,12 @@ export class Preload extends Phaser.Scene {
       'card_magic',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/magic.png'
     );
+    // For neutral cards, we'll use a grayscale version of defense for now
+    // TODO: Create a proper neutral card image asset
+    this.load.image(
+      'card_neutral',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/defense.png'
+    );
     console.log('[Preload] Card images queued for loading');
 
     // Load character sprites

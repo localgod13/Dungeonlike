@@ -363,9 +363,28 @@ export function resolveTurn(
             
             case 'TAUNT':
               // Taunt: force enemy to target the caster
-              // Note: This is a visual effect only in current implementation
-              // Full taunt mechanics would require AI modification
-              if (dst) {
+              // For Lightning Rod: give self shield + taunt all enemies
+              if (card.id === 'LightningRod') {
+                // Give shield to self
+                const shieldValue = card.power;
+                const currentShield = simState.shields?.get(actor.id) || 0;
+                const newShieldTotal = currentShield + shieldValue;
+                
+                guard(actor, shieldValue, tCursor);
+                guarded.add(actor.id);
+                guardValues.set(actor.id, shieldValue);
+                simState.shields!.set(actor.id, newShieldTotal);
+                console.log(`[Combat] ⚡ ${actor.name} uses Lightning Rod! Gains ${shieldValue} shield. Total: ${newShieldTotal}`);
+                
+                // Taunt all enemies
+                const enemies = actor.side === 'party' ? simState.enemies : simState.party;
+                enemies.forEach((enemy, index) => {
+                  const offsetTime = tCursor + (index * 150);
+                  effects.push({ at: offsetTime, kind: 'vfx', src: actor.id, dst: enemy.id, note: 'taunt' });
+                });
+                console.log(`[Combat] ⚡ All enemies are drawn to attack ${actor.name}!`);
+              } else if (dst) {
+                // Regular taunt card (like Warrior's Taunt)
                 console.log(`[Combat] ${actor.name} taunts ${dst.name}!`);
                 effects.push({ at: tCursor, kind: 'vfx', src: actor.id, dst: dst.id, note: 'taunt' });
               }
@@ -374,28 +393,152 @@ export function resolveTurn(
             case 'DOT':
               // Damage over time: add status effect for multiple turns
               if (dst) {
-                // Determine effect type based on card name
-                const effectType: 'poison' | 'burn' = card.name.toLowerCase().includes('poison') ? 'poison' : 'burn';
-                const damagePerTurn = card.power; // Full power value = damage per turn
-                const duration = 2; // 2 turns of damage
+                // Special handling for Firebomb - affects all enemies
+                if (card.id === 'Firebomb') {
+                  const targets = actor.side === 'party' ? simState.enemies : simState.party;
+                  targets.forEach((target, index) => {
+                    const targetDots = dotEffects.get(target.id) || [];
+                    targetDots.push({
+                      damage: card.power,
+                      duration: 3, // 3 turns of burn
+                      source: actor.id,
+                      type: 'burn',
+                    });
+                    dotEffects.set(target.id, targetDots);
+                    
+                    const offsetTime = tCursor + (index * 200);
+                    strike(actor, target, card.power, offsetTime, card.name);
+                    target.hp = Math.max(0, target.hp - card.power);
+                    effects.push({ at: offsetTime, kind: 'vfx', src: actor.id, dst: target.id, note: 'burn' });
+                  });
+                  console.log(`[Combat] 💣 ${actor.name} uses Firebomb! All enemies burning for 3 turns!`);
+                } else {
+                  // Single-target DOT (Poison Dart, etc.)
+                  const effectType: 'poison' | 'burn' = card.name.toLowerCase().includes('poison') ? 'poison' : 'burn';
+                  const damagePerTurn = card.power;
+                  const duration = 2; // 2 turns of damage
+                  
+                  // Apply initial damage
+                  strike(actor, dst, card.power, tCursor, card.name);
+                  dst.hp = Math.max(0, dst.hp - card.power);
+                  
+                  // Add DOT effect to target
+                  const targetDots = dotEffects.get(dst.id) || [];
+                  targetDots.push({
+                    damage: damagePerTurn,
+                    duration: duration,
+                    source: actor.id,
+                    type: effectType,
+                  });
+                  dotEffects.set(dst.id, targetDots);
+                  
+                  console.log(`[Combat] ✨ ${actor.name} applies ${card.name} to ${dst.name}!`);
+                  console.log(`[Combat] 🔮 DOT Effect: ${damagePerTurn} ${effectType} damage per turn for ${duration} turns`);
+                  
+                  effects.push({ at: tCursor, kind: 'vfx', src: actor.id, dst: dst.id, note: effectType });
+                }
+              }
+              break;
+            
+            case 'CLEANSE':
+              // Healing Salve: heal + remove one DOT effect
+              if (dst) {
+                // Heal first
+                heal(actor, dst, card.power, tCursor);
+                dst.hp = Math.min(dst.maxHp, dst.hp + card.power);
                 
-                // Add DOT effect to target
+                // Remove one DOT effect if present
                 const targetDots = dotEffects.get(dst.id) || [];
-                targetDots.push({
-                  damage: damagePerTurn,
-                  duration: duration,
-                  source: actor.id,
-                  type: effectType,
+                if (targetDots.length > 0) {
+                  const removedEffect = targetDots.shift(); // Remove first DOT
+                  dotEffects.set(dst.id, targetDots);
+                  console.log(`[Combat] 🧴 ${actor.name} cleanses ${dst.name}, removing ${removedEffect?.type} effect!`);
+                } else {
+                  console.log(`[Combat] 🧴 ${actor.name} heals ${dst.name} for ${card.power} HP (no effects to cleanse)`);
+                }
+              }
+              break;
+            
+            case 'BUFF':
+              // Berserker Potion: give all allies +damage for next attack
+              {
+                const targets = actor.side === 'party' ? simState.party : simState.enemies;
+                targets.forEach((target, index) => {
+                  // Add a damage buff that will be applied on their next attack
+                  // We'll track this in a temporary buff map (needs to be added to combat state)
+                  const offsetTime = tCursor + (index * 100);
+                  guard(target, card.power, offsetTime); // Visual effect (reuse guard animation)
+                  console.log(`[Combat] 🍺 ${target.name} gains +${card.power} damage on next attack!`);
+                  effects.push({ at: offsetTime, kind: 'vfx', src: actor.id, dst: target.id, note: 'buff' });
                 });
-                dotEffects.set(dst.id, targetDots);
-                
-                console.log(`[Combat] ✨ ${actor.name} applies ${card.name} to ${dst.name}!`);
-                console.log(`[Combat] 🔮 DOT Effect: ${damagePerTurn} ${effectType} damage per turn for ${duration} turns`);
-                console.log(`[Combat] 📊 Total damage over time: ${damagePerTurn * duration}`);
-                console.log(`[Combat] 📊 Total DOTs on ${dst.name}: ${targetDots.length}`);
-                
-                // Show application visual effect
-                effects.push({ at: tCursor, kind: 'vfx', src: actor.id, dst: dst.id, note: effectType });
+                console.log(`[Combat] 🍺 Berserker Potion applied to all allies! +${card.power} damage boost`);
+              }
+              break;
+            
+            case 'BLIND':
+              // Smoke Grenade: AOE damage + blind effect (enemies miss next attack)
+              {
+                const targets = actor.side === 'party' ? simState.enemies : simState.party;
+                targets.forEach((target, index) => {
+                  let damage = card.power;
+                  
+                  // Apply vulnerability bonus
+                  if (vulnerable.has(target.id)) {
+                    damage += 2;
+                  }
+                  
+                  // Apply shield reduction
+                  const currentShield = simState.shields?.get(target.id) || 0;
+                  let remainingDamage = damage;
+                  let newShieldValue = currentShield;
+                  
+                  if (currentShield > 0) {
+                    if (damage >= currentShield) {
+                      remainingDamage = damage - currentShield;
+                      newShieldValue = 0;
+                    } else {
+                      newShieldValue = currentShield - damage;
+                      remainingDamage = 0;
+                    }
+                    simState.shields!.set(target.id, newShieldValue);
+                  }
+                  
+                  const finalDamage = Math.max(0, remainingDamage);
+                  const offsetTime = tCursor + (index * 200);
+                  
+                  if (finalDamage > 0) {
+                    strike(actor, target, finalDamage, offsetTime, card.name);
+                    target.hp = Math.max(0, target.hp - finalDamage);
+                  }
+                  
+                  // Apply blind effect
+                  effects.push({ at: offsetTime, kind: 'vfx', src: actor.id, dst: target.id, note: 'blind' });
+                  console.log(`[Combat] 💨 ${target.name} is blinded! Will miss next attack`);
+                });
+                console.log(`[Combat] 💨 Smoke Grenade deployed! All enemies blinded`);
+              }
+              break;
+            
+            case 'ULTIMATE_GAIN':
+              // Ultimate Elixir: grant ultimate power to the caster
+              // Note: This requires accessing the ultimate system, which isn't directly accessible here
+              // We'll add a special effect that the BattleScene can intercept
+              console.log(`[Combat] ⚡ ${actor.name} uses Ultimate Elixir! Gaining ${card.power}% ultimate power`);
+              effects.push({ at: tCursor, kind: 'ultimate_gain', src: actor.id, dst: actor.id, note: `${card.power}` });
+              break;
+            
+            case 'REVIVE':
+              // Revive Crystal: revive a dead ally
+              if (dst) {
+                if (dst.hp <= 0) {
+                  const reviveAmount = Math.floor((dst.maxHp * card.power) / 100);
+                  dst.hp = reviveAmount;
+                  console.log(`[Combat] 💎 ${actor.name} revives ${dst.name} with ${reviveAmount} HP!`);
+                  effects.push({ at: tCursor, kind: 'vfx', src: actor.id, dst: dst.id, note: 'revive' });
+                  heal(actor, dst, reviveAmount, tCursor); // Show heal animation
+                } else {
+                  console.log(`[Combat] 💎 ${dst.name} is not dead! Revive Crystal has no effect`);
+                }
               }
               break;
           }

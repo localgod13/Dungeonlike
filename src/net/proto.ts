@@ -31,7 +31,7 @@ export const ResolveSeedSchema = z.object({
 
 export const EffectSchema = z.object({
   at: z.number(),
-  kind: z.enum(['hit', 'heal', 'guard', 'miss', 'vfx']),
+  kind: z.enum(['hit', 'heal', 'guard', 'miss', 'vfx', 'ultimate_gain']),
   src: ActorIdSchema,
   dst: ActorIdSchema.optional(),
   value: z.number().optional(),

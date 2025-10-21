@@ -4,6 +4,7 @@ import { COLORS } from '../game/config';
 import { SoundManager } from '../game/sound';
 import { subscribeMap, sendMapVote, sendMapVoteResult, sendMapCursor } from '../net/match';
 import { CursorPosition } from '../net/proto';
+import { getGold, initializeInventory } from '../game/inventory';
 
 /**
  * Map scene - Slay the Spire style node-based progression
@@ -141,6 +142,20 @@ export class MapScene extends Phaser.Scene {
       loop: true 
     }, 1500); // 1.5 second fade in
     console.log('Map music started with fade in');
+    
+    // Display gold in top-right corner
+    if (this.userId) {
+      initializeInventory(this.userId); // Ensure inventory exists
+      const playerGold = getGold(this.userId);
+      this.add.text(width - 20, 20, `💰 ${playerGold} Gold`, {
+        fontSize: '28px',
+        fontFamily: 'Arial Black',
+        color: '#ffd700',
+        stroke: '#000000',
+        strokeThickness: 4,
+      }).setOrigin(1, 0).setDepth(1000);
+      console.log(`[MapScene] Player gold: ${playerGold}`);
+    }
 
     // Fantasy-styled title with glow effect
     const titleShadow = this.add.text(width / 2 + 2, 42, 'THE PATH AHEAD', {

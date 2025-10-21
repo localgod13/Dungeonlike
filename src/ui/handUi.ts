@@ -63,6 +63,12 @@ export class HandUI {
     const cardImage = this.scene.add.image(0, 0, imageKey);
     cardImage.setDisplaySize(CARD_WIDTH, CARD_HEIGHT);
     cardImage.setName('cardImage');
+    
+    // Apply gray tint to neutral cards for visual distinction
+    if (card.type === 'neutral') {
+      cardImage.setTint(0x888888); // Gray tint for neutral items
+    }
+    
     container.add(cardImage);
 
     // Border frame (for hover/selection effects)

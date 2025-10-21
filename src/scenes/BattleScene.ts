@@ -33,6 +33,7 @@ import { HandUI } from '../ui/handUi';
 import { getCardById, requiresTarget } from '../game/cards';
 import { startBattleAP, refreshAP, canAfford, spendAP } from '../game/economy';
 import { SoundManager } from '../game/sound';
+import { DeckState, createDeck, drawCards, playCard as deckPlayCard, canPlayCard as deckCanPlayCard, resetReusableCharges } from '../game/deck';
 import { createCharacterAnimations, createCharacterSprite, hasSprite, CharacterClass } from '../game/characterSprites';
 import { preloadEnemySprites, createEnemyAnimations, createEnemySprite, hasEnemySprite, EnemyType } from '../game/enemySprites';
 import { createUltimatePowerManager, destroyUltimatePowerManager, UltimatePowerManager, hasPersistedPower } from '../game/ultimate';
@@ -96,8 +97,9 @@ export class BattleScene extends Phaser.Scene {
   private enemies: Actor[] = [];
   private pendingPostState: Actor[] | null = null;
   
-  // Card system
-  private loadouts = new Map<ActorId, string[]>(); // userId -> cardIds
+  // Card system & Deck
+  private loadouts = new Map<ActorId, string[]>(); // userId -> cardIds (full deck of 10)
+  private playerDecks = new Map<ActorId, DeckState>(); // userId -> deck state (draw/discard)
   private playerAP = new Map<ActorId, number>(); // userId -> current AP
   private handUI: HandUI | null = null;
   private selectedCardId: string | null = null;
@@ -200,14 +202,21 @@ export class BattleScene extends Phaser.Scene {
     console.log('Visited nodes:', this.visitedNodes);
     console.log('Current node:', this.currentNodeId);
     
-    // Initialize loadouts and AP
+    // Initialize loadouts, decks, and AP
     if (data.loadouts) {
-      console.log('Processing loadouts...');
+      console.log('Processing loadouts & creating decks...');
       data.loadouts.forEach((loadout, index) => {
         console.log(`Loadout ${index}:`, loadout);
         console.log(`  userId: ${loadout.userId}`);
-        console.log(`  cards: ${loadout.cards}`);
+        console.log(`  cards (${loadout.cards.length}):`, loadout.cards);
+        
+        // Store full deck (10 cards)
         this.loadouts.set(loadout.userId, loadout.cards);
+        
+        // Create deck state with draw/discard mechanics
+        const deckState = createDeck(loadout.cards);
+        this.playerDecks.set(loadout.userId, deckState);
+        console.log(`  Created deck - Hand: ${deckState.hand.length}, Deck: ${deckState.deck.length}`);
       });
     } else {
       console.log('⚠️ No loadouts provided in init data!');
@@ -1048,19 +1057,20 @@ export class BattleScene extends Phaser.Scene {
     const myLoadout = this.loadouts.get(this.userId);
     console.log('My loadout lookup result:', myLoadout);
     
-    if (!myLoadout || myLoadout.length === 0) {
-      console.log('No loadout for current player, using default actions');
-      console.log('Loadout was:', myLoadout);
-      console.log('Available loadout keys:', Array.from(this.loadouts.keys()));
+    // Get player's deck state
+    const myDeck = this.playerDecks.get(this.userId);
+    if (!myDeck) {
+      console.log('No deck for current player');
       return;
     }
 
-    console.log(`Creating hand UI with cards:`, myLoadout);
+    console.log(`Creating hand UI with ${myDeck.hand.length} cards from deck:`, myDeck.hand);
+    console.log(`  Remaining in deck: ${myDeck.deck.length}, Discard: ${myDeck.discardPile.length}`);
     
-    // Create hand UI
+    // Create hand UI with current 4 cards from deck
     this.handUI = new HandUI(
       this,
-      myLoadout,
+      myDeck.hand,
       (cardId) => this.selectCard(cardId)
     );
 
@@ -2415,6 +2425,38 @@ export class BattleScene extends Phaser.Scene {
         
         this.playVfx(srcId, dstId, note);
         console.log(`=== END VFX CALLBACK ===`);
+      },
+      onUltimateGain: (srcId, amount) => {
+        console.log(`Animation: Ultimate gain for ${srcId}, amount: ${amount}%`);
+        const srcName = this.getActorName(srcId);
+        this.addCombatLogEntry(`⚡ ${srcName} gains ${amount}% ultimate power!`, '#f39c12');
+        
+        // Grant ultimate power using the manager
+        if (this.ultimatePowerManager) {
+          this.ultimatePowerManager.addPower(srcId, amount, 'ultimate_elixir');
+          console.log(`✓ Granted ${amount}% ultimate power to ${srcId}`);
+          
+          // Refresh UI if this is the local player
+          const myId = getCurrentUserId();
+          const myActorId = this.getPlayerActorId(myId);
+          if (myActorId === srcId && this.ultimateUi) {
+            this.ultimateUi.refresh();
+          }
+        }
+        
+        // Visual effect - add a glow animation
+        const srcSlot = this.getActorSlot(srcId);
+        if (srcSlot) {
+          this.tweens.add({
+            targets: srcSlot,
+            alpha: { from: 1, to: 0.5 },
+            scale: { from: 1, to: 1.2 },
+            duration: 300,
+            yoyo: true,
+            repeat: 2,
+            ease: 'Sine.easeInOut',
+          });
+        }
       },
     };
 
@@ -3965,6 +4007,43 @@ export class BattleScene extends Phaser.Scene {
       console.log('Turn 1: Players start with initial AP (no refresh)');
     }
     
+    // Draw new cards from deck for all players (including turn 1)
+    // This happens at START of planning phase, so previous hand has been played
+    this.players.forEach(player => {
+      const deck = this.playerDecks.get(player.userId || player.id);
+      if (deck) {
+        // Only draw new cards if this isn't the very first turn
+        // (Turn 1 uses the initial hand from createDeck)
+        if (this.currentTurn > 1) {
+          drawCards(deck);
+          console.log(`[Deck] ${player.name} drew 4 new cards - Hand: ${deck.hand.length}, Deck: ${deck.deck.length}, Discard: ${deck.discardPile.length}`);
+        }
+        
+        // Reset reusable item charges for new turn (including turn 1)
+        resetReusableCharges(deck);
+      }
+    });
+    
+    // Recreate hand UI with current cards for current player
+    if (this.userId && this.currentTurn > 1) {
+      const myDeck = this.playerDecks.get(this.userId);
+      if (myDeck && this.handUI) {
+        console.log(`[Deck] ========================================`);
+        console.log(`[Deck] TURN ${this.currentTurn} - HAND UI UPDATE`);
+        console.log(`[Deck] Current hand (${myDeck.hand.length} cards):`, myDeck.hand);
+        console.log(`[Deck] Deck remaining: ${myDeck.deck.length} cards`);
+        console.log(`[Deck] Discard pile: ${myDeck.discardPile.length} cards`);
+        console.log(`[Deck] ========================================`);
+        
+        this.handUI.destroy();
+        this.handUI = new HandUI(
+          this,
+          myDeck.hand,
+          (cardId) => this.selectCard(cardId)
+        );
+      }
+    }
+    
     // Update hand UI with new AP
     if (this.handUI && this.userId) {
       const playerActor = this.players.find(p => p.userId === this.userId);
@@ -4093,7 +4172,7 @@ export class BattleScene extends Phaser.Scene {
       if (result === 'victory') {
         // Stop battle music before transitioning
         if (this.soundManager) {
-          console.log('Victory - stopping battle music before returning to map');
+          console.log('Victory - stopping battle music before transitioning to loot');
           this.soundManager.stopAll();
         }
         
@@ -4104,15 +4183,18 @@ export class BattleScene extends Phaser.Scene {
           console.log('💾 Ultimate power saved for next battle!');
         }
         
-        // Continue to map on victory
-        // Use existing mapSeed if available, otherwise create new map
-        this.scene.start('MapScene', {
+        // Calculate gold reward based on stage
+        const goldReward = this.calculateGoldReward(this.currentStage);
+        
+        // Transition to loot scene to show rewards and card selection
+        this.scene.start('LootScene', {
           lobbyId: this.lobbyId,
           players: this.players,
           mapSeed: this.mapSeed || (Date.now() % 2147483647), // Keep within PostgreSQL integer range
           visitedNodes: this.visitedNodes, // Pass visited nodes to restore progress
           currentNodeId: this.currentNodeId, // Pass current position
-          stage: this.currentStage, // Pass current stage for next battle
+          stage: this.currentStage, // Pass current stage
+          goldReward: goldReward, // Pass calculated gold reward
         });
       } else {
         // Return to lobby on defeat - DON'T save ultimate power (fresh start)
@@ -4124,6 +4206,23 @@ export class BattleScene extends Phaser.Scene {
         this.scene.start('Lobby');
       }
     });
+  }
+
+  /**
+   * Calculate gold reward based on stage difficulty
+   */
+  private calculateGoldReward(stage: number): number {
+    // Base gold: 50
+    // +10 per stage
+    // +random variance (0-20)
+    const baseGold = 50;
+    const stageBonus = stage * 10;
+    const variance = Math.floor(Math.random() * 21); // 0-20
+    
+    const totalGold = baseGold + stageBonus + variance;
+    console.log(`[Battle] Gold reward for stage ${stage}: ${totalGold} (base: ${baseGold}, stage bonus: ${stageBonus}, variance: ${variance})`);
+    
+    return totalGold;
   }
 
   // UI Helper Methods

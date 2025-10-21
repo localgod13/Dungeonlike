@@ -110,6 +110,7 @@ export interface AnimationCallbacks {
   onGuard: (srcId: string, value: number) => void;
   onHeal: (srcId: string, dstId: string, value: number) => void;
   onVfx: (srcId: string, dstId?: string, note?: string) => void;
+  onUltimateGain: (srcId: string, amount: number) => void;
 }
 
 /**
@@ -158,6 +159,13 @@ export function buildTimeline(
 
       case 'miss':
         callback = () => callbacks.onVfx(effect.src, effect.dst, 'miss');
+        break;
+
+      case 'ultimate_gain':
+        callback = () => {
+          const amount = parseInt(effect.note || '0', 10);
+          callbacks.onUltimateGain(effect.src, amount);
+        };
         break;
 
       default:

@@ -10,11 +10,13 @@ import {
 import { Loadout } from '../net/proto';
 import { CardSelectUI } from '../ui/cardSelectUi';
 import { SoundManager } from '../game/sound';
-import { getCardsForClass } from '../game/cards';
+import { getAllAvailableCardsForClass } from '../game/cards';
 import { clearPersistedUltimatePower } from '../game/ultimate';
+import { clearAllInventories, initializeInventory, getPermanentDeck, getConsumables, getGold } from '../game/inventory';
+import { getCardById } from '../game/cards';
 
 /**
- * Card selection scene - players choose up to 4 cards before battle
+ * Card selection scene - players choose up to 10 cards for their deck before battle
  */
 
 interface Player {
@@ -60,13 +62,17 @@ export class CardSelectScene extends Phaser.Scene {
     this.mapSeed = data.mapSeed; // Store map seed for continuity
     this.visitedNodes = data.visitedNodes || []; // Store visited nodes
     
-    // Clear persisted ultimate power when starting a NEW run (stage 1 or no visited nodes)
-    const isNewRun = !data.visitedNodes || data.visitedNodes.length === 0 || (data.stage && data.stage <= 1);
+    // Clear persisted ultimate power and inventories when starting a NEW run (no visited nodes)
+    // NOTE: We check ONLY visitedNodes, NOT stage, because stage resets per battle but visited nodes persist
+    const isNewRun = !data.visitedNodes || data.visitedNodes.length === 0;
     if (isNewRun) {
       clearPersistedUltimatePower();
-      console.log('🆕 New run detected - Ultimate power reset to 0%');
+      clearAllInventories();
+      console.log('🆕 New run detected - Ultimate power and inventories reset');
+      console.log('   visitedNodes:', data.visitedNodes, 'stage:', data.stage);
     } else {
-      console.log('↪️ Continuing run - Ultimate power will carry over');
+      console.log('↪️ Continuing run - Ultimate power and inventory will carry over');
+      console.log('   visitedNodes:', data.visitedNodes?.length, 'stage:', data.stage);
     }
     this.currentNodeId = data.currentNodeId || null; // Store current position
     this.currentStage = data.stage || 1; // Store battle stage number
@@ -84,6 +90,12 @@ export class CardSelectScene extends Phaser.Scene {
 
     // Get current user
     this.userId = await getCurrentUserId();
+    
+    // Initialize inventory for all players
+    this.players.forEach(player => {
+      initializeInventory(player.userId);
+    });
+    
     if (!this.userId || !this.lobbyId) {
       console.error('Missing userId or lobbyId');
       this.scene.start('MainMenu');
@@ -137,9 +149,41 @@ export class CardSelectScene extends Phaser.Scene {
     const playerClass = currentPlayer?.selectedClass || 'Warrior';
     console.log(`Current player class: ${playerClass}`);
     
-    // Get class-specific card pool
-    const classCardPool = getCardsForClass(playerClass);
-    console.log(`Loaded ${classCardPool.length} cards for ${playerClass} class`);
+    // Get base class-specific card pool + neutral items
+    const baseCardPool = getAllAvailableCardsForClass(playerClass);
+    
+    // Get collected cards from inventory
+    const collectedCards = getPermanentDeck(this.userId);
+    const playerGold = getGold(this.userId);
+    console.log(`[CardSelect] 💰 Player gold:`, playerGold);
+    console.log(`[CardSelect] 🃏 Collected cards from inventory:`, collectedCards.map(c => c.name));
+    
+    // Get consumables from inventory
+    const consumables = getConsumables(this.userId);
+    const consumableCards = Array.from(consumables.entries())
+      .map(([cardId, count]) => {
+        const card = getCardById(cardId);
+        return card ? { ...card, consumableCount: count } : null;
+      })
+      .filter(c => c !== null);
+    console.log(`[CardSelect] ⚠️ Consumables from inventory:`, consumableCards.map(c => `${c?.name} x${c?.consumableCount}`));
+    
+    // Combine all available cards (base + collected + consumables)
+    const classCardPool = [
+      ...baseCardPool,
+      ...collectedCards,
+      ...consumableCards
+    ];
+    console.log(`Loaded ${classCardPool.length} cards (class + neutral) for ${playerClass}`);
+    
+    // Display gold in top-right corner (already fetched above)
+    this.add.text(this.scale.width - 20, 20, `💰 ${playerGold} Gold`, {
+      fontSize: '28px',
+      fontFamily: 'Arial Black',
+      color: '#ffd700',
+      stroke: '#000000',
+      strokeThickness: 4,
+    }).setOrigin(1, 0);
 
     // Create UI with class-specific cards
     this.cardUI = new CardSelectUI(
@@ -245,12 +289,12 @@ export class CardSelectScene extends Phaser.Scene {
         return;
       }
       
-      if (myLoadout.length < 4) {
+      if (myLoadout.length < 10) {
         myLoadout.push(cardId);
         this.loadouts.set(this.userId, myLoadout);
         console.log(`Added ${cardId}. New loadout:`, myLoadout);
       } else {
-        console.log(`Loadout at capacity (${myLoadout.length}/4), cannot add ${cardId}`);
+        console.log(`Loadout at capacity (${myLoadout.length}/10), cannot add ${cardId}`);
       }
     }
 
@@ -337,7 +381,7 @@ export class CardSelectScene extends Phaser.Scene {
     const loadout = this.loadouts.get(userId) || [];
     
     // Don't add if already in loadout or at capacity
-    if (loadout.includes(cardId) || loadout.length >= 4) {
+    if (loadout.includes(cardId) || loadout.length >= 10) {
       console.log(`Skipping duplicate pick: card ${cardId} already in loadout or at capacity`);
       return;
     }
