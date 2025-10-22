@@ -6,8 +6,8 @@ import { Card, getCardById } from '../game/cards';
  * Cards are enabled/disabled based on AP availability
  */
 
-const CARD_WIDTH = 120;
-const CARD_HEIGHT = 180; // Changed from 160 to match 2:3 aspect ratio of card images (1024x1536)
+const CARD_WIDTH = 100;
+const CARD_HEIGHT = 150; // Slightly smaller while maintaining 2:3 aspect ratio
 const CARD_SPACING = 15;
 
 export class HandUI {
@@ -22,6 +22,7 @@ export class HandUI {
   private discardPileText: Phaser.GameObjects.Text | null = null;
   private drawPileVisual: Phaser.GameObjects.Container | null = null;
   private discardPileVisual: Phaser.GameObjects.Container | null = null;
+  private raisedCards: Set<string> = new Set(); // Track cards that are raised (played this round)
 
   constructor(
     scene: Phaser.Scene,
@@ -32,9 +33,49 @@ export class HandUI {
     this.scene = scene;
     this.onCardSelect = onCardSelect;
     
+    // MULTIPLE AGGRESSIVE cleanups to catch timing issues
+    this.cleanupOrphanedPileVisuals();
+    this.scene.time.delayedCall(50, () => this.cleanupOrphanedPileVisuals());
+    this.scene.time.delayedCall(100, () => this.cleanupOrphanedPileVisuals());
+    
     this.container = scene.add.container(0, 0);
     this.createHand(cards, hideCardsForAnimation);
-    this.createPileIndicators();
+    
+    // Delay pile creation to ensure cleanup is complete
+    this.scene.time.delayedCall(150, () => {
+      this.createPileIndicators();
+    });
+  }
+
+  /**
+   * Clean up any orphaned pile visuals from previous HandUI instances
+   */
+  private cleanupOrphanedPileVisuals(): void {
+    console.log(`[HandUI] AGGRESSIVE cleanup of orphaned pile visuals`);
+    
+    // Find and destroy ANY existing pile visuals in the scene
+    const allObjects = this.scene.children.list;
+    for (let i = allObjects.length - 1; i >= 0; i--) {
+      const obj = allObjects[i];
+      if (obj && obj.name && (
+        obj.name.includes('pile') || 
+        obj.name.includes('Empty') ||
+        obj.name.includes('drawPile') ||
+        obj.name.includes('discardPile')
+      )) {
+        console.log(`[HandUI] DESTROYING orphaned object: ${obj.name}`);
+        obj.destroy();
+      }
+    }
+    
+    // Also destroy any cardback images that might be orphaned
+    for (let i = allObjects.length - 1; i >= 0; i--) {
+      const obj = allObjects[i];
+      if (obj && obj.texture && obj.texture.key === 'cardback') {
+        console.log(`[HandUI] DESTROYING orphaned cardback image`);
+        obj.destroy();
+      }
+    }
   }
 
   private createHand(cardIds: string[], hideCards?: string[]): void {
@@ -68,6 +109,7 @@ export class HandUI {
     container.setSize(CARD_WIDTH, CARD_HEIGHT);
     container.setData('cardId', card.id);
     container.setData('apCost', card.ap);
+    container.setData('originalY', y); // Store original Y position for raising
 
     // Card background image based on type
     const imageKey = `card_${card.type}`;
@@ -96,31 +138,36 @@ export class HandUI {
     container.add(disabledOverlay);
 
     // Card name (with shadow for better visibility over image)
-    const nameText = this.scene.add.text(0, -CARD_HEIGHT / 2 + 30, card.name, {
-      fontSize: '18px',
+    // Split multi-word titles and stack them vertically
+    const words = card.name.split(' ');
+    const displayText = words.length > 1 ? words.join('\n') : card.name;
+    
+    const nameText = this.scene.add.text(0, -CARD_HEIGHT / 2 + 45, displayText, {
+      fontSize: '14px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
       align: 'center',
       stroke: '#000000',
-      strokeThickness: 4,
+      strokeThickness: 3,
+      lineSpacing: -5,
     });
     nameText.setOrigin(0.5);
     nameText.setName('nameText');
     nameText.setDepth(20);
     container.add(nameText);
 
-    // AP cost badge (smaller)
-    const apBadge = this.scene.add.container(-CARD_WIDTH / 2 + 24, -CARD_HEIGHT / 2 + 22);
+    // AP cost badge (smaller, top right corner - partially off card)
+    const apBadge = this.scene.add.container(CARD_WIDTH / 2 - 5, -CARD_HEIGHT / 2 + 5);
     apBadge.setName('apBadge');
     apBadge.setDepth(20);
     
-    const apBg = this.scene.add.circle(0, 0, 14, 0x000000, 0.9);
+    const apBg = this.scene.add.circle(0, 0, 8, 0x000000, 0.9);
     apBg.setStrokeStyle(2, 0xffaa00, 1);
     apBadge.add(apBg);
 
     const apText = this.scene.add.text(0, 0, `${card.ap}`, {
-      fontSize: '16px',
+      fontSize: '10px',
       color: '#ffaa00',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
@@ -131,7 +178,7 @@ export class HandUI {
     container.add(apBadge);
 
     // Description (no background box - just text with shadow)
-    const descText = this.scene.add.text(0, 10, card.desc, {
+    const descText = this.scene.add.text(0, 15, card.desc, {
       fontSize: '13px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
@@ -139,6 +186,7 @@ export class HandUI {
       wordWrap: { width: CARD_WIDTH - 20 },
       stroke: '#000000',
       strokeThickness: 3,
+      lineSpacing: -5,
     });
     descText.setOrigin(0.5);
     descText.setName('descText');
@@ -252,12 +300,14 @@ export class HandUI {
       if (!card) return;
 
       const canAfford = this.canAffordCard(cardId);
+      const isRaised = this.isCardRaised(cardId);
       const disabledOverlay = container.getByName('disabledOverlay') as Phaser.GameObjects.Rectangle;
       const bg = container.getByName('bg') as Phaser.GameObjects.Rectangle;
       const nameText = container.getByName('nameText') as Phaser.GameObjects.Text;
       const descText = container.getByName('descText') as Phaser.GameObjects.Text;
 
-      if (canAfford) {
+      if (canAfford || isRaised) {
+        // Don't darken raised cards even if they can't be afforded anymore
         disabledOverlay.setVisible(false);
         bg.setInteractive({ useHandCursor: true });
         nameText.setAlpha(1);
@@ -298,7 +348,34 @@ export class HandUI {
   }
 
   public destroy(): void {
+    console.log(`[HandUI] Destroying HandUI instance`);
+    
+    // Destroy pile visuals directly (they're not in the main container)
+    if (this.drawPileVisual) {
+      this.drawPileVisual.destroy();
+      this.drawPileVisual = null;
+    }
+    if (this.discardPileVisual) {
+      this.discardPileVisual.destroy();
+      this.discardPileVisual = null;
+    }
+    if (this.drawPileText) {
+      this.drawPileText.destroy();
+      this.drawPileText = null;
+    }
+    if (this.discardPileText) {
+      this.discardPileText.destroy();
+      this.discardPileText = null;
+    }
+    
+    // Clear all references
+    this.cardContainers.clear();
+    this.selectedCardId = null;
+    this.ultimateCardId = null;
+    this.raisedCards.clear();
+    
     this.container.destroy();
+    console.log(`[HandUI] HandUI instance destroyed - pile visuals cleaned up`);
   }
 
   public setVisible(visible: boolean): void {
@@ -437,15 +514,19 @@ export class HandUI {
    * Create visual indicators for draw pile and discard pile sizes
    */
   private createPileIndicators(): void {
-    const centerX = this.scene.scale.width / 2;
     const y = this.scene.scale.height - CARD_HEIGHT - 60;
     
-    // Draw pile visual (left side in black area)
-    this.drawPileVisual = this.scene.add.container(55, y);
-    this.createCardStack(this.drawPileVisual, 0, 'Draw');
-    this.container.add(this.drawPileVisual);
+    console.log(`[HandUI] Creating NEW pile indicators at y=${y}`);
     
-    // Draw pile text
+    // COMPLETELY NEW APPROACH - Create pile visuals as direct children of scene, not container
+    // This eliminates any coordinate system issues
+    
+    // Draw pile visual - LEFT SIDE
+    this.drawPileVisual = this.scene.add.container(55, y);
+    this.drawPileVisual.setName('drawPileVisual');
+    this.createCardStack(this.drawPileVisual, 0, 'Draw');
+    
+    // Draw pile text - LEFT SIDE  
     this.drawPileText = this.scene.add.text(55, y + 100, 'Draw: 0', {
       fontSize: '14px',
       color: '#ffffff',
@@ -453,15 +534,15 @@ export class HandUI {
       padding: { x: 6, y: 3 }
     });
     this.drawPileText.setOrigin(0.5, 0.5);
+    this.drawPileText.setName('drawPileText');
     this.drawPileText.setDepth(100);
-    this.container.add(this.drawPileText);
     
-    // Discard pile visual (right side in black area)
+    // Discard pile visual - RIGHT SIDE
     this.discardPileVisual = this.scene.add.container(this.scene.scale.width - 55, y);
+    this.discardPileVisual.setName('discardPileVisual');
     this.createCardStack(this.discardPileVisual, 0, 'Discard');
-    this.container.add(this.discardPileVisual);
     
-    // Discard pile text
+    // Discard pile text - RIGHT SIDE
     this.discardPileText = this.scene.add.text(this.scene.scale.width - 55, y + 100, 'Discard: 0', {
       fontSize: '14px',
       color: '#ffffff',
@@ -469,27 +550,24 @@ export class HandUI {
       padding: { x: 6, y: 3 }
     });
     this.discardPileText.setOrigin(0.5, 0.5);
+    this.discardPileText.setName('discardPileText');
     this.discardPileText.setDepth(100);
-    this.container.add(this.discardPileText);
+    
+    console.log(`[HandUI] NEW pile visuals created - NO container nesting`);
   }
 
   /**
    * Create a visual stack of cards for draw/discard piles
    */
   private createCardStack(container: Phaser.GameObjects.Container, count: number, type: 'Draw' | 'Discard'): void {
+    console.log(`[HandUI] createCardStack called: type=${type}, count=${count}`);
+    
     // Clear existing cards
     container.removeAll();
     
     if (count === 0) {
-      // Show empty pile indicator
-      const emptyText = this.scene.add.text(0, 0, 'Empty', {
-        fontSize: '12px',
-        color: '#888888',
-        backgroundColor: '#1a1a1a',
-        padding: { x: 4, y: 2 }
-      });
-      emptyText.setOrigin(0.5, 0.5);
-      container.add(emptyText);
+      // DISABLED EMPTY INDICATOR TO FIX GREY BOX ISSUE
+      console.log(`[HandUI] Empty indicator disabled for ${type} pile`);
       return;
     }
     
@@ -523,6 +601,8 @@ export class HandUI {
    * Update the pile size indicators
    */
   updatePileIndicators(drawPileSize: number, discardPileSize: number): void {
+    console.log(`[HandUI] updatePileIndicators called: draw=${drawPileSize}, discard=${discardPileSize}`);
+    
     if (this.drawPileText) {
       this.drawPileText.setText(`Draw: ${drawPileSize}`);
     }
@@ -674,6 +754,7 @@ export class HandUI {
         ease: 'Power2.easeIn',
         onComplete: () => {
           // Remove the animated card
+          console.log(`[HandUI] Destroying animated discard card for ${cardId}`);
           animatedCard.destroy();
           
           // Card is already hidden, no need to refresh
@@ -716,6 +797,64 @@ export class HandUI {
         ease: 'Power2.easeIn'
       });
     });
+  }
+
+  /**
+   * Raise a card to indicate it's been played this round
+   * Cards remain raised until discarded
+   */
+  public raiseCard(cardId: string): void {
+    const container = this.cardContainers.get(cardId);
+    if (!container) return;
+
+    // Mark as raised
+    this.raisedCards.add(cardId);
+
+    // Get original Y position (stored in data)
+    const originalY = container.getData('originalY') || container.y;
+    container.setData('originalY', originalY);
+
+    // Animate card up by 15px
+    this.scene.tweens.add({
+      targets: container,
+      y: originalY - 15,
+      duration: 300,
+      ease: 'Power2.easeOut',
+    });
+
+    console.log(`📈 Card ${cardId} raised!`);
+  }
+
+  /**
+   * Reset all raised cards back to normal position
+   * Called when cards are discarded at end of turn
+   */
+  public resetRaisedCards(): void {
+    this.raisedCards.forEach(cardId => {
+      const container = this.cardContainers.get(cardId);
+      if (!container) return;
+
+      const originalY = container.getData('originalY');
+      if (originalY !== undefined) {
+        // Animate card back down to original position
+        this.scene.tweens.add({
+          targets: container,
+          y: originalY,
+          duration: 300,
+          ease: 'Power2.easeOut',
+        });
+      }
+    });
+
+    this.raisedCards.clear();
+    console.log('📉 All raised cards reset');
+  }
+
+  /**
+   * Check if a card is currently raised
+   */
+  public isCardRaised(cardId: string): boolean {
+    return this.raisedCards.has(cardId);
   }
 
   /**

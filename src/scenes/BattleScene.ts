@@ -99,7 +99,6 @@ export class BattleScene extends Phaser.Scene {
   private selectedTarget: ActorId | null = null;
   private lockButton: Phaser.GameObjects.Container | null = null;
   private pendingActionDisplay: Phaser.GameObjects.Text | null = null;
-  private clearQueueButton: Phaser.GameObjects.Container | null = null;
 
   // Animation timeline
   private timeline: AnimationTimeline | null = null;
@@ -866,26 +865,51 @@ export class BattleScene extends Phaser.Scene {
     return container;
   }
 
+  /**
+   * Clean up any orphaned text elements in the upper left corner
+   */
+  private cleanupOrphanedTextElements(): void {
+    console.log(`[BattleScene] NUCLEAR cleanup of ALL text elements in upper left`);
+    
+    // Find and destroy ANY text elements in the upper left corner
+    const allObjects = this.children.list;
+    for (let i = allObjects.length - 1; i >= 0; i--) {
+      const obj = allObjects[i];
+      if (obj && obj instanceof Phaser.GameObjects.Text) {
+        // Check if text is in upper left corner (roughly x < 500, y < 300)
+        if (obj.x < 500 && obj.y < 300) {
+          // Destroy EVERYTHING in upper left corner
+          console.log(`[BattleScene] DESTROYING ALL text at (${obj.x}, ${obj.y}): "${obj.text}"`);
+          obj.destroy();
+        }
+      }
+    }
+  }
+
   private createHUD(): void {
+    // Clean up any orphaned text elements in upper left corner
+    this.cleanupOrphanedTextElements();
+    
     this.hudContainer = this.add.container(0, 0);
 
-    // Combat log panel (bottom right corner - matches player stats size)
+    // Combat log panel (bottom right corner) - Create as direct children of scene
     const logWidth = 220;
     const logHeight = 80;
     const logX = this.scale.width - logWidth - 10; // Small margin from right edge
     const logY = this.scale.height - logHeight - 10; // Small margin from bottom edge
     
-    this.combatLogContainer = this.add.container(logX, logY);
+    // Create combat log as direct children of scene to avoid coordinate issues
+    this.combatLogContainer = this.add.container(0, 0); // Create at origin
     this.combatLogContainer.setDepth(1000);
 
-    // Combat log background with proper sizing
-    const logBg = this.add.rectangle(logWidth / 2, logHeight / 2, logWidth, logHeight, 0x1a1a1a, 0.9);
+    // Combat log background with absolute positioning
+    const logBg = this.add.rectangle(logX + logWidth / 2, logY + logHeight / 2, logWidth, logHeight, 0x1a1a1a, 0.9);
     logBg.setStrokeStyle(1, 0x4a90e2, 0.6);
     logBg.setName('logBg');
-    this.combatLogContainer.add(logBg);
+    logBg.setDepth(1000);
 
-    // Combat log title positioned within bounds
-    const logTitle = this.add.text(10, 10, 'Combat Log', {
+    // Combat log title with absolute positioning
+    const logTitle = this.add.text(logX + 10, logY + 10, 'Combat Log', {
       fontSize: '14px',
       color: '#4a90e2',
       fontFamily: 'Arial, sans-serif',
@@ -893,7 +917,7 @@ export class BattleScene extends Phaser.Scene {
     });
     logTitle.setOrigin(0, 0);
     logTitle.setName('logTitle');
-    this.combatLogContainer.add(logTitle);
+    logTitle.setDepth(1000);
 
     // Expand/collapse button
     this.createLogExpandButton();
@@ -926,20 +950,12 @@ export class BattleScene extends Phaser.Scene {
     turnText.setDepth(1000);
     this.hudContainer.add(turnText);
 
-    // Phase indicator (top left) - with text shadow for visibility
-    const phaseText = this.add.text(
-      20,
-      20,
-      'Planning',
-      {
-        fontSize: '22px',
-        color: '#4a90e2',
-        fontFamily: 'Arial, sans-serif',
-        fontStyle: 'bold',
-        stroke: '#000000',
-        strokeThickness: 4,
-      }
-    );
+    // Phase indicator (top left) - Simple text only
+    const phaseText = this.add.text(20, 20, 'Planning', {
+      fontSize: '18px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+    });
     phaseText.setOrigin(0, 0);
     phaseText.setDepth(1000);
     this.hudContainer.add(phaseText);
@@ -950,31 +966,33 @@ export class BattleScene extends Phaser.Scene {
     const statsX = 10; // Small margin from left edge
     const statsY = this.scale.height - statsHeight - 10; // Small margin from bottom edge
     
+    // Create stats background as direct scene child to avoid coordinate issues
     const bottomLeftBg = this.add.rectangle(statsX + statsWidth / 2, statsY + statsHeight / 2, statsWidth, statsHeight, 0x1a1a1a, 0.9);
     bottomLeftBg.setStrokeStyle(1, 0x4a90e2, 0.6);
-    this.hudContainer.add(bottomLeftBg);
+    bottomLeftBg.setDepth(1000);
+    // Don't add to hudContainer to avoid coordinate issues
 
-    // Store references to stat text objects so we can update them
+    // Store references to stat text objects so we can update them - direct scene children
     this.playerHpText = this.add.text(statsX + 10, statsY + 15, 'HP: 100%', {
       fontSize: '16px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
     });
-    this.hudContainer.add(this.playerHpText);
+    this.playerHpText.setDepth(1001);
 
     this.playerLevelText = this.add.text(statsX + 10, statsY + 35, 'Level: 1', {
       fontSize: '16px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
     });
-    this.hudContainer.add(this.playerLevelText);
+    this.playerLevelText.setDepth(1001);
 
     this.playerApText = this.add.text(statsX + 10, statsY + 55, 'AP: 5', {
       fontSize: '16px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
     });
-    this.hudContainer.add(this.playerApText);
+    this.playerApText.setDepth(1001);
     
     // Update with actual player stats
     this.updatePlayerStatsDisplay();
@@ -1297,12 +1315,17 @@ export class BattleScene extends Phaser.Scene {
       console.log(`🔥 ULTIMATE QUEUED: ${card.name}!`);
       console.log(`Queued actions: ${this.queuedActions.length}`);
       
-      // Show epic feedback
-      this.showPendingActionText(
-        `⚡ ${card.name} QUEUED! ⚡`,
-        '#ffff00'
-      );
+      // Ultimate card feedback removed - no announcement box needed
       
+      // Update hand UI for ultimate card
+      if (this.handUI) {
+        // Raise the ultimate card FIRST before clearing selection
+        if (this.selectedCardId) {
+          this.handUI.raiseCard(this.selectedCardId);
+        }
+        this.handUI.clearSelection();
+      }
+
       // Clear selection
       this.selectedCardId = null;
       this.selectedAction = null;
@@ -1328,6 +1351,10 @@ export class BattleScene extends Phaser.Scene {
 
     // Update hand UI
     if (this.handUI) {
+      // Raise the card FIRST before updating AP (so it stays bright)
+      if (this.selectedCardId) {
+        this.handUI.raiseCard(this.selectedCardId);
+      }
       this.handUI.setAP(newAP);
       this.handUI.clearSelection();
     }
@@ -1338,11 +1365,7 @@ export class BattleScene extends Phaser.Scene {
     // Update queued actions display
     this.updateQueueDisplay();
 
-    // Show feedback
-    this.showPendingActionText(
-      `✓ ${card.name} queued! AP: ${newAP}/${currentAP + card.ap} | ${this.queuedActions.length} card(s) ready`,
-      '#27ae60'
-    );
+    // Card queued feedback removed - no announcement box needed
 
     // Clear selection
     this.selectedCardId = null;
@@ -1359,6 +1382,9 @@ export class BattleScene extends Phaser.Scene {
    */
   private processPlayedCards(): void {
     console.log('[BattleScene] Processing played cards...');
+    
+    // Clean up any orphaned text elements before processing
+    this.cleanupOrphanedTextElements();
     
     this.playerPlans.forEach((plans, actorId) => {
       const player = this.players.find(p => p.id === actorId);
@@ -1392,6 +1418,11 @@ export class BattleScene extends Phaser.Scene {
         this.handUI.updatePileIndicators(deck.drawPile.length, deck.discardPile.length);
       }
     });
+    
+    // Reset raised cards after processing (cards are now discarded)
+    if (this.handUI) {
+      this.handUI.resetRaisedCards();
+    }
     
     console.log('[BattleScene] Finished processing played cards');
   }
@@ -2240,11 +2271,7 @@ export class BattleScene extends Phaser.Scene {
       this.hidePendingActionText();
       this.clearButtonHighlights();
       
-      // Show locked confirmation
-      const lockMessage = this.queuedActions.length > 0 
-        ? `✓ ${this.queuedActions.length} card(s) locked! Waiting for others...`
-        : `✓ ${this.selectedAction} locked! Waiting for others...`;
-      this.showPendingActionText(lockMessage, '#27ae60');
+      // Locked confirmation removed - no announcement box needed
       
       // Update action indicators
       this.updateActionIndicators();
@@ -2470,12 +2497,22 @@ export class BattleScene extends Phaser.Scene {
         const srcName = this.getActorName(srcId);
         const dstName = dstId ? this.getActorName(dstId) : '';
         if (dstId) {
+          // Clean up orphaned text before adding combat log
+          this.cleanupOrphanedTextElements();
           this.addCombatLogEntry(`${srcName} targets ${dstName}`, '#f39c12');
         }
         this.playTelegraph(srcId, dstId);
       },
       onStrike: (srcId, dstId, note) => {
         console.log(`Animation: Strike from ${srcId} to ${dstId} (${note})`);
+        
+        // Clean up orphaned text before strike animation
+        this.cleanupOrphanedTextElements();
+        
+        // Remove card from queue as it's being executed (for current player only)
+        if (srcId === this.userId && this.queuedActions.length > 0) {
+          this.animateQueueCardRemoval(0, 0); // Remove first card (index 0)
+        }
         
         // Check if this is an ultimate card and trigger special animation
         if (note && this.isUltimateCard(note)) {
@@ -2503,6 +2540,8 @@ export class BattleScene extends Phaser.Scene {
         console.log(`Animation: Hit from ${srcId} to ${dstId} for ${damage} damage`);
         const srcName = this.getActorName(srcId);
         const dstName = this.getActorName(dstId);
+        // Clean up orphaned text before adding combat log
+        this.cleanupOrphanedTextElements();
         this.addCombatLogEntry(`${srcName} hits ${dstName} for ${damage} damage!`, '#e74c3c');
         
         // Don't play sound here - it's already played in onStrike callback
@@ -3820,6 +3859,9 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private updateUI(): void {
+    // Clean up any orphaned text elements before updating UI
+    this.cleanupOrphanedTextElements();
+    
     // Update stage text (index 0 in hudContainer)
     const stageText = this.hudContainer.getAt(0) as Phaser.GameObjects.Text;
     stageText.setText(`Stage ${this.currentStage}`);
@@ -3828,15 +3870,15 @@ export class BattleScene extends Phaser.Scene {
     const turnText = this.hudContainer.getAt(1) as Phaser.GameObjects.Text;
     turnText.setText(`Turn ${this.currentTurn}`);
     
-    // Update phase text (index 2 in hudContainer)
+    // Update phase text (index 2 in hudContainer) - Simple text only
     const phaseText = this.hudContainer.getAt(2) as Phaser.GameObjects.Text;
-    phaseText.setText(this.phase);
-
-    // Update phase color
-    let phaseColor = '#4a90e2'; // planning
-    if (this.phase === 'resolving') phaseColor = '#f39c12';
-    if (this.phase === 'idle') phaseColor = '#95a5a6';
-    phaseText.setColor(phaseColor);
+    if (this.phase === 'planning') {
+      phaseText.setText('Planning');
+    } else if (this.phase === 'resolving') {
+      phaseText.setText('Resolving');
+    } else {
+      phaseText.setText(''); // Hide for idle phase
+    }
 
     // Update HP bars
     this.updateHPBars();
@@ -4530,12 +4572,101 @@ export class BattleScene extends Phaser.Scene {
 
   // UI Helper Methods
   private updateQueueDisplay(): void {
-    // SIMPLIFIED: Only show minimal queue info in lock button
-    // Remove old queue display completely
+    // Remove old queue display
     if (this.queueDisplay) {
       this.queueDisplay.destroy();
       this.queueDisplay = null;
     }
+
+    if (this.queuedActions.length === 0) return;
+
+    // Create queue display at top of screen
+    const centerX = this.scale.width / 2;
+    const y = 80; // Top of screen
+
+    this.queueDisplay = this.add.container(centerX, y);
+    this.queueDisplay.setDepth(900);
+
+    // Calculate spacing for card images
+    const cardImageWidth = 45; // Smaller card image width
+    const cardImageHeight = 68; // Smaller card image height (2:3 aspect ratio)
+    const spacing = 15; // Space between cards
+    const plusWidth = 25; // Width for "+" symbol
+    
+    // Calculate total width needed
+    const totalWidth = (this.queuedActions.length * cardImageWidth) + 
+                      ((this.queuedActions.length - 1) * (spacing + plusWidth));
+    
+    // Start position (left edge)
+    const startX = -totalWidth / 2;
+
+    // Create card images with "+" between them
+    this.queuedActions.forEach((action, index) => {
+      const card = getCardById(action.cardId || '');
+      if (!card) return;
+
+      // Calculate position for this card
+      const cardX = startX + (index * (cardImageWidth + spacing + plusWidth)) + (cardImageWidth / 2);
+      
+      // Create card image
+      const imageKey = `card_${card.type}`;
+      const cardImage = this.add.image(cardX, 0, imageKey);
+      cardImage.setDisplaySize(cardImageWidth, cardImageHeight);
+      
+      // Add card name text on the card
+      const cardNameText = this.add.text(cardX, 0, card.name, {
+        fontSize: '10px',
+        color: '#ffffff',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 2,
+        align: 'center',
+        wordWrap: { width: cardImageWidth - 6 }
+      });
+      cardNameText.setOrigin(0.5);
+      
+      // Make card image clickable to remove from queue
+      cardImage.setInteractive({ useHandCursor: true });
+      
+      // Hover effects
+      cardImage.on('pointerover', () => {
+        cardImage.setTint(0xff6666); // Red tint on hover
+        cardNameText.setText('✖ Remove');
+      });
+      
+      cardImage.on('pointerout', () => {
+        cardImage.clearTint(); // Remove tint
+        cardNameText.setText(card.name);
+      });
+      
+      // Click to remove from queue
+      cardImage.on('pointerdown', () => {
+        this.removeFromQueue(index);
+      });
+      
+      if (this.queueDisplay) {
+        this.queueDisplay.add(cardImage);
+        this.queueDisplay.add(cardNameText);
+      }
+
+      // Add "+" symbol between cards (not after the last one)
+      if (index < this.queuedActions.length - 1) {
+        const plusX = cardX + (cardImageWidth / 2) + (spacing / 2) + (plusWidth / 2);
+        const plusText = this.add.text(plusX, 0, '+', {
+          fontSize: '32px',
+          color: '#ffffff',
+          fontFamily: 'Arial, sans-serif',
+          fontStyle: 'bold',
+          stroke: '#000000',
+          strokeThickness: 4,
+        });
+        plusText.setOrigin(0.5);
+        if (this.queueDisplay) {
+          this.queueDisplay.add(plusText);
+        }
+      }
+    });
   }
 
   private removeFromQueue(index: number): void {
@@ -4565,12 +4696,6 @@ export class BattleScene extends Phaser.Scene {
     this.updatePlayerStatsDisplay();
     this.updateQueueDisplay();
 
-    // Show feedback
-    this.showPendingActionText(
-      `🔄 ${card.name} removed! AP refunded: ${refundedAP}`,
-      '#f39c12'
-    );
-
     // Hide lock button if no cards queued
     if (this.queuedActions.length === 0) {
       this.hideLockButton();
@@ -4578,54 +4703,52 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Animate cards disappearing from queue as they are played
+   */
+  private animateQueueCardRemoval(cardIndex: number, delayMs: number = 0): void {
+    if (!this.queueDisplay || cardIndex >= this.queuedActions.length) return;
+
+    this.time.delayedCall(delayMs, () => {
+      // Find the card container at the specified index
+      const cardContainers = this.queueDisplay!.list.filter(child => 
+        child instanceof Phaser.GameObjects.Image && child.texture.key.startsWith('card_')
+      ) as Phaser.GameObjects.Image[];
+
+      if (cardIndex < cardContainers.length) {
+        const cardImage = cardContainers[cardIndex];
+        
+        // Animate card disappearing
+        this.tweens.add({
+          targets: cardImage,
+          alpha: 0,
+          scaleX: 0,
+          scaleY: 0,
+          duration: 300,
+          ease: 'Power2.easeIn',
+          onComplete: () => {
+            // Remove the card from queue
+            this.queuedActions.splice(cardIndex, 1);
+            
+            // Update the queue display to shift remaining cards
+            this.updateQueueDisplay();
+          }
+        });
+      }
+    });
+  }
+
   private showLockButton(): void {
     this.hideLockButton();
 
-    // Position button higher to avoid covering cards
-    this.lockButton = this.add.container(this.scale.width / 2, this.scale.height - 280);
+    // Position button just above the player's hand
+    this.lockButton = this.add.container(this.scale.width / 2, this.scale.height - 250);
 
-    // Get current AP info
-    const playerActor = this.players.find(p => p.userId === this.userId);
-    const currentAP = playerActor ? (this.playerAP.get(playerActor.id) || 0) : 0;
-    const maxAP = 30; // Assuming max AP is 30
-
-    // Create comprehensive button text with all info
-    let buttonText: string;
-    let buttonColor: number;
-    
-    if (this.queuedActions.length > 0) {
-      // Cards queued - show AP usage and card count
-      const totalAPUsed = this.queuedActions.reduce((sum, action) => {
-        const card = getCardById(action.cardId || '');
-        return sum + (card?.ap || 0);
-      }, 0);
-      
-      buttonText = `✅ LOCK IN TURN\n${this.queuedActions.length} card${this.queuedActions.length > 1 ? 's' : ''} • ${totalAPUsed} AP used\nAP: ${currentAP}/${maxAP}`;
-      buttonColor = 0x27ae60; // Green - ready to go
-    } else {
-      // No cards queued - show skip option
-      buttonText = `⏭️ SKIP TURN\nNo cards selected\nAP: ${currentAP}/${maxAP}`;
-      buttonColor = 0xe67e22; // Orange - warning color
-    }
-    
-    // Calculate button size for multi-line text
-    const buttonWidth = Math.max(280, buttonText.split('\n')[0].length * 12);
-    const buttonHeight = 80; // Taller for multi-line text
-    
-    const bg = this.add.rectangle(0, 0, buttonWidth, buttonHeight, buttonColor, 1);
-    bg.setStrokeStyle(3, 0xffffff, 0.9);
-    bg.setInteractive({ useHandCursor: true });
-    this.lockButton.add(bg);
-    
-    const text = this.add.text(0, 0, buttonText, {
-      fontSize: '16px',
-      color: '#ffffff',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-      align: 'center',
-    });
-    text.setOrigin(0.5);
-    this.lockButton.add(text);
+    // Use custom button image (1536x1024, scaled down)
+    const buttonImage = this.add.image(0, 0, 'lock_button');
+    buttonImage.setDisplaySize(120, 80); // Scale down from 1536x1024 to 120x80
+    buttonImage.setInteractive({ useHandCursor: true });
+    this.lockButton.add(buttonImage);
 
     // Only pulse if cards are queued (less distracting when no cards)
     if (this.queuedActions.length > 0) {
@@ -4639,24 +4762,17 @@ export class BattleScene extends Phaser.Scene {
       });
     }
 
-    bg.on('pointerover', () => {
-      bg.setFillStyle(this.queuedActions.length > 0 ? 0x2ecc71 : 0xf39c12);
+    buttonImage.on('pointerover', () => {
+      buttonImage.setTint(0xcccccc); // Slight tint on hover
     });
 
-    bg.on('pointerout', () => {
-      bg.setFillStyle(buttonColor);
+    buttonImage.on('pointerout', () => {
+      buttonImage.clearTint(); // Remove tint
     });
 
-    bg.on('pointerdown', () => {
+    buttonImage.on('pointerdown', () => {
       this.lockAction();
     });
-
-    // Add small "Clear Queue" button if cards are queued
-    if (this.queuedActions.length > 0) {
-      this.showClearQueueButton();
-    } else {
-      this.hideClearQueueButton();
-    }
   }
 
   private hideLockButton(): void {
@@ -4665,74 +4781,13 @@ export class BattleScene extends Phaser.Scene {
       this.lockButton.destroy();
       this.lockButton = null;
     }
-    this.hideClearQueueButton();
   }
 
-  private showClearQueueButton(): void {
-    this.hideClearQueueButton();
+  private showPendingActionText(text: string, color = '#f39c12'): void {
+    this.hidePendingActionText();
 
-    // Position small button to the right of lock button
-    this.clearQueueButton = this.add.container(this.scale.width / 2 + 160, this.scale.height - 280);
-
-    const bg = this.add.rectangle(0, 0, 80, 40, 0xe74c3c, 1);
-    bg.setStrokeStyle(2, 0xffffff, 0.9);
-    bg.setInteractive({ useHandCursor: true });
-    this.clearQueueButton.add(bg);
-
-    const text = this.add.text(0, 0, '✖ Clear', {
-      fontSize: '12px',
-      color: '#ffffff',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-    });
-    text.setOrigin(0.5);
-    this.clearQueueButton.add(text);
-
-    bg.on('pointerover', () => {
-      bg.setFillStyle(0xc0392b);
-    });
-
-    bg.on('pointerout', () => {
-      bg.setFillStyle(0xe74c3c);
-    });
-
-    bg.on('pointerdown', () => {
-      this.clearAllQueuedActions();
-    });
-  }
-
-  private hideClearQueueButton(): void {
-    if (this.clearQueueButton) {
-      this.clearQueueButton.destroy();
-      this.clearQueueButton = null;
-    }
-  }
-
-  private clearAllQueuedActions(): void {
-    if (!this.userId) return;
-
-    // Refund all AP from queued actions
-    const playerActor = this.players.find(p => p.userId === this.userId);
-    if (!playerActor) return;
-
-    const totalRefund = this.queuedActions.reduce((sum, action) => {
-      const card = getCardById(action.cardId || '');
-      return sum + (card?.ap || 0);
-    }, 0);
-
-    const currentAP = this.playerAP.get(playerActor.id) || 0;
-    const refundedAP = Math.min(30, currentAP + totalRefund); // Respect AP cap
-    this.playerAP.set(playerActor.id, refundedAP);
-
-    // Clear all queued actions
-    this.queuedActions = [];
-    this.updateQueueDisplay();
-    this.showLockButton(); // Refresh lock button
-  }
-
-  private showPendingActionText(_text: string, _color = '#f39c12'): void {
-    // REMOVED: No longer show separate pending action text
-    // This information is now integrated into the lock button
+    // DISABLED TO FIX GREY BOX ISSUE - No more pending action text
+    console.log(`[BattleScene] Pending action text disabled: ${text}`);
   }
 
   private hidePendingActionText(): void {
@@ -5344,28 +5399,30 @@ export class BattleScene extends Phaser.Scene {
     if (!this.combatLogContainer) return;
 
     const buttonSize = 20;
-    const buttonX = 200; // Right side of log
-    const buttonY = 10; // Top of log
+    const logX = this.scale.width - 220 - 10; // Same as combat log container
+    const logY = this.scale.height - 80 - 10;
+    const buttonX = logX + 200; // Right side of log
+    const buttonY = logY + 10; // Top of log
 
-    this.logExpandButton = this.add.container(buttonX, buttonY);
-    this.logExpandButton.setDepth(10);
+    this.logExpandButton = this.add.container(0, 0); // Create at origin
+    this.logExpandButton.setDepth(1000);
 
-    // Button background
-    const bg = this.add.rectangle(0, 0, buttonSize, buttonSize, 0x4a90e2, 0.8);
+    // Button background with absolute positioning
+    const bg = this.add.rectangle(buttonX, buttonY, buttonSize, buttonSize, 0x4a90e2, 0.8);
     bg.setStrokeStyle(1, 0xffffff, 0.5);
     bg.setInteractive({ useHandCursor: true });
     bg.setName('bg');
-    this.logExpandButton.add(bg);
+    bg.setDepth(1000);
 
-    // Arrow icon (down/up)
-    const arrow = this.add.text(0, 0, '▼', {
+    // Arrow icon (down/up) with absolute positioning
+    const arrow = this.add.text(buttonX, buttonY, '▼', {
       fontSize: '12px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
     });
     arrow.setOrigin(0.5);
     arrow.setName('arrow');
-    this.logExpandButton.add(arrow);
+    arrow.setDepth(1000);
 
     // Hover effect
     bg.on('pointerover', () => {
@@ -5439,7 +5496,9 @@ export class BattleScene extends Phaser.Scene {
       }
     });
 
-    // Re-add and position visible entries
+    // Re-add and position visible entries with absolute positioning
+    const logX = this.scale.width - 220 - 10; // Same as combat log container
+    const logY = this.scale.height - 80 - 10;
     entriesToShow.forEach((entry, index) => {
       // Safety check: ensure entry is valid and from this scene
       if (!entry || entry.scene !== this) {
@@ -5447,12 +5506,9 @@ export class BattleScene extends Phaser.Scene {
         return;
       }
       
-      const targetY = startY + (index * lineHeight);
-      entry.setY(targetY);
-      
-      if (!this.combatLogContainer!.list.includes(entry)) {
-        this.combatLogContainer!.add(entry);
-      }
+      const targetY = logY + 30 + (index * lineHeight);
+      entry.setPosition(logX + 10, targetY);
+      entry.setDepth(1000);
 
       // Fade out older entries
       const alpha = 1 - (entriesToShow.length - 1 - index) * 0.15;
@@ -5463,14 +5519,19 @@ export class BattleScene extends Phaser.Scene {
   private addCombatLogEntry(message: string, color: string = '#ffffff'): void {
     if (!this.combatLogContainer) return;
     
+    // Clean up any orphaned text elements before adding new ones
+    this.cleanupOrphanedTextElements();
+    
     // Safety check: ensure scene is active and ready
     if (!this.scene.isActive() || !this.add) {
       console.warn('Cannot add combat log entry: scene not ready');
       return;
     }
 
-    // Create new log entry with proper positioning and word wrap
-    const entry = this.add.text(10, 0, `• ${message}`, {
+    // Create new log entry with absolute positioning and word wrap
+    const logX = this.scale.width - 220 - 10; // Same as combat log container
+    const logY = this.scale.height - 80 - 10;
+    const entry = this.add.text(logX + 10, logY + 30, `• ${message}`, {
       fontSize: '10px',
       color,
       fontFamily: 'Arial, sans-serif',
@@ -5478,6 +5539,7 @@ export class BattleScene extends Phaser.Scene {
       align: 'left',
     });
     entry.setOrigin(0, 0);
+    entry.setDepth(1000);
 
     // Add to entries array
     this.combatLogEntries.push(entry);

@@ -262,30 +262,36 @@ export class CardSelectUI {
     bg.setName('bg');
     container.add(bg);
 
-    // Card name (with shadow for visibility)
-    const nameText = this.scene.add.text(0, -CARD_HEIGHT / 2 + 35, card.name, {
-      fontSize: '20px',
+    // Card name (with shadow for visibility) - match hand UI design
+    // Split multi-word titles and stack them vertically
+    const words = card.name.split(' ');
+    const displayText = words.length > 1 ? words.join('\n') : card.name;
+    
+    const nameText = this.scene.add.text(0, -CARD_HEIGHT / 2 + 45, displayText, {
+      fontSize: '18px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
       align: 'center',
       stroke: '#000000',
-      strokeThickness: 5,
+      strokeThickness: 4,
+      lineSpacing: -5,
     });
     nameText.setOrigin(0.5);
     nameText.setDepth(10);
     container.add(nameText);
 
-    // AP cost badge (smaller)
-    const apBadge = this.scene.add.container(-CARD_WIDTH / 2 + 26, -CARD_HEIGHT / 2 + 26);
+    // AP cost badge (top right corner - partially off card, match hand UI)
+    const apBadge = this.scene.add.container(CARD_WIDTH / 2 - 5, -CARD_HEIGHT / 2 + 5);
     apBadge.setDepth(10);
+    apBadge.setVisible(false); // Start hidden
     
-    const apBg = this.scene.add.circle(0, 0, 16, 0x000000, 0.95);
+    const apBg = this.scene.add.circle(0, 0, 10, 0x000000, 0.9);
     apBg.setStrokeStyle(2, 0xffaa00, 1);
     apBadge.add(apBg);
 
     const apText = this.scene.add.text(0, 0, `${card.ap}`, {
-      fontSize: '18px',
+      fontSize: '12px',
       color: '#ffaa00',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
@@ -294,7 +300,7 @@ export class CardSelectUI {
     apBadge.add(apText);
     container.add(apBadge);
 
-    // Description (no background - just text with shadow)
+    // Description (no background - just text with shadow, match hand UI)
     const descText = this.scene.add.text(0, 15, card.desc, {
       fontSize: '15px',
       color: '#ffffff',
@@ -303,6 +309,7 @@ export class CardSelectUI {
       wordWrap: { width: CARD_WIDTH - 25 },
       stroke: '#000000',
       strokeThickness: 4,
+      lineSpacing: -5,
     });
     descText.setOrigin(0.5);
     descText.setDepth(10);
@@ -370,6 +377,9 @@ export class CardSelectUI {
       // Enhance visuals
       bg.setStrokeStyle(5, 0xffff00, 1);
       
+      // Show AP cost badge on hover
+      apBadge.setVisible(true);
+      
       // Lift card up slightly and scale
       this.scene.tweens.add({
         targets: container,
@@ -401,6 +411,9 @@ export class CardSelectUI {
       
       // Reset visuals
       bg.setStrokeStyle(3, 0x666666, 0.9);
+      
+      // Hide AP cost badge on hover out
+      apBadge.setVisible(false);
       
       // Return card to original position
       this.scene.tweens.add({

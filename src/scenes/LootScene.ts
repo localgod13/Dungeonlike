@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { Card, NEUTRAL_CONSUMABLE_ITEMS, NEUTRAL_REUSABLE_ITEMS, getCardsForClass, getAdvancedCardsForClass } from '../game/cards';
+import { Card, NEUTRAL_CONSUMABLE_ITEMS, NEUTRAL_REUSABLE_ITEMS, getCardsForClass } from '../game/cards';
 import { addGold, addCardToDeck, getGold } from '../game/inventory';
 import { getCurrentUserId } from '../net/supa';
 
@@ -139,53 +139,28 @@ export class LootScene extends Phaser.Scene {
     
     const options: Card[] = [];
     
-    // 40% chance for consumable, 60% chance for advanced card
-    const includeConsumable = Math.random() < 0.4;
+    // Always include 1 consumable item
+    const consumables = [...NEUTRAL_CONSUMABLE_ITEMS];
+    const randomConsumable = consumables[Math.floor(Math.random() * consumables.length)];
+    options.push(randomConsumable);
     
-    if (includeConsumable) {
-      const consumables = [...NEUTRAL_CONSUMABLE_ITEMS];
-      const randomConsumable = consumables[Math.floor(Math.random() * consumables.length)];
-      options.push(randomConsumable);
-      console.log('[LootScene] ⚠️ Added consumable to options');
-    }
-    
-    // Build card pool with weighted selection
-    const advancedCards = getAdvancedCardsForClass(myClass);
+    // Add 2 more cards (can be class-specific or reusable items)
     const classCards = getCardsForClass(myClass);
     const reusableItems = [...NEUTRAL_REUSABLE_ITEMS];
+    const allPossibleCards = [...classCards, ...reusableItems];
     
-    // Weight: 50% advanced, 30% base class, 20% reusable
-    const weightedPool: Card[] = [
-      ...advancedCards,
-      ...advancedCards, // 2x weight
-      ...classCards,
-      ...reusableItems,
-    ];
+    // Filter out the already selected consumable
+    const remainingCards = allPossibleCards.filter(c => c.id !== randomConsumable.id);
     
-    // Shuffle the pool
-    for (let i = weightedPool.length - 1; i > 0; i--) {
+    // Shuffle and pick 2
+    for (let i = remainingCards.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [weightedPool[i], weightedPool[j]] = [weightedPool[j], weightedPool[i]];
+      [remainingCards[i], remainingCards[j]] = [remainingCards[j], remainingCards[i]];
     }
     
-    // Pick cards, ensuring no duplicates
-    const seenIds = new Set(options.map(c => c.id));
-    for (const card of weightedPool) {
-      if (!seenIds.has(card.id)) {
-        options.push(card);
-        seenIds.add(card.id);
-        if (options.length >= 3) break;
-      }
-    }
+    options.push(...remainingCards.slice(0, 2));
     
-    // If we still need more cards (shouldn't happen), add remaining
-    if (options.length < 3) {
-      const backup = [...advancedCards, ...classCards, ...reusableItems]
-        .filter(c => !seenIds.has(c.id));
-      options.push(...backup.slice(0, 3 - options.length));
-    }
-    
-    console.log('[LootScene] 🎁 Generated card options:', options.map(c => `${c.name} (${c.class || 'neutral'})`));
+    console.log('[LootScene] Generated card options:', options.map(c => c.name));
     return options;
   }
   

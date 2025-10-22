@@ -129,6 +129,12 @@ export class Preload extends Phaser.Scene {
       'card_neutral',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/defense.png'
     );
+
+    // Load custom lock button image
+    this.load.image(
+      'lock_button',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/button2.png'
+    );
     
     // Load card back image for draw/discard piles
     this.load.image(

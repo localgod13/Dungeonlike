@@ -262,81 +262,7 @@ export function resolveTurn(
                 
                 let damage = card.power;
                 
-                // SPECIAL CARD: Precision Strike - double damage vs burning/poisoned
-                if (card.id === 'PrecisionStrike') {
-                  const targetDots = dotEffects.get(dst.id) || [];
-                  if (targetDots.length > 0) {
-                    damage *= 2;
-                    console.log(`[Combat] 🎯 Precision Strike! ${dst.name} has DOT effects, damage doubled: ${card.power} -> ${damage}`);
-                  }
-                }
-                
-                // SPECIAL CARD: Combustion - higher damage if burning
-                if (card.id === 'Combustion') {
-                  const targetDots = dotEffects.get(dst.id) || [];
-                  const isBurning = targetDots.some(dot => dot.type === 'burn');
-                  if (isBurning) {
-                    damage = 18; // Detonate for full damage
-                    console.log(`[Combat] 🔥 Combustion! ${dst.name} is burning, detonated for ${damage} damage!`);
-                    // Remove burn effects after detonation
-                    dotEffects.set(dst.id, targetDots.filter(dot => dot.type !== 'burn'));
-                  } else {
-                    damage = 6; // Base damage
-                    console.log(`[Combat] 🔥 Combustion hits for ${damage} (target not burning)`);
-                  }
-                }
-                
-                // SPECIAL CARD: Fan the Flames - spread fire if burning
-                if (card.id === 'FanTheFlames') {
-                  const targetDots = dotEffects.get(dst.id) || [];
-                  const isBurning = targetDots.some(dot => dot.type === 'burn');
-                  if (isBurning) {
-                    console.log(`[Combat] 🔥 Fan the Flames! ${dst.name} is burning, spreading to all enemies!`);
-                    const targets = actor.side === 'party' ? simState.enemies : simState.party;
-                    targets.forEach((target, index) => {
-                      if (target.id !== dst.id) {
-                        const spreadDots = dotEffects.get(target.id) || [];
-                        spreadDots.push({
-                          damage: 4,
-                          duration: 2,
-                          source: actor.id,
-                          type: 'burn',
-                        });
-                        dotEffects.set(target.id, spreadDots);
-                        const offsetTime = tCursor + 400 + (index * 150);
-                        effects.push({ at: offsetTime, kind: 'vfx', src: dst.id, dst: target.id, note: 'burn' });
-                      }
-                    });
-                  }
-                }
-                
-                // SPECIAL CARD: Pyromancer's Fury - spread all DOTs
-                if (card.id === 'PyromancersFury') {
-                  const targetDots = dotEffects.get(dst.id) || [];
-                  if (targetDots.length > 0) {
-                    console.log(`[Combat] 🔥 Pyromancer's Fury! Spreading ${targetDots.length} DOT effects to nearby enemies!`);
-                    const targets = actor.side === 'party' ? simState.enemies : simState.party;
-                    targets.forEach((target, index) => {
-                      if (target.id !== dst.id) {
-                        const spreadDots = dotEffects.get(target.id) || [];
-                        // Copy all DOTs from target to other enemies
-                        targetDots.forEach(dot => {
-                          spreadDots.push({
-                            damage: dot.damage,
-                            duration: dot.duration,
-                            source: actor.id,
-                            type: dot.type,
-                          });
-                        });
-                        dotEffects.set(target.id, spreadDots);
-                        const offsetTime = tCursor + 400 + (index * 150);
-                        effects.push({ at: offsetTime, kind: 'vfx', src: dst.id, dst: target.id, note: dot.type });
-                      }
-                    });
-                  }
-                }
-                
-                // Apply damage buffs (increases damage dealt) - after special card logic
+                // Apply damage buffs (increases damage dealt)
                 const actorBuffs = simState.buffs?.get(actor.id) || [];
                 const damageBuffs = actorBuffs.filter(buff => buff.type === 'damage');
                 if (damageBuffs.length > 0) {
@@ -397,24 +323,7 @@ export function resolveTurn(
               break;
             
             case 'GUARD':
-              // SPECIAL CARD: Bulwark - grant shield to ALL allies
-              if (card.id === 'Bulwark') {
-                const targets = actor.side === 'party' ? simState.party : simState.enemies;
-                targets.forEach((target, index) => {
-                  const shieldValue = card.power;
-                  const currentShield = simState.shields?.get(target.id) || 0;
-                  const newShieldTotal = currentShield + shieldValue;
-                  
-                  const offsetTime = tCursor + (index * 150);
-                  guard(target, shieldValue, offsetTime);
-                  guarded.add(target.id);
-                  guardValues.set(target.id, shieldValue);
-                  simState.shields!.set(target.id, newShieldTotal);
-                  console.log(`[Combat] 🛡️ Bulwark! ${target.name} gains ${shieldValue} shield. Total: ${newShieldTotal}`);
-                });
-              }
-              // Single target guard
-              else if (dst) {
+              if (dst) {
                 const shieldValue = card.power; // Use the card's power value
                 const currentShield = simState.shields?.get(dst.id) || 0;
                 const newShieldTotal = currentShield + shieldValue;
@@ -430,45 +339,9 @@ export function resolveTurn(
             case 'VULN':
               // Vulnerable: increases damage taken
               if (dst) {
-                // SPECIAL CARDS: VanguardStrike, SunderArmor, MarkedShot - deal damage first
-                if (card.id === 'VanguardStrike' || card.id === 'SunderArmor' || card.id === 'MarkedShot') {
-                  let damage = card.power;
-                  
-                  // Apply vulnerability bonus if already vulnerable
-                  if (vulnerable.has(dst.id)) {
-                    damage += 2;
-                  }
-                  
-                  // Apply shield absorption
-                  const currentShield = simState.shields?.get(dst.id) || 0;
-                  let remainingDamage = damage;
-                  let newShieldValue = currentShield;
-                  
-                  if (currentShield > 0) {
-                    if (damage >= currentShield) {
-                      remainingDamage = damage - currentShield;
-                      newShieldValue = 0;
-                    } else {
-                      newShieldValue = currentShield - damage;
-                      remainingDamage = 0;
-                    }
-                    simState.shields!.set(dst.id, newShieldValue);
-                  }
-                  
-                  // Deal damage
-                  const finalDamage = Math.max(0, remainingDamage);
-                  if (finalDamage > 0) {
-                    strike(actor, dst, finalDamage, tCursor, card.name);
-                    dst.hp = Math.max(0, dst.hp - finalDamage);
-                  }
-                  
-                  console.log(`[Combat] ${card.name}! ${dst.name} takes ${finalDamage} damage and is marked!`);
-                }
-                
-                // Apply vulnerable effect
                 vulnerable.add(dst.id);
                 console.log(`[Combat] ${dst.name} is now vulnerable! Will take +2 damage this turn`);
-                effects.push({ at: tCursor + 400, kind: 'vfx', src: actor.id, dst: dst.id, note: 'vulnerable' });
+                effects.push({ at: tCursor, kind: 'vfx', src: actor.id, dst: dst.id, note: 'vulnerable' });
               }
               break;
             
@@ -496,42 +369,7 @@ export function resolveTurn(
               }
               
               const targets = actor.side === 'party' ? simState.enemies : simState.party;
-              
-              // SPECIAL CARD: Explosive Arrow - check if primary target is poisoned for AOE
-              if (card.id === 'ExplosiveArrow' && dst) {
-                const targetDots = dotEffects.get(dst.id) || [];
-                const isPoisoned = targetDots.some(dot => dot.type === 'poison');
-                
-                if (isPoisoned) {
-                  console.log(`[Combat] 💥 Explosive Arrow! ${dst.name} is poisoned, detonating for AOE explosion!`);
-                  // Deal primary damage to main target
-                  let primaryDamage = card.power;
-                  if (vulnerable.has(dst.id)) primaryDamage += 2;
-                  
-                  strike(actor, dst, primaryDamage, tCursor, card.name);
-                  dst.hp = Math.max(0, dst.hp - primaryDamage);
-                  
-                  // Deal splash damage to other enemies
-                  targets.forEach((target, index) => {
-                    if (target.id !== dst.id) {
-                      const splashDamage = 8;
-                      const offsetTime = tCursor + 400 + (index * 150);
-                      strike(actor, target, splashDamage, offsetTime, 'explosion');
-                      target.hp = Math.max(0, target.hp - splashDamage);
-                    }
-                  });
-                } else {
-                  // No poison, just deal normal damage to target
-                  console.log(`[Combat] 💥 Explosive Arrow hits ${dst.name} for ${card.power} (no poison, no explosion)`);
-                  let damage = card.power;
-                  if (vulnerable.has(dst.id)) damage += 2;
-                  strike(actor, dst, damage, tCursor, card.name);
-                  dst.hp = Math.max(0, dst.hp - damage);
-                }
-                break;
-              }
-              
-              // Apply damage buffs once for AOE (affects all targets) - after special card logic
+              // Apply damage buffs once for AOE (affects all targets)
               let baseDamage = card.power;
               const actorBuffs = simState.buffs?.get(actor.id) || [];
               const damageBuffs = actorBuffs.filter(buff => buff.type === 'damage');
@@ -547,16 +385,6 @@ export function resolveTurn(
               
               targets.forEach((target, index) => {
                 let damage = baseDamage;
-                
-                // SPECIAL CARD: Infernal Purge - bonus damage to burning enemies
-                if (card.id === 'InfernalPurge') {
-                  const targetDots = dotEffects.get(target.id) || [];
-                  const isBurning = targetDots.some(dot => dot.type === 'burn');
-                  if (isBurning) {
-                    damage += 6;
-                    console.log(`[Combat] 🔥 Infernal Purge! ${target.name} is burning, taking +6 bonus damage (${card.power} -> ${damage})`);
-                  }
-                }
                 
                 // Apply vulnerability (increases damage)
                 if (vulnerable.has(target.id)) {
@@ -623,63 +451,8 @@ export function resolveTurn(
             case 'DOT':
               // Damage over time: add status effect for multiple turns
               if (dst) {
-                // SPECIAL CARD: VenomousBarrage - poison all enemies
-                if (card.id === 'VenomousBarrage') {
-                  const targets = actor.side === 'party' ? simState.enemies : simState.party;
-                  targets.forEach((target, index) => {
-                    const targetDots = dotEffects.get(target.id) || [];
-                    targetDots.push({
-                      damage: 3, // 3 damage per turn
-                      duration: 3, // 3 turns
-                      source: actor.id,
-                      type: 'poison',
-                    });
-                    dotEffects.set(target.id, targetDots);
-                    
-                    const offsetTime = tCursor + (index * 200);
-                    effects.push({ at: offsetTime, kind: 'vfx', src: actor.id, dst: target.id, note: 'poison' });
-                  });
-                  console.log(`[Combat] 🐍 ${actor.name} uses Venomous Barrage! All enemies poisoned for 3 turns!`);
-                }
-                // SPECIAL CARD: Immolate - burn all enemies
-                else if (card.id === 'Immolate') {
-                  const targets = actor.side === 'party' ? simState.enemies : simState.party;
-                  targets.forEach((target, index) => {
-                    const targetDots = dotEffects.get(target.id) || [];
-                    targetDots.push({
-                      damage: 4, // 4 damage per turn
-                      duration: 2, // 2 turns
-                      source: actor.id,
-                      type: 'burn',
-                    });
-                    dotEffects.set(target.id, targetDots);
-                    
-                    const offsetTime = tCursor + (index * 200);
-                    effects.push({ at: offsetTime, kind: 'vfx', src: actor.id, dst: target.id, note: 'burn' });
-                  });
-                  console.log(`[Combat] 🔥 ${actor.name} uses Immolate! All enemies burning for 2 turns!`);
-                }
-                // SPECIAL CARD: ToxicCloud - high damage poison
-                else if (card.id === 'ToxicCloud') {
-                  // Initial damage
-                  strike(actor, dst, 6, tCursor, card.name);
-                  dst.hp = Math.max(0, dst.hp - 6);
-                  
-                  // Strong poison DOT
-                  const targetDots = dotEffects.get(dst.id) || [];
-                  targetDots.push({
-                    damage: 6, // 6 damage per turn
-                    duration: 2, // 2 turns
-                    source: actor.id,
-                    type: 'poison',
-                  });
-                  dotEffects.set(dst.id, targetDots);
-                  
-                  console.log(`[Combat] 🐍 ${actor.name} uses Toxic Cloud on ${dst.name}! Deadly poison applied!`);
-                  effects.push({ at: tCursor, kind: 'vfx', src: actor.id, dst: dst.id, note: 'poison' });
-                }
                 // Special handling for Firebomb - affects all enemies
-                else if (card.id === 'Firebomb') {
+                if (card.id === 'Firebomb') {
                   const targets = actor.side === 'party' ? simState.enemies : simState.party;
                   targets.forEach((target, index) => {
                     // Firebomb: 8 initial damage + 2 burn per turn for 3 turns
