@@ -310,6 +310,225 @@ export const NEUTRAL_REUSABLE_ITEMS: Card[] = [
 ];
 
 /**
+ * WARRIOR ADVANCED CARDS - Unlockable through gameplay
+ * Fire/poison synergies and team utility
+ */
+export const WARRIOR_ADVANCED_CARDS: Card[] = [
+  { 
+    id: 'VanguardStrike', 
+    name: 'Vanguard Strike', 
+    ap: 4, 
+    target: 'enemy', 
+    opcode: 'VULN', 
+    power: 8, 
+    desc: '💥 Deal 8 damage and mark enemy (+5 bonus damage for allies)',
+    type: 'attack',
+    class: 'Warrior'
+  },
+  { 
+    id: 'ShieldBash', 
+    name: 'Shield Bash', 
+    ap: 3, 
+    target: 'enemy', 
+    opcode: 'STUN', 
+    power: 5, 
+    desc: '🛡️ Deal 5 damage and stun enemy (skip next turn)',
+    type: 'attack',
+    class: 'Warrior'
+  },
+  { 
+    id: 'Bulwark', 
+    name: 'Bulwark', 
+    ap: 4, 
+    target: 'all_allies', 
+    opcode: 'GUARD', 
+    power: 4, 
+    desc: '🛡️ Grant 4 Shield to ALL allies',
+    type: 'defense',
+    class: 'Warrior'
+  },
+  { 
+    id: 'IgniteWeapon', 
+    name: 'Ignite Weapon', 
+    ap: 2, 
+    target: 'none', 
+    opcode: 'BUFF', 
+    power: 5, 
+    desc: '🔥 Your next 2 attacks apply BURN (3 fire damage/turn)',
+    type: 'attack',
+    class: 'Warrior'
+  },
+  { 
+    id: 'SunderArmor', 
+    name: 'Sunder Armor', 
+    ap: 5, 
+    target: 'enemy', 
+    opcode: 'VULN', 
+    power: 10, 
+    desc: '⚔️ Deal 10 damage. Burning/Poisoned enemies take 2x DOT',
+    type: 'attack',
+    class: 'Warrior'
+  },
+  { 
+    id: 'FanTheFlames', 
+    name: 'Fan the Flames', 
+    ap: 3, 
+    target: 'enemy', 
+    opcode: 'DMG', 
+    power: 8, 
+    desc: '🔥 Deal 8 damage. If BURNING, spread fire to all enemies',
+    type: 'attack',
+    class: 'Warrior'
+  },
+];
+
+/**
+ * HUNTRESS ADVANCED CARDS - Unlockable through gameplay
+ * Poison mastery and precision strikes
+ */
+export const HUNTRESS_ADVANCED_CARDS: Card[] = [
+  { 
+    id: 'MarkedShot', 
+    name: 'Marked Shot', 
+    ap: 3, 
+    target: 'enemy', 
+    opcode: 'VULN', 
+    power: 6, 
+    desc: '🎯 Deal 6 damage and mark (+4 damage from allies)',
+    type: 'attack',
+    class: 'Huntress'
+  },
+  { 
+    id: 'VenomousBarrage', 
+    name: 'Venomous Barrage', 
+    ap: 5, 
+    target: 'all_enemies', 
+    opcode: 'DOT', 
+    power: 6, 
+    desc: '🐍 Poison ALL enemies (3 damage/turn for 3 turns)',
+    type: 'attack',
+    class: 'Huntress'
+  },
+  { 
+    id: 'ToxicCloud', 
+    name: 'Toxic Cloud', 
+    ap: 4, 
+    target: 'enemy', 
+    opcode: 'DOT', 
+    power: 12, 
+    desc: '🐍 Deal 6 damage + deadly poison (6 damage/turn × 2)',
+    type: 'attack',
+    class: 'Huntress'
+  },
+  { 
+    id: 'ExplosiveArrow', 
+    name: 'Explosive Arrow', 
+    ap: 5, 
+    target: 'enemy', 
+    opcode: 'AOE_DMG', 
+    power: 12, 
+    desc: '💥 Deal 12 damage. If POISONED, explode for 8 AOE',
+    type: 'attack',
+    class: 'Huntress'
+  },
+  { 
+    id: 'CoatedBlades', 
+    name: 'Coated Blades', 
+    ap: 2, 
+    target: 'ally', 
+    opcode: 'BUFF', 
+    power: 3, 
+    desc: '🐍 Coat ally weapon. Next 3 attacks apply poison',
+    type: 'defense',
+    class: 'Huntress'
+  },
+  { 
+    id: 'PrecisionStrike', 
+    name: 'Precision Strike', 
+    ap: 4, 
+    target: 'enemy', 
+    opcode: 'DMG', 
+    power: 15, 
+    desc: '🎯 Deal 15 damage. 2x vs BURNING/POISONED enemies',
+    type: 'attack',
+    class: 'Huntress'
+  },
+];
+
+/**
+ * MAGE ADVANCED CARDS - Unlockable through gameplay
+ * Fire mastery and team empowerment
+ */
+export const MAGE_ADVANCED_CARDS: Card[] = [
+  { 
+    id: 'FlameWeapon', 
+    name: 'Flame Weapon', 
+    ap: 3, 
+    target: 'ally', 
+    opcode: 'BUFF', 
+    power: 4, 
+    desc: '🔥 Enchant ally weapon. Attacks apply BURN (4 dmg/turn)',
+    type: 'magic',
+    class: 'Mage'
+  },
+  { 
+    id: 'Immolate', 
+    name: 'Immolate', 
+    ap: 4, 
+    target: 'all_enemies', 
+    opcode: 'DOT', 
+    power: 8, 
+    desc: '🔥 Set all enemies ablaze (4 burn/turn × 2 turns)',
+    type: 'magic',
+    class: 'Mage'
+  },
+  { 
+    id: 'Combustion', 
+    name: 'Combustion', 
+    ap: 3, 
+    target: 'enemy', 
+    opcode: 'DMG', 
+    power: 18, 
+    desc: '🔥 Deal 6 damage. If BURNING, detonate for 18 total',
+    type: 'magic',
+    class: 'Mage'
+  },
+  { 
+    id: 'InfernalPurge', 
+    name: 'Infernal Purge', 
+    ap: 5, 
+    target: 'all_enemies', 
+    opcode: 'AOE_DMG', 
+    power: 10, 
+    desc: '🔥 10 fire damage to all. Burning foes take +6 bonus',
+    type: 'magic',
+    class: 'Mage'
+  },
+  { 
+    id: 'ManaLink', 
+    name: 'Mana Link', 
+    ap: 2, 
+    target: 'all_allies', 
+    opcode: 'ULTIMATE_GAIN', 
+    power: 15, 
+    desc: '✨ All allies gain 15% ultimate charge',
+    type: 'magic',
+    class: 'Mage'
+  },
+  { 
+    id: 'PyromancersFury', 
+    name: "Pyromancer's Fury", 
+    ap: 6, 
+    target: 'enemy', 
+    opcode: 'DMG', 
+    power: 20, 
+    desc: '🔥 20 damage. Spread all BURN/POISON to nearby foes',
+    type: 'magic',
+    class: 'Mage'
+  },
+];
+
+/**
  * NEUTRAL CONSUMABLE ITEMS - Forever limited potions (actual loot)
  * These are consumed permanently when used, can be found as loot or bought in shops
  */
@@ -435,6 +654,9 @@ export const CARD_POOL: Card[] = [
   ...WARRIOR_CARDS,
   ...HUNTRESS_CARDS,
   ...MAGE_CARDS,
+  ...WARRIOR_ADVANCED_CARDS,
+  ...HUNTRESS_ADVANCED_CARDS,
+  ...MAGE_ADVANCED_CARDS,
   ...ULTIMATE_CARDS, // Include ultimate cards so getCardById can find them
   ...NEUTRAL_REUSABLE_ITEMS,
   ...NEUTRAL_CONSUMABLE_ITEMS,
@@ -454,6 +676,23 @@ export function getCardsForClass(className: string): Card[] {
     default:
       console.warn(`Unknown class: ${className}, returning Warrior cards as default`);
       return WARRIOR_CARDS;
+  }
+}
+
+/**
+ * Get advanced cards for a specific class (unlockable through gameplay)
+ */
+export function getAdvancedCardsForClass(className: string): Card[] {
+  switch (className) {
+    case 'Warrior':
+      return WARRIOR_ADVANCED_CARDS;
+    case 'Huntress':
+      return HUNTRESS_ADVANCED_CARDS;
+    case 'Mage':
+      return MAGE_ADVANCED_CARDS;
+    default:
+      console.warn(`Unknown class: ${className}, returning Warrior advanced cards as default`);
+      return WARRIOR_ADVANCED_CARDS;
   }
 }
 
