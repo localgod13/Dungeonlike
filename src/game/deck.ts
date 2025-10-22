@@ -6,9 +6,9 @@
 import { Card, getCardById } from './cards';
 
 export interface DeckState {
-  deck: string[]; // Card IDs in deck (all 10 cards)
+  drawPile: string[]; // Card IDs in draw pile (remaining cards)
   hand: string[]; // Card IDs currently in hand (4 cards drawn)
-  discardPile: string[]; // Card IDs that have been played this cycle
+  discardPile: string[]; // Card IDs that have been played/discarded
   reusableCharges: Map<string, number>; // Track charges for reusable items per battle
   consumableInventory: Map<string, number>; // Track consumable item counts (persists)
 }
@@ -49,7 +49,7 @@ export function createDeck(cardIds: string[]): DeckState {
   const hand = shuffledDeck.splice(0, 4);
 
   return {
-    deck: shuffledDeck,
+    drawPile: shuffledDeck,
     hand,
     discardPile: [],
     reusableCharges,
@@ -68,60 +68,94 @@ function shuffleDeck(deck: string[]): void {
 }
 
 /**
- * Draw 4 new cards from the deck
- * Properly handles reshuffling when deck runs out mid-draw
+ * Draw one card from the draw pile to hand
+ * Automatically reshuffles discard pile when draw pile is empty
+ * 
+ * NOTE: Animation callback is called AFTER the card is added to hand,
+ * so the hand UI must be created AFTER this function returns
  */
-export function drawCards(state: DeckState): void {
-  console.log(`[Deck] === DRAW PHASE START ===`);
-  console.log(`[Deck] Before: Hand=${state.hand.length}, Deck=${state.deck.length}, Discard=${state.discardPile.length}`);
+export function drawCard(state: DeckState, onDrawAnimation?: (cardId: string, position: number, delay: number) => void, animationDelay: number = 0): string | null {
+  console.log(`[Deck] Drawing card. Before: Hand=${state.hand.length}, DrawPile=${state.drawPile.length}, Discard=${state.discardPile.length}`);
   
-  // Move current hand to discard pile
-  state.discardPile.push(...state.hand);
-  state.hand = [];
-  console.log(`[Deck] Moved hand to discard. Deck=${state.deck.length}, Discard=${state.discardPile.length}`);
-
-  // Draw 4 cards, reshuffling if needed
-  const TARGET_HAND_SIZE = 4;
-  let cardsDrawn = 0;
+  // If draw pile is empty, reshuffle discard pile
+  if (state.drawPile.length === 0 && state.discardPile.length > 0) {
+    console.log('[Deck] 🔄 Draw pile empty! Reshuffling discard pile...');
+    state.drawPile = [...state.discardPile];
+    state.discardPile = [];
+    shuffleDeck(state.drawPile);
+    console.log(`[Deck] ✓ Reshuffled ${state.drawPile.length} cards back into draw pile`);
+  }
   
-  while (cardsDrawn < TARGET_HAND_SIZE) {
-    // If deck is empty, reshuffle discard pile
-    if (state.deck.length === 0 && state.discardPile.length > 0) {
-      console.log('[Deck] 🔄 Deck empty! Reshuffling discard pile...');
-      state.deck = [...state.discardPile];
-      state.discardPile = [];
-      shuffleDeck(state.deck);
-      console.log(`[Deck] ✓ Reshuffled ${state.deck.length} cards back into deck`);
-    }
+  // If still no cards available, return null
+  if (state.drawPile.length === 0) {
+    console.log('[Deck] ⚠️ No more cards available to draw');
+    return null;
+  }
+  
+  // Draw one card
+  const card = state.drawPile.shift();
+  if (card) {
+    state.hand.push(card);
+    console.log(`[Deck] Drew ${card}. After: Hand=${state.hand.length}, DrawPile=${state.drawPile.length}, Discard=${state.discardPile.length}`);
     
-    // If still no cards available, we're done
-    if (state.deck.length === 0) {
-      console.log('[Deck] ⚠️ No more cards available to draw');
-      break;
-    }
-    
-    // Draw one card
-    const card = state.deck.shift();
-    if (card) {
-      state.hand.push(card);
-      cardsDrawn++;
+    // Store the card ID and position for animation callback
+    // Animation callback will be triggered later, after hand UI is created
+    if (onDrawAnimation) {
+      // Use setTimeout to defer animation until after hand UI is created
+      setTimeout(() => {
+        onDrawAnimation(card, state.hand.length - 1, animationDelay);
+      }, 100); // Delay to ensure hand UI is created first and cards can be hidden
     }
   }
-
-  console.log(`[Deck] Drew ${cardsDrawn} cards. Final: Hand=${state.hand.length}, Deck=${state.deck.length}, Discard=${state.discardPile.length}`);
-  console.log(`[Deck] Hand contents:`, state.hand);
-  console.log(`[Deck] === DRAW PHASE END ===`);
+  
+  return card || null;
 }
 
 /**
- * Play a card from hand (for tracking purposes)
- * Cards stay in hand until end of turn when drawCards is called
+ * Draw cards at the start of each turn to maintain hand size
+ * Only draws if hand is below target size
  */
-export function playCard(state: DeckState, cardId: string): boolean {
+export function drawCardsAtTurnStart(state: DeckState, onDrawAnimation?: (cardId: string, position: number, delay: number) => void): void {
+  console.log(`[Deck] === TURN START DRAW ===`);
+  console.log(`[Deck] Current hand size: ${state.hand.length}`);
+  
+  const TARGET_HAND_SIZE = 4;
+  const cardsNeeded = Math.max(0, TARGET_HAND_SIZE - state.hand.length);
+  
+  if (cardsNeeded === 0) {
+    console.log(`[Deck] Hand is already full (${state.hand.length} cards)`);
+    return;
+  }
+  
+  console.log(`[Deck] Need to draw ${cardsNeeded} cards`);
+  
+  const ANIMATION_STAGGER_MS = 200; // Delay between each card animation
+  
+  for (let i = 0; i < cardsNeeded; i++) {
+    const animationDelay = i * ANIMATION_STAGGER_MS; // 0ms, 200ms, 400ms, 600ms
+    const card = drawCard(state, onDrawAnimation, animationDelay);
+    if (!card) {
+      console.log(`[Deck] Could only draw ${i} cards before running out`);
+      break;
+    }
+  }
+  
+  console.log(`[Deck] Final hand size: ${state.hand.length}`);
+  console.log(`[Deck] === TURN START DRAW END ===`);
+}
+
+/**
+ * Play a card from hand and automatically discard it
+ * Returns true if card was successfully played and discarded
+ */
+export function playCard(state: DeckState, cardId: string, onDiscardAnimation?: (cardId: string, position: number, delay: number) => void, animationDelay: number = 0): boolean {
   if (!state.hand.includes(cardId)) {
     console.error(`[Deck] Card ${cardId} not in hand`);
     return false;
   }
+
+  // Find the position of the card in hand before removing it
+  const handPosition = state.hand.indexOf(cardId);
 
   // Check if it's a reusable item with charges
   if (REUSABLE_CHARGES[cardId]) {
@@ -148,6 +182,20 @@ export function playCard(state: DeckState, cardId: string): boolean {
     // Remove from deck permanently if no more left
     if (count - 1 <= 0) {
       removeCardFromDeck(state, cardId);
+      return true; // Card was consumed, no need to discard
+    }
+  }
+
+  // Remove card from hand and add to discard pile
+  const handIndex = state.hand.indexOf(cardId);
+  if (handIndex !== -1) {
+    state.hand.splice(handIndex, 1);
+    state.discardPile.push(cardId);
+    console.log(`[Deck] Played and discarded ${cardId}. Hand=${state.hand.length}, Discard=${state.discardPile.length}`);
+    
+    // Trigger discard animation if callback provided
+    if (onDiscardAnimation) {
+      onDiscardAnimation(cardId, handPosition, animationDelay);
     }
   }
 
@@ -164,13 +212,13 @@ function removeCardFromDeck(state: DeckState, cardId: string): void {
     state.hand.splice(handIndex, 1);
   }
 
-  // Remove from deck
-  const deckIndex = state.deck.indexOf(cardId);
-  if (deckIndex !== -1) {
-    state.deck.splice(deckIndex, 1);
+  // Remove from draw pile
+  const drawIndex = state.drawPile.indexOf(cardId);
+  if (drawIndex !== -1) {
+    state.drawPile.splice(drawIndex, 1);
   }
 
-  // Remove from discard
+  // Remove from discard pile
   const discardIndex = state.discardPile.indexOf(cardId);
   if (discardIndex !== -1) {
     state.discardPile.splice(discardIndex, 1);
@@ -209,7 +257,7 @@ export function resetReusableCharges(state: DeckState): void {
   state.reusableCharges.clear();
   
   // Re-initialize charges for reusable items in deck
-  const allCards = [...state.deck, ...state.hand, ...state.discardPile];
+  const allCards = [...state.drawPile, ...state.hand, ...state.discardPile];
   allCards.forEach(cardId => {
     if (REUSABLE_CHARGES[cardId]) {
       state.reusableCharges.set(cardId, REUSABLE_CHARGES[cardId]);
@@ -250,13 +298,13 @@ export function canPlayCard(state: DeckState, cardId: string): boolean {
 export function getDeckStats(state: DeckState): {
   totalCards: number;
   handSize: number;
-  deckSize: number;
+  drawPileSize: number;
   discardSize: number;
 } {
   return {
-    totalCards: state.deck.length + state.hand.length + state.discardPile.length,
+    totalCards: state.drawPile.length + state.hand.length + state.discardPile.length,
     handSize: state.hand.length,
-    deckSize: state.deck.length,
+    drawPileSize: state.drawPile.length,
     discardSize: state.discardPile.length,
   };
 }

@@ -13,6 +13,13 @@ export interface DotEffect {
   type: 'poison' | 'burn'; // Effect type for visuals
 }
 
+export interface BuffEffect {
+  damageBonus: number; // Extra damage on next attack
+  duration: number;    // Remaining turns
+  source: ActorId;     // Who applied it
+  type: 'damage' | 'shield' | 'other'; // Effect type
+}
+
 export interface CombatState {
   turn: number;
   party: Actor[];  // 1–3 members
@@ -21,6 +28,8 @@ export interface CombatState {
   vulnerable?: Map<ActorId, number>; // Vulnerable stacks per actor
   stunned?: Set<ActorId>; // Stunned actors (skip action)
   dots?: Map<ActorId, DotEffect[]>; // DOT effects per actor
+  buffs?: Map<ActorId, BuffEffect[]>; // Buff effects per actor
+  blinded?: Set<ActorId>; // Blinded actors (miss next attack)
 }
 
 export type Initiative = ActorId[];
@@ -73,6 +82,8 @@ export function resolveTurn(
     enemies: state.enemies.map(a => ({ ...a })),
     dots: state.dots ? new Map(state.dots) : new Map(),
     shields: state.shields ? new Map(state.shields) : new Map(),
+    buffs: state.buffs ? new Map(state.buffs) : new Map(),
+    blinded: state.blinded ? new Set(state.blinded) : new Set(),
   };
   
   const order = rollInitiative(simState, rng);
@@ -241,7 +252,28 @@ export function resolveTurn(
           switch (card.opcode) {
             case 'DMG':
               if (dst) {
+                // Check if attacker is blinded (miss chance)
+                if (simState.blinded?.has(actor.id)) {
+                  console.log(`[Combat] ${actor.name} is blinded! ${card.name} misses!`);
+                  effects.push({ at: tCursor, kind: 'miss', src: actor.id, dst: dst.id });
+                  simState.blinded!.delete(actor.id); // Remove blind after missing
+                  break;
+                }
+                
                 let damage = card.power;
+                
+                // Apply damage buffs (increases damage dealt)
+                const actorBuffs = simState.buffs?.get(actor.id) || [];
+                const damageBuffs = actorBuffs.filter(buff => buff.type === 'damage');
+                if (damageBuffs.length > 0) {
+                  const totalBuff = damageBuffs.reduce((sum, buff) => sum + buff.damageBonus, 0);
+                  damage += totalBuff;
+                  console.log(`[Combat] ${actor.name} has damage buffs! ${card.name} damage increased by ${totalBuff} (${card.power} -> ${damage})`);
+                  
+                  // Remove used buffs (they only last 1 turn)
+                  const remainingBuffs = actorBuffs.filter(buff => buff.type !== 'damage');
+                  simState.buffs!.set(actor.id, remainingBuffs);
+                }
                 
                 // Apply vulnerability (increases damage)
                 if (vulnerable.has(dst.id)) {
@@ -324,14 +356,40 @@ export function resolveTurn(
             
             case 'AOE_DMG':
               // AOE damage to all enemies
+              // Check if attacker is blinded (miss chance)
+              if (simState.blinded?.has(actor.id)) {
+                console.log(`[Combat] ${actor.name} is blinded! ${card.name} misses!`);
+                const targets = actor.side === 'party' ? simState.enemies : simState.party;
+                targets.forEach((target, index) => {
+                  const offsetTime = tCursor + (index * 200);
+                  effects.push({ at: offsetTime, kind: 'miss', src: actor.id, dst: target.id });
+                });
+                simState.blinded!.delete(actor.id); // Remove blind after missing
+                break;
+              }
+              
               const targets = actor.side === 'party' ? simState.enemies : simState.party;
+              // Apply damage buffs once for AOE (affects all targets)
+              let baseDamage = card.power;
+              const actorBuffs = simState.buffs?.get(actor.id) || [];
+              const damageBuffs = actorBuffs.filter(buff => buff.type === 'damage');
+              if (damageBuffs.length > 0) {
+                const totalBuff = damageBuffs.reduce((sum, buff) => sum + buff.damageBonus, 0);
+                baseDamage += totalBuff;
+                console.log(`[Combat] ${actor.name} has damage buffs! ${card.name} AOE damage increased by ${totalBuff} (${card.power} -> ${baseDamage})`);
+                
+                // Remove used buffs (they only last 1 turn)
+                const remainingBuffs = actorBuffs.filter(buff => buff.type !== 'damage');
+                simState.buffs!.set(actor.id, remainingBuffs);
+              }
+              
               targets.forEach((target, index) => {
-                let damage = card.power;
+                let damage = baseDamage;
                 
                 // Apply vulnerability (increases damage)
                 if (vulnerable.has(target.id)) {
                   damage += 2;
-                  console.log(`[Combat] ${target.name} is vulnerable! ${card.name} damage increased by 2 (${card.power} -> ${damage})`);
+                  console.log(`[Combat] ${target.name} is vulnerable! ${card.name} damage increased by 2 (${baseDamage} -> ${damage})`);
                 }
                 
                 // Apply guard reduction
@@ -397,9 +455,13 @@ export function resolveTurn(
                 if (card.id === 'Firebomb') {
                   const targets = actor.side === 'party' ? simState.enemies : simState.party;
                   targets.forEach((target, index) => {
+                    // Firebomb: 8 initial damage + 2 burn per turn for 3 turns
+                    const initialDamage = card.power; // 8 initial damage
+                    const burnDamagePerTurn = 2; // 2 burn damage per turn
+                    
                     const targetDots = dotEffects.get(target.id) || [];
                     targetDots.push({
-                      damage: card.power,
+                      damage: burnDamagePerTurn, // 2 burn damage per turn
                       duration: 3, // 3 turns of burn
                       source: actor.id,
                       type: 'burn',
@@ -407,33 +469,58 @@ export function resolveTurn(
                     dotEffects.set(target.id, targetDots);
                     
                     const offsetTime = tCursor + (index * 200);
-                    strike(actor, target, card.power, offsetTime, card.name);
-                    target.hp = Math.max(0, target.hp - card.power);
+                    strike(actor, target, initialDamage, offsetTime, card.name);
+                    target.hp = Math.max(0, target.hp - initialDamage);
                     effects.push({ at: offsetTime, kind: 'vfx', src: actor.id, dst: target.id, note: 'burn' });
                   });
-                  console.log(`[Combat] 💣 ${actor.name} uses Firebomb! All enemies burning for 3 turns!`);
+                  console.log(`[Combat] 💣 ${actor.name} uses Firebomb! All enemies take 8 damage + burn for 3 turns!`);
                 } else {
                   // Single-target DOT (Poison Dart, etc.)
                   const effectType: 'poison' | 'burn' = card.name.toLowerCase().includes('poison') ? 'poison' : 'burn';
-                  const damagePerTurn = card.power;
-                  const duration = 2; // 2 turns of damage
                   
-                  // Apply initial damage
-                  strike(actor, dst, card.power, tCursor, card.name);
-                  dst.hp = Math.max(0, dst.hp - card.power);
-                  
-                  // Add DOT effect to target
-                  const targetDots = dotEffects.get(dst.id) || [];
-                  targetDots.push({
-                    damage: damagePerTurn,
-                    duration: duration,
-                    source: actor.id,
-                    type: effectType,
-                  });
-                  dotEffects.set(dst.id, targetDots);
-                  
-                  console.log(`[Combat] ✨ ${actor.name} applies ${card.name} to ${dst.name}!`);
-                  console.log(`[Combat] 🔮 DOT Effect: ${damagePerTurn} ${effectType} damage per turn for ${duration} turns`);
+                  // Special handling for Poison Dart: 5 initial damage + 3 poison per turn for 2 turns
+                  if (card.id === 'PoisonDart') {
+                    const initialDamage = card.power; // 5 initial damage
+                    const poisonDamagePerTurn = 3; // 3 poison damage per turn
+                    
+                    // Apply initial damage
+                    strike(actor, dst, initialDamage, tCursor, card.name);
+                    dst.hp = Math.max(0, dst.hp - initialDamage);
+                    
+                    // Add DOT effect to target
+                    const targetDots = dotEffects.get(dst.id) || [];
+                    targetDots.push({
+                      damage: poisonDamagePerTurn, // 3 poison damage per turn
+                      duration: 2, // 2 turns of poison
+                      source: actor.id,
+                      type: 'poison',
+                    });
+                    dotEffects.set(dst.id, targetDots);
+                    
+                    console.log(`[Combat] 🐍 ${actor.name} uses Poison Dart! ${dst.name} takes 5 damage + poison for 2 turns!`);
+                    console.log(`[Combat] 🔮 DOT Effect: ${poisonDamagePerTurn} poison damage per turn for 2 turns`);
+                  } else {
+                    // Generic DOT handling for other cards
+                    const damagePerTurn = card.power;
+                    const duration = 2; // 2 turns of damage
+                    
+                    // Apply initial damage
+                    strike(actor, dst, card.power, tCursor, card.name);
+                    dst.hp = Math.max(0, dst.hp - card.power);
+                    
+                    // Add DOT effect to target
+                    const targetDots = dotEffects.get(dst.id) || [];
+                    targetDots.push({
+                      damage: damagePerTurn,
+                      duration: duration,
+                      source: actor.id,
+                      type: effectType,
+                    });
+                    dotEffects.set(dst.id, targetDots);
+                    
+                    console.log(`[Combat] ✨ ${actor.name} applies ${card.name} to ${dst.name}!`);
+                    console.log(`[Combat] 🔮 DOT Effect: ${damagePerTurn} ${effectType} damage per turn for ${duration} turns`);
+                  }
                   
                   effects.push({ at: tCursor, kind: 'vfx', src: actor.id, dst: dst.id, note: effectType });
                 }
@@ -464,8 +551,16 @@ export function resolveTurn(
               {
                 const targets = actor.side === 'party' ? simState.party : simState.enemies;
                 targets.forEach((target, index) => {
-                  // Add a damage buff that will be applied on their next attack
-                  // We'll track this in a temporary buff map (needs to be added to combat state)
+                  // Add damage buff to target
+                  const targetBuffs = simState.buffs?.get(target.id) || [];
+                  targetBuffs.push({
+                    damageBonus: card.power, // +4 damage on next attack
+                    duration: 1, // Lasts for 1 turn (next attack)
+                    source: actor.id,
+                    type: 'damage',
+                  });
+                  simState.buffs!.set(target.id, targetBuffs);
+                  
                   const offsetTime = tCursor + (index * 100);
                   guard(target, card.power, offsetTime); // Visual effect (reuse guard animation)
                   console.log(`[Combat] 🍺 ${target.name} gains +${card.power} damage on next attack!`);
@@ -512,6 +607,7 @@ export function resolveTurn(
                   }
                   
                   // Apply blind effect
+                  simState.blinded!.add(target.id);
                   effects.push({ at: offsetTime, kind: 'vfx', src: actor.id, dst: target.id, note: 'blind' });
                   console.log(`[Combat] 💨 ${target.name} is blinded! Will miss next attack`);
                 });
@@ -572,6 +668,15 @@ export function resolveTurn(
     shieldValue,
   }));
   
+  // Serialize buffs Map to array format for network transmission
+  const serializedBuffs = Array.from((simState.buffs || new Map()).entries()).map(([actorId, buffs]) => ({
+    actorId,
+    buffs: buffs.map(b => ({ ...b })),
+  }));
+  
+  // Serialize blinded Set to array format for network transmission
+  const serializedBlinded = Array.from(simState.blinded || new Set());
+  
   return { 
     turn: state.turn, 
     seed, 
@@ -580,6 +685,8 @@ export function resolveTurn(
     post,
     dots: serializedDots, // Include DOT effects in payload for persistence
     shields: serializedShields, // Include shields in payload for persistence
+    buffs: serializedBuffs, // Include buffs in payload for persistence
+    blinded: serializedBlinded, // Include blinded actors in payload for persistence
   };
 }
 

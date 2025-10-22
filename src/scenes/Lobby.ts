@@ -30,6 +30,7 @@ export class Lobby extends Phaser.Scene {
   // UI state
   private showingLobby = false;
   private isReady = false;
+  private isSelectingClass = false; // Prevent UI refresh during class selection
 
   // UI elements
   private container!: Phaser.GameObjects.Container;
@@ -444,20 +445,31 @@ export class Lobby extends Phaser.Scene {
       },
       onGameStart: async (startedAt) => {
         console.log(`Game started at: ${startedAt}`);
+        console.log(`[Lobby] onGameStart triggered - isSelectingClass: ${this.isSelectingClass}`);
+        
         // Don't call startRun() here - host already called it when clicking button
         // Non-host clients will call it from here
         const isHost = this.members.find((m) => m.user_id === this.userId)?.is_host ?? false;
+        console.log(`[Lobby] Current user is host: ${isHost}`);
+        
         if (!isHost) {
-          // Fetch the seed from the lobby so all players use the same map
+          // Force release any class selection lock since game is starting
+          this.isSelectingClass = false;
+          
+          // Fetch the seed AND members from the lobby so all players use the same map and have correct data
           try {
             const state = await getLobbyState(this.lobbyId!);
             const seed = state.lobby.map_seed || undefined;
+            this.members = state.members; // Update members with latest state to ensure class selections are correct
             console.log(`Non-host received map seed: ${seed}`);
+            console.log(`Non-host updated members:`, this.members);
             this.startRun(seed);
           } catch (error) {
             console.error('Failed to fetch lobby seed:', error);
             this.startRun(); // Fallback to no seed
           }
+        } else {
+          console.log(`[Lobby] Host received onGameStart - ignoring (already started)`);
         }
       },
     });
@@ -465,6 +477,13 @@ export class Lobby extends Phaser.Scene {
 
   private renderLobbyUI(): void {
     if (!this.showingLobby || !this.lobbyContainer) return;
+    
+    // Don't re-render if we're in the middle of selecting a class
+    // This prevents the UI from being destroyed while the async operation is in progress
+    if (this.isSelectingClass) {
+      console.log('[Lobby] Skipping UI refresh - class selection in progress');
+      return;
+    }
 
     // Clear previous UI
     this.lobbyContainer.removeAll(true);
@@ -545,15 +564,24 @@ export class Lobby extends Phaser.Scene {
         isSelected,
         ownerName,
         async () => {
-          if (!this.lobbyId || isTaken) return;
+          if (!this.lobbyId || isTaken || this.isSelectingClass) return;
           
           try {
+            this.isSelectingClass = true; // Lock UI refresh
+            console.log(`[Lobby] Selecting class: ${className}`);
+            
             // If already selected, deselect. Otherwise, select this class
             const newClass = isSelected ? null : className;
             await selectClass(this.lobbyId, newClass);
+            
+            console.log(`[Lobby] Class selection completed: ${newClass}`);
           } catch (error: any) {
             console.error('Failed to select class:', error);
             alert(error.message || 'Failed to select class');
+          } finally {
+            // Release lock and manually trigger UI refresh
+            this.isSelectingClass = false;
+            this.renderLobbyUI();
           }
         }
       );
@@ -947,6 +975,9 @@ export class Lobby extends Phaser.Scene {
   }
 
   private startRun(seed?: number): void {
+    console.log(`[Lobby] startRun called with seed: ${seed}`);
+    console.log(`[Lobby] Current members:`, this.members);
+    
     // Prepare player data for card selection scene including class info
     const players = this.members.map((member) => ({
       userId: member.user_id,
@@ -958,20 +989,24 @@ export class Lobby extends Phaser.Scene {
     console.log(`Starting card selection with ${players.length} players:`, players);
     console.log(`Map seed for this run: ${seed}`);
     
-    // Fade out title music before transitioning to card selection
+    // CRITICAL: Kill all tweens and stop all sounds immediately to prevent crashes
+    console.log('🔇 Stopping all sounds and tweens before transition...');
+    this.tweens.killAll();
+    this.sound.stopAll();
+    
+    // Destroy sound manager to prevent lingering tweens
     if (this.soundManager) {
-      console.log('Fading out title music...');
-      this.soundManager.fadeOutMusic(1500); // 1.5 second fade
+      console.log('🔇 Destroying sound manager...');
+      this.soundManager.destroy();
+      this.soundManager = null;
     }
     
-    // Delay scene transition to allow fade to start
-    this.time.delayedCall(200, () => {
-      // Transition to CardSelectScene with map seed
-      this.scene.start('CardSelectScene', { 
-        lobbyId: this.lobbyId,
-        players: players,
-        mapSeed: seed, // Pass the synchronized map seed
-      });
+    // Transition immediately without delay
+    console.log('🚀 Transitioning to CardSelectScene...');
+    this.scene.start('CardSelectScene', { 
+      lobbyId: this.lobbyId,
+      players: players,
+      mapSeed: seed, // Pass the synchronized map seed
     });
   }
 

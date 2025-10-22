@@ -28,15 +28,24 @@ export const FLYING_DEMON_SPRITES: Record<string, EnemySpriteSheetConfig> = {
     frameWidth: 79,   // 316 / 4 columns
     frameHeight: 69,  // 1 row
   },
+  attack: {
+    key: 'flying_demon_attack',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/Enemies/flying demon/ATTACK.png',
+    frameWidth: 79,   // Estimated 8 frames
+    frameHeight: 69,
+  },
+  hurt: {
+    key: 'flying_demon_hurt',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/Enemies/flying demon/HURT.png',
+    frameWidth: 79,   // Estimated 4 frames
+    frameHeight: 69,
+  },
   death: {
     key: 'flying_demon_death',
     url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/Enemies/flying demon/DEATH.png',
     frameWidth: 76,   // 533 / 7 columns (rounded)
     frameHeight: 69,  // 1 row
   },
-  // Future animations:
-  // attack: { ... },
-  // hurt: { ... },
 };
 
 // Flying Demon animations
@@ -47,6 +56,20 @@ export const FLYING_DEMON_ANIMATIONS: Record<string, EnemyAnimationConfig> = {
     frameCount: 4,
     frameRate: 6,
     repeat: -1, // Loop forever
+  },
+  attack: {
+    key: 'flying_demon_attack_anim',
+    spriteKey: 'flying_demon_attack',
+    frameCount: 8,
+    frameRate: 12,
+    repeat: 0, // Play once
+  },
+  hurt: {
+    key: 'flying_demon_hurt_anim',
+    spriteKey: 'flying_demon_hurt',
+    frameCount: 4,
+    frameRate: 10,
+    repeat: 0, // Play once
   },
   death: {
     key: 'flying_demon_death_anim',

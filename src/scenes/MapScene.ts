@@ -880,10 +880,13 @@ export class MapScene extends Phaser.Scene {
   }
 
   private transitionToNode(node: MapNode): void {
-    // Get list of visited node IDs
+    // Get list of visited node IDs from the map
     const visitedNodes = Array.from(this.gameMap.nodes.values())
       .filter(n => n.visited)
       .map(n => n.id);
+    
+    console.log(`[MapScene] Transitioning from node ${this.currentNodeId} to ${node.id}`);
+    console.log(`[MapScene] Visited nodes being passed:`, visitedNodes);
     
     switch (node.type) {
       case NodeType.Battle:
@@ -893,68 +896,73 @@ export class MapScene extends Phaser.Scene {
         // Increment stage for each battle
         const nextStage = this.currentStage + 1;
         
-        // Fade out map music before transitioning
+        // CRITICAL: Kill all tweens and stop all sounds immediately
+        console.log('🔇 Stopping all sounds and tweens before transition...');
+        this.tweens.killAll();
+        this.sound.stopAll();
+        
+        // Destroy sound manager to prevent lingering tweens
         if (this.soundManager) {
-          console.log('Fading out map music before transitioning to card selection...');
-          this.soundManager.fadeOutMusic(1000); // 1 second fade out
+          console.log('🔇 Destroying sound manager...');
+          this.soundManager.destroy();
+          this.soundManager = null;
         }
         
-        // Delay transition to allow fade to complete
-        this.time.delayedCall(1000, () => {
-          this.scene.start('CardSelectScene', {
-            lobbyId: this.lobbyId,
-            players: this.players,
-            mapSeed: this.gameMap.seed, // Pass map seed to maintain continuity
-            visitedNodes: visitedNodes, // Pass visited nodes to maintain progress
-            currentNodeId: this.currentNodeId, // Pass current position
-            stage: nextStage, // Increment stage for next battle
-          });
+        // Transition immediately without delay
+        console.log('🚀 Transitioning to CardSelectScene...');
+        this.scene.start('CardSelectScene', {
+          lobbyId: this.lobbyId,
+          players: this.players,
+          mapSeed: this.gameMap.seed, // Pass map seed to maintain continuity
+          visitedNodes: visitedNodes, // Pass visited nodes to maintain progress
+          currentNodeId: node.id, // Pass the TARGET node as current position (player is moving to this node)
+          stage: nextStage, // Increment stage for next battle
         });
         break;
         
       case NodeType.Shop:
         console.log('Transitioning to shop...');
         
-        // Fade out map music before transitioning
+        // CRITICAL: Kill all tweens and stop all sounds immediately
+        this.tweens.killAll();
+        this.sound.stopAll();
         if (this.soundManager) {
-          console.log('Fading out map music before transitioning to shop...');
-          this.soundManager.fadeOutMusic(1000);
+          this.soundManager.destroy();
+          this.soundManager = null;
         }
         
-        // Delay transition to allow fade to complete
-        this.time.delayedCall(1000, () => {
-          this.scene.start('ShopScene', {
-            lobbyId: this.lobbyId,
-            players: this.players,
-            mapSeed: this.gameMap.seed,
-            visitedNodes: visitedNodes,
-            currentNodeId: this.currentNodeId,
-            nodeId: node.id,
-            stage: this.currentStage, // Pass stage (doesn't increment for shops)
-          });
+        // Transition immediately
+        this.scene.start('ShopScene', {
+          lobbyId: this.lobbyId,
+          players: this.players,
+          mapSeed: this.gameMap.seed,
+          visitedNodes: visitedNodes,
+          currentNodeId: node.id, // Pass the TARGET node as current position
+          nodeId: node.id,
+          stage: this.currentStage, // Pass stage (doesn't increment for shops)
         });
         break;
         
       case NodeType.Event:
         console.log('Transitioning to event...');
         
-        // Fade out map music before transitioning
+        // CRITICAL: Kill all tweens and stop all sounds immediately
+        this.tweens.killAll();
+        this.sound.stopAll();
         if (this.soundManager) {
-          console.log('Fading out map music before transitioning to event...');
-          this.soundManager.fadeOutMusic(1000);
+          this.soundManager.destroy();
+          this.soundManager = null;
         }
         
-        // Delay transition to allow fade to complete
-        this.time.delayedCall(1000, () => {
-          this.scene.start('EventScene', {
-            lobbyId: this.lobbyId,
-            players: this.players,
-            mapSeed: this.gameMap.seed,
-            visitedNodes: visitedNodes,
-            currentNodeId: this.currentNodeId,
-            nodeId: node.id,
-            stage: this.currentStage, // Pass stage (doesn't increment for events)
-          });
+        // Transition immediately
+        this.scene.start('EventScene', {
+          lobbyId: this.lobbyId,
+          players: this.players,
+          mapSeed: this.gameMap.seed,
+          visitedNodes: visitedNodes,
+          currentNodeId: node.id, // Pass the TARGET node as current position
+          nodeId: node.id,
+          stage: this.currentStage, // Pass stage (doesn't increment for events)
         });
         break;
         
@@ -967,8 +975,25 @@ export class MapScene extends Phaser.Scene {
 
 
   shutdown(): void {
-    // Cleanup
+    console.log('[MapScene] Shutting down and cleaning up...');
+    
+    // Destroy all node visuals to prevent stacking
+    for (const visual of this.nodeVisuals.values()) {
+      visual.destroy();
+    }
     this.nodeVisuals.clear();
+    
+    // Destroy player marker
+    if (this.playerMarker) {
+      this.playerMarker.destroy();
+      this.playerMarker = null;
+    }
+    
+    // Destroy voting UI
+    if (this.votingUI) {
+      this.votingUI.destroy();
+      this.votingUI = null;
+    }
     
     // Cleanup cursors
     for (const cursor of this.remoteCursors.values()) {
@@ -976,11 +1001,16 @@ export class MapScene extends Phaser.Scene {
     }
     this.remoteCursors.clear();
     
+    // Clear votes
+    this.mapVotes.clear();
+    
     // Unsubscribe from network
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = null;
     }
+    
+    console.log('[MapScene] Cleanup complete');
   }
 
   destroy(): void {

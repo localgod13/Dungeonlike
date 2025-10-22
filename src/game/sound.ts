@@ -128,17 +128,26 @@ export class SoundManager {
     const music = this.currentMusic;
     
     // Create a tween to fade out the volume
-    this.scene.tweens.add({
+    const fadeTween = this.scene.tweens.add({
       targets: music,
       volume: 0,
       duration: duration,
       ease: 'Linear',
       onComplete: () => {
         console.log('[SoundManager] Music fade out complete, stopping music');
-        music.stop();
-        music.destroy();
+        if (music && !(music as any).destroyed) {
+          music.stop();
+          music.destroy();
+        }
         if (this.currentMusic === music) {
           this.currentMusic = null;
+        }
+      },
+      onUpdate: () => {
+        // Check if music is still valid during tween
+        if (!music || (music as any).destroyed) {
+          console.log('[SoundManager] Music was destroyed during fade, stopping tween');
+          fadeTween.stop();
         }
       }
     });
@@ -158,13 +167,20 @@ export class SoundManager {
     
     console.log(`[SoundManager] Fading in music to ${targetVolume} over ${duration}ms`);
     
-    this.scene.tweens.add({
+    const fadeTween = this.scene.tweens.add({
       targets: this.currentMusic,
       volume: targetVolume,
       duration: duration,
       ease: 'Linear',
       onComplete: () => {
         console.log('[SoundManager] Music fade in complete');
+      },
+      onUpdate: () => {
+        // Check if music is still valid during tween
+        if (!this.currentMusic || (this.currentMusic as any).destroyed) {
+          console.log('[SoundManager] Music was destroyed during fade in, stopping tween');
+          fadeTween.stop();
+        }
       }
     });
   }
@@ -205,13 +221,20 @@ export class SoundManager {
       // Fade in
       console.log(`[SoundManager] Fading in ${key} to ${targetVolume} over ${fadeDuration}ms`);
       
-      this.scene.tweens.add({
+      const fadeTween = this.scene.tweens.add({
         targets: this.currentMusic,
         volume: targetVolume,
         duration: fadeDuration,
         ease: 'Linear',
         onComplete: () => {
           console.log('[SoundManager] Music fade in complete');
+        },
+        onUpdate: () => {
+          // Check if music is still valid during tween
+          if (!this.currentMusic || (this.currentMusic as any).destroyed) {
+            console.log('[SoundManager] Music was destroyed during fade in, stopping tween');
+            fadeTween.stop();
+          }
         }
       });
     } catch (error) {

@@ -21,7 +21,7 @@ export const ActionPlanSchema = z.object({
   by: ActorIdSchema,
   type: ActionTypeSchema,
   target: ActorIdSchema.optional(),
-  cardId: z.string().optional(), // For Card actions
+  cardId: z.string().nullable().optional(), // For Card actions - can be null, undefined, or string
 });
 
 export const ResolveSeedSchema = z.object({
@@ -55,6 +55,18 @@ export const ShieldEntrySchema = z.object({
   shieldValue: z.number(),
 });
 
+export const BuffEffectSchema = z.object({
+  damageBonus: z.number(),
+  duration: z.number(),
+  source: ActorIdSchema,
+  type: z.enum(['damage', 'shield', 'other']),
+});
+
+export const BuffEntrySchema = z.object({
+  actorId: ActorIdSchema,
+  buffs: z.array(BuffEffectSchema),
+});
+
 export const ResolvePayloadSchema = z.object({
   turn: z.number(),
   seed: z.number(),
@@ -63,6 +75,8 @@ export const ResolvePayloadSchema = z.object({
   post: z.array(ActorSchema),
   dots: z.array(DotEntrySchema).optional(), // Serialized DOT effects
   shields: z.array(ShieldEntrySchema).optional(), // Serialized shield values
+  buffs: z.array(BuffEntrySchema).optional(), // Serialized buff effects
+  blinded: z.array(ActorIdSchema).optional(), // Serialized blinded actors
 });
 
 // Cursor position schema
@@ -79,7 +93,7 @@ export type CardId = string;
 
 export const LoadoutSchema = z.object({
   userId: z.string(),
-  cards: z.array(z.string()).max(4), // Up to 4 cards
+  cards: z.array(z.string()).max(10), // Up to 10 cards (5 class + 5 more)
 });
 
 export const SelectionMessageSchema = z.discriminatedUnion('t', [
@@ -124,6 +138,10 @@ export const CombatMessageSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('cursor_move'),
     cursor: CursorPositionSchema,
+  }),
+  z.object({
+    t: z.literal('debug_skip'),
+    skipType: z.enum(['next', 'boss']),
   }),
 ]);
 

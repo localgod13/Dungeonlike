@@ -100,6 +100,10 @@ export class Preload extends Phaser.Scene {
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/Battleground2.png'
     );
     this.load.image(
+      'bossbg',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/bosslevel1.png'
+    );
+    this.load.image(
       'cardselectbg',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/cardselectbg.png'
     );
@@ -124,6 +128,12 @@ export class Preload extends Phaser.Scene {
     this.load.image(
       'card_neutral',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/defense.png'
+    );
+    
+    // Load card back image for draw/discard piles
+    this.load.image(
+      'cardback',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/cardback.png'
     );
     console.log('[Preload] Card images queued for loading');
 

@@ -438,11 +438,13 @@ export class CardSelectScene extends Phaser.Scene {
 
     if (allReady && this.players.length > 0) {
       console.log('All players ready! Committing loadouts...');
-      this.commitLoadouts();
+      this.commitLoadouts().catch(err => {
+        console.error('Failed to commit loadouts:', err);
+      });
     }
   }
 
-  private commitLoadouts(): void {
+  private async commitLoadouts(): Promise<void> {
     // Build loadouts array
     const loadouts: Loadout[] = this.players.map(player => {
       const cards = this.loadouts.get(player.userId) || [];
@@ -456,36 +458,89 @@ export class CardSelectScene extends Phaser.Scene {
     console.log('Committing loadouts:', loadouts);
     console.log('All loadout entries:', Array.from(this.loadouts.entries()));
 
-    // Send commit message
+    // Send commit message and wait for it to be sent
     if (this.lobbyId) {
-      sendSelectCommit(this.lobbyId, loadouts).catch(err => {
+      try {
+        await sendSelectCommit(this.lobbyId, loadouts);
+        console.log('✅ Commit message sent successfully');
+        
+        // Add a small delay to ensure message is processed, then transition
+        console.log('🎮 Host transitioning after commit delay...');
+        this.time.delayedCall(100, () => {
+          this.transitionToBattle(loadouts);
+        });
+      } catch (err) {
         console.error('Failed to send commit:', err);
-      });
+        return; // Don't transition if commit failed
+      }
     }
-
-    // Transition to battle
-    this.transitionToBattle(loadouts);
   }
 
   private handleCommit(loadouts: Loadout[]): void {
     // Safety check: don't process if scene is shutting down
     if (!this.scene.isActive()) return;
     
+    console.log('🔥 COMMIT MESSAGE RECEIVED!');
     console.log('Received loadout commit:', loadouts);
+    console.log(`[CardSelect] handleCommit - isHost: ${this.isHost}, userId: ${this.userId}`);
+    console.log(`[CardSelect] Scene active: ${this.scene.isActive()}`);
     
-    // Non-hosts transition to battle when they receive the commit
+    // Non-host players transition to battle when they receive the commit
     if (!this.isHost) {
+      console.log('🎮 Non-host transitioning to battle...');
       this.transitionToBattle(loadouts);
+    } else {
+      console.log('🎮 Host ignoring commit message (already transitioning)');
     }
   }
 
   private transitionToBattle(loadouts: Loadout[]): void {
-    console.log('Transitioning to battle with loadouts:', loadouts);
+    console.log('🎬 TRANSITIONING TO BATTLE with loadouts:', loadouts);
+    console.log(`🎬 Scene active: ${this.scene.isActive()}, Scene key: ${this.scene.key}`);
+
+    // Prevent multiple transitions
+    if (!this.scene.isActive()) {
+      console.log('⚠️ Scene already inactive, skipping transition');
+      return;
+    }
+
+    // CRITICAL: Stop ALL sound and tweens to prevent volume tween crash
+    console.log('🔇 Stopping all sounds and tweens...');
+    this.tweens.killAll();
+    this.sound.stopAll();
+    
+    // Destroy sound manager to prevent any lingering tweens
+    if (this.soundManager) {
+      console.log('🔇 Destroying sound manager...');
+      this.soundManager.destroy();
+      this.soundManager = null;
+    }
+
+    // Show loading indicator to confirm scene is transitioning
+    const loadingText = this.add.text(
+      this.scale.width / 2,
+      this.scale.height / 2,
+      'Loading Battle...',
+      {
+        fontSize: '48px',
+        color: '#ffffff',
+        fontFamily: 'Arial Black',
+        stroke: '#000000',
+        strokeThickness: 8,
+      }
+    ).setOrigin(0.5).setDepth(10000);
 
     // Unsubscribe from network updates BEFORE transitioning
     if (this.unsubscribe) {
+      console.log('🔌 Unsubscribing from network...');
       this.unsubscribe();
       this.unsubscribe = null;
+    }
+
+    // Destroy UI to free up resources
+    if (this.cardUI) {
+      console.log('🗑️ Destroying card UI...');
+      this.cardUI.destroy();
     }
 
     // Prepare player data for battle scene
@@ -506,15 +561,19 @@ export class CardSelectScene extends Phaser.Scene {
     console.log('battlePlayers with classes:', battlePlayers.map(p => ({ name: p.name, class: p.selectedClass })));
     console.log('=== END TRANSITION ===');
 
-    // Transition to battle (card music will be handled by battle scene)
-    this.scene.start('BattleScene', {
-      lobbyId: this.lobbyId,
-      players: battlePlayers,
-      loadouts: loadouts,
-      mapSeed: this.mapSeed, // Pass map seed for continuity
-      visitedNodes: this.visitedNodes, // Pass visited nodes for map progression
-      currentNodeId: this.currentNodeId, // Pass current position
-      stage: this.currentStage, // Pass battle stage number
+    // Use a small delay to ensure the loading text renders
+    this.time.delayedCall(50, () => {
+      console.log('🚀 Starting BattleScene...');
+      // Transition to battle (card music will be handled by battle scene)
+      this.scene.start('BattleScene', {
+        lobbyId: this.lobbyId,
+        players: battlePlayers,
+        loadouts: loadouts,
+        mapSeed: this.mapSeed, // Pass map seed for continuity
+        visitedNodes: this.visitedNodes, // Pass visited nodes for map progression
+        currentNodeId: this.currentNodeId, // Pass current position
+        stage: this.currentStage, // Pass battle stage number
+      });
     });
   }
 

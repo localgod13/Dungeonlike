@@ -20,6 +20,7 @@ export interface MatchHandlers {
   onCommitTurn?: (turn: number) => void;
   onResolveTurn?: (payload: ResolvePayload) => void;
   onCursorMove?: (cursor: CursorPosition) => void;
+  onDebugSkip?: (skipType: 'next' | 'boss') => void;
 }
 
 export interface SelectionHandlers {
@@ -95,6 +96,13 @@ export async function subscribeMatch(
         // Process cursor updates from other players (not self)
         if (message.cursor.userId !== userId && handlers.onCursorMove) {
           handlers.onCursorMove(message.cursor);
+        }
+        break;
+      
+      case 'debug_skip':
+        // Process debug skip from anyone (for synchronized testing)
+        if (handlers.onDebugSkip) {
+          handlers.onDebugSkip(message.skipType);
         }
         break;
     }
@@ -257,6 +265,35 @@ export async function sendCursor(
     event: 'combat',
     payload: message,
   });
+}
+
+/**
+ * Send debug skip command
+ */
+export async function sendDebugSkip(
+  lobbyId: string,
+  skipType: 'next' | 'boss'
+): Promise<void> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
+
+  if (!userId) {
+    return; // Silently fail if not authenticated
+  }
+
+  const message: CombatMessage = {
+    t: 'debug_skip',
+    skipType,
+  };
+
+  const channel = supabase.channel(`match:${lobbyId}`);
+  await channel.send({
+    type: 'broadcast',
+    event: 'combat',
+    payload: message,
+  });
+
+  console.log(`Sent debug skip: ${skipType}`);
 }
 
 /**

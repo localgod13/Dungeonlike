@@ -15,9 +15,19 @@ import {
   createGoblinAnimations, 
   createGoblinSprite 
 } from './enemies/goblin';
+import {
+  preloadSkeleMageSprites,
+  createSkeleMageAnimations,
+  createSkeleMageSprite
+} from './enemies/skeleMage';
+import {
+  preloadDemonBossSprites,
+  createDemonBossAnimations,
+  createDemonBossSprite
+} from './enemies/demonBoss';
 
 // Enemy types
-export type EnemyType = 'FlyingDemon' | 'Goblin' | 'Skeleton' | 'Slime' | 'Boss';
+export type EnemyType = 'FlyingDemon' | 'Goblin' | 'SkeleMage' | 'DemonBoss' | 'Skeleton' | 'Slime';
 
 /**
  * Preload all enemy sprites
@@ -28,6 +38,8 @@ export function preloadEnemySprites(scene: Phaser.Scene): void {
   
   preloadFlyingDemonSprites(scene);
   preloadGoblinSprites(scene);
+  preloadSkeleMageSprites(scene);
+  preloadDemonBossSprites(scene);
   // Future: preloadSkeletonSprites(scene);
   // Future: preloadSlimeSprites(scene);
 }
@@ -41,6 +53,8 @@ export function createEnemyAnimations(scene: Phaser.Scene): void {
   
   createFlyingDemonAnimations(scene);
   createGoblinAnimations(scene);
+  createSkeleMageAnimations(scene);
+  createDemonBossAnimations(scene);
   // Future: createSkeletonAnimations(scene);
   // Future: createSlimeAnimations(scene);
 }
@@ -60,6 +74,10 @@ export function createEnemySprite(
       return createFlyingDemonSprite(scene, x, y, scale);
     case 'Goblin':
       return createGoblinSprite(scene, x, y, scale);
+    case 'SkeleMage':
+      return createSkeleMageSprite(scene, x, y, scale);
+    case 'DemonBoss':
+      return createDemonBossSprite(scene, x, y, scale);
     // Future cases:
     // case 'Skeleton': return createSkeletonSprite(scene, x, y, scale);
     // case 'Slime': return createSlimeSprite(scene, x, y, scale);
@@ -73,7 +91,7 @@ export function createEnemySprite(
  * Check if an enemy type has sprite support
  */
 export function hasEnemySprite(enemyType: string): boolean {
-  const supportedTypes: EnemyType[] = ['FlyingDemon', 'Goblin'];
+  const supportedTypes: EnemyType[] = ['FlyingDemon', 'Goblin', 'SkeleMage', 'DemonBoss'];
   return supportedTypes.includes(enemyType as EnemyType);
 }
 

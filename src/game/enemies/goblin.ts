@@ -28,15 +28,24 @@ export const GOBLIN_SPRITES: Record<string, EnemySpriteSheetConfig> = {
     frameWidth: 116,  // 696 / 6 columns
     frameHeight: 78,  // 1 row
   },
+  attack: {
+    key: 'goblin_attack',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/Enemies/goblin/ATTACK1.png',
+    frameWidth: 116,  // Estimated 8 frames
+    frameHeight: 78,
+  },
+  hurt: {
+    key: 'goblin_hurt',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/Enemies/goblin/HURT.png',
+    frameWidth: 116,  // Estimated 4 frames
+    frameHeight: 78,
+  },
   death: {
     key: 'goblin_death',
     url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/Enemies/goblin/DEATH.png',
     frameWidth: 116,  // 1160 / 10 columns
     frameHeight: 76,  // 1 row
   },
-  // Future animations:
-  // attack: { ... },
-  // hurt: { ... },
 };
 
 // Goblin animations
@@ -47,6 +56,20 @@ export const GOBLIN_ANIMATIONS: Record<string, EnemyAnimationConfig> = {
     frameCount: 6,
     frameRate: 8,
     repeat: -1, // Loop forever
+  },
+  attack: {
+    key: 'goblin_attack_anim',
+    spriteKey: 'goblin_attack',
+    frameCount: 8,
+    frameRate: 12,
+    repeat: 0, // Play once
+  },
+  hurt: {
+    key: 'goblin_hurt_anim',
+    spriteKey: 'goblin_hurt',
+    frameCount: 4,
+    frameRate: 10,
+    repeat: 0, // Play once
   },
   death: {
     key: 'goblin_death_anim',

@@ -275,6 +275,16 @@ export class LootScene extends Phaser.Scene {
   
   private transitionToMap(): void {
     console.log('[LootScene] Transitioning to map...');
+    console.log('[LootScene] Current node:', this.currentNodeId);
+    console.log('[LootScene] Visited nodes before:', this.visitedNodes);
+    
+    // Mark the battle node as visited before returning to map
+    if (this.currentNodeId && !this.visitedNodes.includes(this.currentNodeId)) {
+      this.visitedNodes.push(this.currentNodeId);
+      console.log('[LootScene] Marked node as visited:', this.currentNodeId);
+    }
+    
+    console.log('[LootScene] Visited nodes after:', this.visitedNodes);
     
     // Transition back to map
     this.scene.start('MapScene', {

@@ -6,6 +6,7 @@ import {
   sendCommit,
   sendResolve,
   sendCursor,
+  sendDebugSkip,
 } from '../net/match';
 import { 
   Actor, 
@@ -33,7 +34,7 @@ import { HandUI } from '../ui/handUi';
 import { getCardById, requiresTarget } from '../game/cards';
 import { startBattleAP, refreshAP, canAfford, spendAP } from '../game/economy';
 import { SoundManager } from '../game/sound';
-import { DeckState, createDeck, drawCards, playCard as deckPlayCard, canPlayCard as deckCanPlayCard, resetReusableCharges } from '../game/deck';
+import { DeckState, createDeck, drawCardsAtTurnStart, playCard as deckPlayCard, canPlayCard as deckCanPlayCard, resetReusableCharges } from '../game/deck';
 import { createCharacterAnimations, createCharacterSprite, hasSprite, CharacterClass } from '../game/characterSprites';
 import { preloadEnemySprites, createEnemyAnimations, createEnemySprite, hasEnemySprite, EnemyType } from '../game/enemySprites';
 import { createUltimatePowerManager, destroyUltimatePowerManager, UltimatePowerManager, hasPersistedPower } from '../game/ultimate';
@@ -71,7 +72,17 @@ export class BattleScene extends Phaser.Scene {
   private currentNodeId: string | null = null; // Track current position on map
 
   // Combat state
-  private combatState: CombatState;
+  private combatState: CombatState = {
+    turn: 1,
+    party: [],
+    enemies: [],
+    shields: new Map(),
+    vulnerable: new Map(),
+    stunned: new Set(),
+    dots: new Map(),
+    buffs: new Map(),
+    blinded: new Set()
+  };
   private currentTurn = 1;
   private currentStage = 1; // Track which battle this is (Stage 1, 2, 3, etc.)
   private phase: 'planning' | 'resolving' | 'idle' = 'planning';
@@ -88,6 +99,7 @@ export class BattleScene extends Phaser.Scene {
   private selectedTarget: ActorId | null = null;
   private lockButton: Phaser.GameObjects.Container | null = null;
   private pendingActionDisplay: Phaser.GameObjects.Text | null = null;
+  private clearQueueButton: Phaser.GameObjects.Container | null = null;
 
   // Animation timeline
   private timeline: AnimationTimeline | null = null;
@@ -131,6 +143,10 @@ export class BattleScene extends Phaser.Scene {
   private powerBars: Map<ActorId, UltimatePowerBar> = new Map();
   private debugUltimateButton: Phaser.GameObjects.Container | null = null;
   private shieldAuras: Map<ActorId, ShieldAura> = new Map();
+  
+  // Debug buttons
+  private debugSkipLevelButton: Phaser.GameObjects.Container | null = null;
+  private debugSkipToBossButton: Phaser.GameObjects.Container | null = null;
 
   // Player stat displays (bottom left HUD)
   private playerHpText: Phaser.GameObjects.Text | null = null;
@@ -179,6 +195,28 @@ export class BattleScene extends Phaser.Scene {
       this.targetSelector = null;
     }
     
+    // CRITICAL: Destroy all party and enemy slot containers to prevent stacking
+    console.log(`🗑️ Destroying ${this.partySlots.length} party slots and ${this.enemySlots.length} enemy slots...`);
+    for (const slot of this.partySlots) {
+      if (slot) slot.destroy();
+    }
+    for (const slot of this.enemySlots) {
+      if (slot) slot.destroy();
+    }
+    for (const button of this.actionButtons) {
+      if (button) button.destroy();
+    }
+    
+    // Destroy status effect containers
+    for (const container of this.statusEffectContainers.values()) {
+      if (container) container.destroy();
+    }
+    
+    // Destroy remote cursors
+    for (const cursor of this.remoteCursors.values()) {
+      if (cursor) cursor.destroy();
+    }
+    
     // Clear collections
     this.combatLogEntries = [];
     this.playerPlans.clear();
@@ -216,7 +254,7 @@ export class BattleScene extends Phaser.Scene {
         // Create deck state with draw/discard mechanics
         const deckState = createDeck(loadout.cards);
         this.playerDecks.set(loadout.userId, deckState);
-        console.log(`  Created deck - Hand: ${deckState.hand.length}, Deck: ${deckState.deck.length}`);
+        console.log(`  Created deck - Hand: ${deckState.hand.length}, DrawPile: ${deckState.drawPile.length}`);
       });
     } else {
       console.log('⚠️ No loadouts provided in init data!');
@@ -276,15 +314,83 @@ export class BattleScene extends Phaser.Scene {
           },
         ];
       
+      case 3:
+        // Stage 3: Introduce Skele Mage
+        return [
+          {
+            id: 'enemy_1',
+            side: 'enemy',
+            name: 'Skele Mage',
+            hp: 45,
+            maxHp: 45,
+            ap: 5,
+          },
+          {
+            id: 'enemy_2',
+            side: 'enemy',
+            name: 'Goblin Warrior',
+            hp: 40,
+            maxHp: 40,
+            ap: 5,
+          },
+        ];
+      
+      case 4:
+      case 5:
+        // Stage 4-5: Mixed enemy groups
+        return [
+          {
+            id: 'enemy_1',
+            side: 'enemy',
+            name: stage === 4 ? 'Flying Demon' : 'Skele Mage',
+            hp: 50,
+            maxHp: 50,
+            ap: 5,
+          },
+          {
+            id: 'enemy_2',
+            side: 'enemy',
+            name: 'Goblin Warrior',
+            hp: 45,
+            maxHp: 45,
+            ap: 5,
+          },
+          {
+            id: 'enemy_3',
+            side: 'enemy',
+            name: stage === 4 ? 'Goblin Archer' : 'Flying Demon',
+            hp: 40,
+            maxHp: 40,
+            ap: 5,
+          },
+        ];
+      
+      case 6:
+        // Stage 6: DEMON BOSS FIGHT (First World Final Boss)
+        console.log('🔥 BOSS BATTLE: DEMON BOSS 🔥');
+        return [
+          {
+            id: 'boss_1',
+            side: 'enemy',
+            name: 'Demon Boss',
+            hp: 150,
+            maxHp: 150,
+            ap: 5,
+          },
+        ];
+      
       default:
-        // Stage 3+: Scale difficulty
-        const enemyCount = Math.min(1 + Math.floor(stage / 2), 3);
-        const baseHP = 40 + (stage * 5);
+        // Stage 7+: Post-boss scaling difficulty (if continuing)
+        const enemyCount = Math.min(2 + Math.floor((stage - 6) / 2), 3);
+        const baseHP = 60 + ((stage - 6) * 8);
+        
+        // Mix of enemy types
+        const enemyTypes = ['Skele Mage', 'Goblin', 'Flying Demon'];
         
         return Array.from({ length: enemyCount }, (_, i) => ({
           id: `enemy_${i + 1}`,
           side: 'enemy' as const,
-          name: `Goblin ${i + 1}`,
+          name: enemyTypes[i % enemyTypes.length] + (enemyCount > 1 ? ` ${i + 1}` : ''),
           hp: baseHP,
           maxHp: baseHP,
           ap: 5,
@@ -293,6 +399,9 @@ export class BattleScene extends Phaser.Scene {
   }
 
   async create(): Promise<void> {
+    console.log('🎮 ========================================');
+    console.log('🎮 BATTLE SCENE CREATE() CALLED');
+    console.log('🎮 ========================================');
     console.log('Battle scene started');
 
     // Get current user
@@ -331,28 +440,34 @@ export class BattleScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#0d0d0d');
 
     // Battle area dimensions
-    const battleWidth = 1280;
-    const battleHeight = 600;
-    const bottomMargin = 120; // Space for action buttons
+    const battleWidth = this.scale.width;
+    const battleHeight = this.scale.height;
+    const bottomMargin = 120; // Space for action buttons (but bg covers it)
     
     // Add background image based on stage
-    const bgKey = this.currentStage === 2 ? 'battleground2' : 'battleground1';
+    let bgKey = 'battleground1';
+    if (this.currentStage === 6) {
+      bgKey = 'bossbg'; // Special background for boss fight
+    } else if (this.currentStage === 2) {
+      bgKey = 'battleground2';
+    }
     console.log(`Loading background for stage ${this.currentStage}: ${bgKey}`);
     const bg = this.add.image(0, 0, bgKey);
     bg.setOrigin(0, 0);
     bg.setDepth(-1); // Behind everything
     
-    // Scale background to fit the battle area (1280x600)
+    // Scale background to cover the ENTIRE screen (no black bars anywhere)
     const scaleX = battleWidth / bg.width;
     const scaleY = battleHeight / bg.height;
-    const scale = Math.min(scaleX, scaleY); // Use min to fit within battle area
+    // All backgrounds: use max to cover entire screen (no black bars)
+    const scale = Math.max(scaleX, scaleY);
     bg.setScale(scale);
     
-    // Center the background in the battle area
+    // Center the background to cover full screen
     const bgWidth = bg.width * scale;
     const bgHeight = bg.height * scale;
     const bgX = (this.scale.width - bgWidth) / 2;
-    const bgY = (this.scale.height - bottomMargin - bgHeight) / 2;
+    const bgY = (this.scale.height - bgHeight) / 2; // Remove bottomMargin consideration
     
     bg.setPosition(bgX, bgY);
     
@@ -386,15 +501,24 @@ export class BattleScene extends Phaser.Scene {
       if (sound.key === 'music_cardselect') {
         console.log('Found card selection music, fading it out...');
         // Fade it out for smooth crossfade
-        this.tweens.add({
+        const fadeTween = this.tweens.add({
           targets: sound,
           volume: 0,
           duration: 1500,
           ease: 'Linear',
           onComplete: () => {
             console.log('Card selection music fade complete, stopping...');
-            sound.stop();
-            sound.destroy();
+            if (sound && !(sound as any).destroyed) {
+              sound.stop();
+              sound.destroy();
+            }
+          },
+          onUpdate: () => {
+            // Check if sound is still valid during tween
+            if (!sound || (sound as any).destroyed) {
+              console.log('Card selection music was destroyed during fade, stopping tween');
+              fadeTween.stop();
+            }
           }
         });
       }
@@ -423,6 +547,7 @@ export class BattleScene extends Phaser.Scene {
       onCommitTurn: this.handleCommitTurn.bind(this),
       onResolveTurn: this.handleResolveTurn.bind(this),
       onCursorMove: this.handleCursorMove.bind(this),
+      onDebugSkip: this.handleDebugSkip.bind(this),
     }).then((unsubscribe) => {
       this.unsubscribe = unsubscribe;
     }).catch((error) => {
@@ -434,8 +559,10 @@ export class BattleScene extends Phaser.Scene {
       this.handleLocalCursorMove(pointer.x, pointer.y);
     });
 
-    // Create debug ultimate button
+    // Create debug buttons
     this.createDebugUltimateButton();
+    this.createDebugSkipLevelButton();
+    this.createDebugSkipToBossButton();
 
     // Start planning phase
     this.startPlanningPhase();
@@ -444,6 +571,7 @@ export class BattleScene extends Phaser.Scene {
   private createBattleLayout(): void {
     const centerX = this.scale.width / 2;
     const centerY = this.scale.height / 2;
+    const verticalOffset = 60; // Move everything down to better center in viewport
 
     // Create party slots (left side) - dynamic positioning based on player count
     const playerCount = this.players.length;
@@ -463,7 +591,7 @@ export class BattleScene extends Phaser.Scene {
       
       const slot = this.createPartySlot(
         centerX - 450 + positionIndex * 180,
-        centerY,
+        centerY + verticalOffset,
         player
       );
       this.partySlots.push(slot);
@@ -474,7 +602,7 @@ export class BattleScene extends Phaser.Scene {
       const enemy = this.enemies[i];
       const slot = this.createEnemySlot(
         centerX + 200 + i * 120,
-        centerY,
+        centerY + verticalOffset,
         enemy
       );
       this.enemySlots.push(slot);
@@ -636,11 +764,17 @@ export class BattleScene extends Phaser.Scene {
    * Map enemy name to enemy type for sprite lookup
    */
   private getEnemyType(enemyName: string): EnemyType | null {
+    if (enemyName.includes('Demon Boss')) {
+      return 'DemonBoss';
+    }
     if (enemyName.includes('Flying Demon')) {
       return 'FlyingDemon';
     }
     if (enemyName.includes('Goblin')) {
       return 'Goblin';
+    }
+    if (enemyName.includes('Skele Mage')) {
+      return 'SkeleMage';
     }
     // Future enemy types:
     // if (enemyName.includes('Skeleton')) return 'Skeleton';
@@ -663,12 +797,15 @@ export class BattleScene extends Phaser.Scene {
     
     if (enemyType && hasEnemySprite(enemyType)) {
       try {
-        const sprite = createEnemySprite(this, 0, -10, enemyType, 1.5);
+        // Use larger scale and higher position for bosses
+        const spriteScale = enemyType === 'DemonBoss' ? 3.5 : 1.5;
+        const spriteY = enemyType === 'DemonBoss' ? -150 : -10; // Bosses positioned much higher
+        const sprite = createEnemySprite(this, 0, spriteY, enemyType, spriteScale);
         if (sprite) {
           container.add(sprite);
           spriteCreated = true;
           bg.setVisible(false); // Hide background when using sprite
-          console.log(`✓ Using sprite for enemy: ${enemy.name} (${enemyType})`);
+          console.log(`✓ Using sprite for enemy: ${enemy.name} (${enemyType}) at scale ${spriteScale}, y: ${spriteY}`);
         }
       } catch (error) {
         console.error(`Failed to create sprite for enemy ${enemyType}:`, error);
@@ -1065,7 +1202,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     console.log(`Creating hand UI with ${myDeck.hand.length} cards from deck:`, myDeck.hand);
-    console.log(`  Remaining in deck: ${myDeck.deck.length}, Discard: ${myDeck.discardPile.length}`);
+    console.log(`  Remaining in draw pile: ${myDeck.drawPile.length}, Discard: ${myDeck.discardPile.length}`);
     
     // Create hand UI with current 4 cards from deck
     this.handUI = new HandUI(
@@ -1077,6 +1214,9 @@ export class BattleScene extends Phaser.Scene {
     // Update AP display
     const currentAP = this.playerAP.get(this.userId) || 0;
     this.handUI.setAP(currentAP);
+    
+    // Update pile indicators
+    this.handUI.updatePileIndicators(myDeck.drawPile.length, myDeck.discardPile.length);
 
     // Hide action buttons since we're using cards
     this.actionButtons.forEach(button => button.setVisible(false));
@@ -1145,37 +1285,28 @@ export class BattleScene extends Phaser.Scene {
       this.ultimatePowerManager.useUltimate(playerActor.id);
       this.updatePowerBar(playerActor.id);
       
-      // Trigger ultimate animation immediately (not queued)
-      console.log(`🔥 ULTIMATE ACTIVATED: ${card.name}!`);
-      this.triggerUltimateAnimation(card.id);
+      // Queue the ultimate action (same as regular cards)
+      const action: ActionPlan = {
+        by: playerActor.id,
+        type: 'Card',
+        target: targetId || undefined,
+        cardId: this.selectedCardId || undefined,
+      };
+      this.queuedActions.push(action);
       
-      // Show epic feedback that auto-hides
+      console.log(`🔥 ULTIMATE QUEUED: ${card.name}!`);
+      console.log(`Queued actions: ${this.queuedActions.length}`);
+      
+      // Show epic feedback
       this.showPendingActionText(
-        `⚡ ${card.name} UNLEASHED! ⚡`,
+        `⚡ ${card.name} QUEUED! ⚡`,
         '#ffff00'
       );
-      
-      // Auto-hide the text after the ultimate animation completes
-      let hideDelay = 2000;
-      if (card.id === 'RainOfArrows') {
-        hideDelay = 2000; // Arrow rain duration
-      } else if (card.id === 'Meteor') {
-        hideDelay = 2500; // Meteor shower duration
-      } else if (card.id === 'BerserkRage') {
-        hideDelay = 4500; // 4-hit combo with slow-mo + finisher
-      }
-      
-      this.time.delayedCall(hideDelay, () => {
-        this.hidePendingActionText();
-      });
       
       // Clear selection
       this.selectedCardId = null;
       this.selectedAction = null;
       this.selectedTarget = null;
-      
-      // Don't queue ultimate - it plays immediately
-      return;
     }
 
     // Regular card - deduct AP and queue
@@ -1188,7 +1319,7 @@ export class BattleScene extends Phaser.Scene {
       by: playerActor.id,
       type: 'Card',
       target: targetId || undefined,
-      cardId: this.selectedCardId,
+      cardId: this.selectedCardId || undefined,
     };
     this.queuedActions.push(action);
 
@@ -1223,68 +1354,100 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * Trigger ultimate animation based on card ID
+   * Process played cards and update deck state
+   * Called after turn resolution to discard played cards
    */
-  private triggerUltimateAnimation(ultimateCardId: string): void {
+  private processPlayedCards(): void {
+    console.log('[BattleScene] Processing played cards...');
+    
+    this.playerPlans.forEach((plans, actorId) => {
+      const player = this.players.find(p => p.id === actorId);
+      if (!player) return;
+      
+      const userId = player.userId || player.id;
+      const deck = this.playerDecks.get(userId);
+      if (!deck) return;
+      
+      // Create animation callback for discarding cards (only for current player)
+      const DISCARD_ANIMATION_STAGGER_MS = 200; // Delay between each card discard
+      const onDiscardAnimation = userId === this.userId ? 
+        (cardId: string, position: number, delay: number) => {
+          if (this.handUI) {
+            this.handUI.animateDiscardCard(cardId, position, delay);
+          }
+        } : undefined;
+      
+      let cardIndex = 0;
+      plans.forEach(plan => {
+        if (plan.type === 'Card' && plan.cardId) {
+          console.log(`[BattleScene] Processing played card: ${plan.cardId} for ${player.name}`);
+          const animationDelay = cardIndex * DISCARD_ANIMATION_STAGGER_MS; // 0ms, 200ms, 400ms, etc.
+          deckPlayCard(deck, plan.cardId, onDiscardAnimation, animationDelay);
+          cardIndex++;
+        }
+      });
+      
+      // Update pile indicators for current player
+      if (userId === this.userId && this.handUI) {
+        this.handUI.updatePileIndicators(deck.drawPile.length, deck.discardPile.length);
+      }
+    });
+    
+    console.log('[BattleScene] Finished processing played cards');
+  }
+  private isUltimateCard(cardName: string): boolean {
+    const ultimateCardNames = ['Rain of Arrows', 'Meteor Shower', 'Berserk Rage'];
+    return ultimateCardNames.includes(cardName);
+  }
+
+  private getUltimateCardId(cardName: string): string {
+    const nameToIdMap: { [key: string]: string } = {
+      'Rain of Arrows': 'RainOfArrows',
+      'Meteor Shower': 'Meteor',
+      'Berserk Rage': 'BerserkRage'
+    };
+    return nameToIdMap[cardName] || cardName;
+  }
+
+  private triggerUltimateAnimation(ultimateCardId: string, casterId: ActorId): void {
     if (ultimateCardId === 'RainOfArrows') {
       // Huntress ultimate - rain of arrows
-      this.playArrowRain();
-      
-      // Deal damage to all enemies after animation
-      this.time.delayedCall(1500, () => {
-        this.enemies.forEach(enemy => {
-          if (enemy.hp > 0) {
-            const damage = 15;
-            this.applyDamageToActor(enemy.id, damage);
-            this.addCombatLogEntry(`Rain of Arrows hits ${enemy.name} for ${damage} damage!`, '#44ff44');
-          }
-        });
-        
-        // Check if combat ended from ultimate damage
-        this.checkCombatEndAfterUltimate();
-      });
+      this.playArrowRain(casterId);
     } else if (ultimateCardId === 'Meteor') {
       // Mage ultimate - meteor shower
-      this.playMeteorShower();
-      
-      // Deal damage to all enemies after animation
-      this.time.delayedCall(1800, () => {
-        this.enemies.forEach(enemy => {
-          if (enemy.hp > 0) {
-            const damage = 18;
-            this.applyDamageToActor(enemy.id, damage);
-            this.addCombatLogEntry(`Meteor Shower hits ${enemy.name} for ${damage} damage!`, '#4444ff');
-          }
-        });
-        
-        // Check if combat ended from ultimate damage
-        this.checkCombatEndAfterUltimate();
-      });
+      this.playMeteorShower(casterId);
     } else if (ultimateCardId === 'BerserkRage') {
       // Warrior ultimate - berserk rage combo
-      this.playBerserkRage();
+      this.playBerserkRage(casterId);
     }
   }
 
   /**
    * ULTIMATE: Berserk Rage - 4-hit combo with all 3 attack animations
    */
-  private playBerserkRage(): void {
-    console.log('⚔️ BERSERK RAGE ULTIMATE!');
+  private playBerserkRage(casterId: ActorId): void {
+    console.log(`⚔️ BERSERK RAGE ULTIMATE cast by ${casterId}!`);
     
-    if (!this.userId) return;
-    
-    // Find the warrior player
-    const warriorPlayer = this.players.find(p => p.userId === this.userId);
-    if (!warriorPlayer) return;
+    // Find the warrior player by casterId
+    const warriorPlayer = this.players.find(p => p.id === casterId);
+    if (!warriorPlayer) {
+      console.warn(`Could not find warrior player with id: ${casterId}`);
+      return;
+    }
     
     // Get warrior's slot and sprite
     const warriorIndex = this.players.findIndex(p => p.id === warriorPlayer.id);
     const warriorSlot = this.partySlots[warriorIndex];
-    if (!warriorSlot) return;
+    if (!warriorSlot) {
+      console.warn(`Could not find warrior slot for player: ${warriorPlayer.name}`);
+      return;
+    }
     
     const warriorSprite = warriorSlot.list.find(obj => obj.type === 'Sprite') as Phaser.GameObjects.Sprite | undefined;
-    if (!warriorSprite) return;
+    if (!warriorSprite) {
+      console.warn(`Could not find warrior sprite for player: ${warriorPlayer.name}`);
+      return;
+    }
     
     // 🎬 DRAMATIC SLOW MOTION EFFECT
     this.time.timeScale = 0.5; // EXTREME slow motion for maximum drama
@@ -2272,6 +2435,9 @@ export class BattleScene extends Phaser.Scene {
     this.combatState.turn = this.currentTurn;
     console.log(`Starting turn ${this.currentTurn}`);
     
+    // Process played cards and update deck state
+    this.processPlayedCards();
+    
     // Reset for next turn
     this.playerPlans.clear();
     this.isLocked = false;
@@ -2282,16 +2448,12 @@ export class BattleScene extends Phaser.Scene {
     if (this.timeline) {
       console.log('Starting animation timeline...');
       console.log('Timeline before start:', {
-        events: this.timeline.events?.length || 0,
-        isPlaying: this.timeline.isPlaying,
         isActive: this.timeline.isActive()
       });
       
       this.timeline.start();
       
       console.log('Timeline after start:', {
-        events: this.timeline.events?.length || 0,
-        isPlaying: this.timeline.isPlaying,
         isActive: this.timeline.isActive()
       });
     } else {
@@ -2314,6 +2476,15 @@ export class BattleScene extends Phaser.Scene {
       },
       onStrike: (srcId, dstId, note) => {
         console.log(`Animation: Strike from ${srcId} to ${dstId} (${note})`);
+        
+        // Check if this is an ultimate card and trigger special animation
+        if (note && this.isUltimateCard(note)) {
+          console.log(`🔥 ULTIMATE CARD DETECTED: ${note} cast by ${srcId}!`);
+          const cardId = this.getUltimateCardId(note);
+          this.triggerUltimateAnimation(cardId, srcId);
+          return; // Skip regular strike animation for ultimates
+        }
+        
         // Play sound based on the action note
         // Only play card sounds for actual card names (not animation types like "slash")
         if (note && this.soundManager) {
@@ -2437,11 +2608,11 @@ export class BattleScene extends Phaser.Scene {
           console.log(`✓ Granted ${amount}% ultimate power to ${srcId}`);
           
           // Refresh UI if this is the local player
-          const myId = getCurrentUserId();
-          const myActorId = this.getPlayerActorId(myId);
-          if (myActorId === srcId && this.ultimateUi) {
-            this.ultimateUi.refresh();
-          }
+          getCurrentUserId().then(myId => {
+            if (myId === srcId) {
+              console.log(`Ultimate power updated for local player: ${srcId}`);
+            }
+          });
         }
         
         // Visual effect - add a glow animation
@@ -2516,8 +2687,8 @@ export class BattleScene extends Phaser.Scene {
   /**
    * ULTIMATE: Rain of Arrows - 15 arrows fall from sky hitting all enemies
    */
-  private playArrowRain(): void {
-    console.log('🏹 RAIN OF ARROWS ULTIMATE!');
+  private playArrowRain(casterId: ActorId): void {
+    console.log(`🏹 RAIN OF ARROWS ULTIMATE cast by ${casterId}!`);
     
     // Get all enemy slots
     const enemySlots = this.enemySlots;
@@ -2584,13 +2755,19 @@ export class BattleScene extends Phaser.Scene {
         }
       });
     }
+    
+    // Check if combat ended after Rain of Arrows
+    // 15 arrows × 80ms stagger + 700ms for last hit + 200ms buffer = 2100ms
+    this.time.delayedCall(2100, () => {
+      this.checkCombatEndAfterUltimate();
+    });
   }
 
   /**
    * ULTIMATE: Meteor Shower - Animated fireballs fall from sky hitting all enemies
    */
-  private playMeteorShower(): void {
-    console.log('☄️ METEOR SHOWER ULTIMATE!');
+  private playMeteorShower(casterId: ActorId): void {
+    console.log(`☄️ METEOR SHOWER ULTIMATE cast by ${casterId}!`);
     
     // Get all enemy slots
     const enemySlots = this.enemySlots;
@@ -2748,6 +2925,12 @@ export class BattleScene extends Phaser.Scene {
         }
       });
     }
+    
+    // Check if combat ended after Meteor Shower
+    // 12 meteors × 100ms stagger + 700ms for last hit + 500ms for explosion animations = 2400ms
+    this.time.delayedCall(2400, () => {
+      this.checkCombatEndAfterUltimate();
+    });
   }
 
   private playStrike(srcId: ActorId, dstId: ActorId, note?: string): void {
@@ -2755,9 +2938,11 @@ export class BattleScene extends Phaser.Scene {
     const dstSlot = this.getActorSlot(dstId);
     
     if (srcSlot) {
-      // Try to play attack animation on character sprite
+      // Try to play attack animation on sprite
       const actor = [...this.players, ...this.enemies].find(a => a.id === srcId);
+      
       if (actor && actor.side === 'party') {
+        // PLAYER ATTACK ANIMATIONS
         const battleActor = actor as BattleActor;
         const characterClass = battleActor.selectedClass;
         
@@ -2806,6 +2991,41 @@ export class BattleScene extends Phaser.Scene {
             });
           }
         }
+      } else if (actor && actor.side === 'enemy') {
+        // ENEMY ATTACK ANIMATIONS
+        const enemyType = this.getEnemyType(actor.name);
+        const sprite = srcSlot.list.find(obj => obj.type === 'Sprite') as Phaser.GameObjects.Sprite | undefined;
+        
+        if (sprite && enemyType) {
+          let attackAnimKey: string | null = null;
+          let idleAnimKey: string | null = null;
+          
+          if (enemyType === 'Goblin') {
+            attackAnimKey = 'goblin_attack_anim';
+            idleAnimKey = 'goblin_idle_anim';
+          } else if (enemyType === 'FlyingDemon') {
+            attackAnimKey = 'flying_demon_attack_anim';
+            idleAnimKey = 'flying_demon_idle_anim';
+          } else if (enemyType === 'SkeleMage') {
+            attackAnimKey = 'skele_mage_attack_anim';
+            idleAnimKey = 'skele_mage_idle_anim';
+          } else if (enemyType === 'DemonBoss') {
+            attackAnimKey = 'demon_boss_attack_anim';
+            idleAnimKey = 'demon_boss_idle_anim';
+          }
+          
+          if (attackAnimKey && this.anims.exists(attackAnimKey)) {
+            console.log(`🔥 Playing enemy attack animation: ${attackAnimKey}`);
+            sprite.play(attackAnimKey);
+            
+            // Return to idle after attack animation completes
+            if (idleAnimKey && this.anims.exists(idleAnimKey)) {
+              sprite.once('animationcomplete', () => {
+                sprite.play(idleAnimKey);
+              });
+            }
+          }
+        }
       }
       
       // Strike animation - forward movement (slowed for visibility)
@@ -2834,9 +3054,11 @@ export class BattleScene extends Phaser.Scene {
   private playHit(srcId: ActorId, dstId: ActorId, damage: number): void {
     const dstSlot = this.getActorSlot(dstId);
     if (dstSlot) {
-      // Try to play hurt animation on character sprite
+      // Try to play hurt animation on sprite
       const actor = [...this.players, ...this.enemies].find(a => a.id === dstId);
+      
       if (actor && actor.side === 'party') {
+        // PLAYER HURT ANIMATIONS
         const battleActor = actor as BattleActor;
         const characterClass = battleActor.selectedClass;
         
@@ -2866,6 +3088,41 @@ export class BattleScene extends Phaser.Scene {
                 sprite.play(idleKey);
               }
             });
+          }
+        }
+      } else if (actor && actor.side === 'enemy') {
+        // ENEMY HURT ANIMATIONS
+        const enemyType = this.getEnemyType(actor.name);
+        const sprite = dstSlot.list.find(obj => obj.type === 'Sprite') as Phaser.GameObjects.Sprite | undefined;
+        
+        if (sprite && enemyType) {
+          let hurtAnimKey: string | null = null;
+          let idleAnimKey: string | null = null;
+          
+          if (enemyType === 'Goblin') {
+            hurtAnimKey = 'goblin_hurt_anim';
+            idleAnimKey = 'goblin_idle_anim';
+          } else if (enemyType === 'FlyingDemon') {
+            hurtAnimKey = 'flying_demon_hurt_anim';
+            idleAnimKey = 'flying_demon_idle_anim';
+          } else if (enemyType === 'SkeleMage') {
+            hurtAnimKey = 'skele_mage_hurt_anim';
+            idleAnimKey = 'skele_mage_idle_anim';
+          } else if (enemyType === 'DemonBoss') {
+            hurtAnimKey = 'demon_boss_hurt_anim';
+            idleAnimKey = 'demon_boss_idle_anim';
+          }
+          
+          if (hurtAnimKey && this.anims.exists(hurtAnimKey)) {
+            console.log(`💔 Playing enemy hurt animation: ${hurtAnimKey}`);
+            sprite.play(hurtAnimKey);
+            
+            // Return to idle after hurt animation completes
+            if (idleAnimKey && this.anims.exists(idleAnimKey)) {
+              sprite.once('animationcomplete', () => {
+                sprite.play(idleAnimKey);
+              });
+            }
           }
         }
       }
@@ -2919,6 +3176,10 @@ export class BattleScene extends Phaser.Scene {
           deathAnimKey = 'goblin_death_anim';
         } else if (enemyType === 'FlyingDemon') {
           deathAnimKey = 'flying_demon_death_anim';
+        } else if (enemyType === 'SkeleMage') {
+          deathAnimKey = 'skele_mage_death_anim';
+        } else if (enemyType === 'DemonBoss') {
+          deathAnimKey = 'demon_boss_death_anim';
         }
         
         if (deathAnimKey && this.anims.exists(deathAnimKey)) {
@@ -4007,6 +4268,9 @@ export class BattleScene extends Phaser.Scene {
       console.log('Turn 1: Players start with initial AP (no refresh)');
     }
     
+    // Track which cards are drawn for animation
+    let newlyDrawnCards: string[] = [];
+    
     // Draw new cards from deck for all players (including turn 1)
     // This happens at START of planning phase, so previous hand has been played
     this.players.forEach(player => {
@@ -4014,9 +4278,28 @@ export class BattleScene extends Phaser.Scene {
       if (deck) {
         // Only draw new cards if this isn't the very first turn
         // (Turn 1 uses the initial hand from createDeck)
-        if (this.currentTurn > 1) {
-          drawCards(deck);
-          console.log(`[Deck] ${player.name} drew 4 new cards - Hand: ${deck.hand.length}, Deck: ${deck.deck.length}, Discard: ${deck.discardPile.length}`);
+        if (this.currentTurn > 1 && player.userId === this.userId) {
+          // Track hand size before drawing
+          const handSizeBefore = deck.hand.length;
+          
+          // Create animation callback for drawing cards (only for current player)
+          const onDrawAnimation = (cardId: string, position: number, delay: number) => {
+            if (this.handUI) {
+              this.handUI.animateDrawCard(cardId, position, delay);
+            }
+          };
+          
+          drawCardsAtTurnStart(deck, onDrawAnimation);
+          
+          // Track which cards were just drawn
+          newlyDrawnCards = deck.hand.slice(handSizeBefore);
+          
+          console.log(`[Deck] ${player.name} drew cards - Hand: ${deck.hand.length}, DrawPile: ${deck.drawPile.length}, Discard: ${deck.discardPile.length}`);
+          console.log(`[Deck] Newly drawn cards:`, newlyDrawnCards);
+        } else if (this.currentTurn > 1) {
+          // Other players - no animation
+          drawCardsAtTurnStart(deck);
+          console.log(`[Deck] ${player.name} drew cards - Hand: ${deck.hand.length}, DrawPile: ${deck.drawPile.length}, Discard: ${deck.discardPile.length}`);
         }
         
         // Reset reusable item charges for new turn (including turn 1)
@@ -4031,16 +4314,21 @@ export class BattleScene extends Phaser.Scene {
         console.log(`[Deck] ========================================`);
         console.log(`[Deck] TURN ${this.currentTurn} - HAND UI UPDATE`);
         console.log(`[Deck] Current hand (${myDeck.hand.length} cards):`, myDeck.hand);
-        console.log(`[Deck] Deck remaining: ${myDeck.deck.length} cards`);
+        console.log(`[Deck] Draw pile remaining: ${myDeck.drawPile.length} cards`);
         console.log(`[Deck] Discard pile: ${myDeck.discardPile.length} cards`);
+        console.log(`[Deck] Cards to hide for animation:`, newlyDrawnCards);
         console.log(`[Deck] ========================================`);
         
         this.handUI.destroy();
         this.handUI = new HandUI(
           this,
           myDeck.hand,
-          (cardId) => this.selectCard(cardId)
+          (cardId) => this.selectCard(cardId),
+          newlyDrawnCards // Hide newly drawn cards for animation
         );
+        
+        // Update pile indicators
+        this.handUI.updatePileIndicators(myDeck.drawPile.length, myDeck.discardPile.length);
       }
     }
     
@@ -4123,20 +4411,35 @@ export class BattleScene extends Phaser.Scene {
    * Check if combat should end after an ultimate ability
    */
   private checkCombatEndAfterUltimate(): void {
-    // Check if all enemies are dead
-    const allEnemiesDead = this.enemies.every(e => e.hp <= 0);
-    const allPlayersDead = this.players.every(p => p.hp <= 0);
+    // Check combat state (which has been updated via applyDamageToActor during hit callbacks)
+    // Use combatState instead of local arrays for accurate HP values
+    const allEnemiesDead = this.combatState.enemies.every(e => e.hp <= 0);
+    const allPlayersDead = this.combatState.party.every(p => p.hp <= 0);
+    
+    console.log('[Ultimate] Checking combat end...');
+    console.log('[Ultimate] Enemies HP:', this.combatState.enemies.map(e => `${e.name}: ${e.hp}/${e.maxHp}`));
+    console.log('[Ultimate] Players HP:', this.combatState.party.map(p => `${p.name}: ${p.hp}/${p.maxHp}`));
     
     if (allEnemiesDead) {
       console.log('🎉 All enemies defeated by ultimate! Victory!');
+      // Clear timeline to prevent normal combat end check
+      this.timeline = null;
+      this.pendingPostState = null;
+      
       this.time.delayedCall(1000, () => {
         this.endCombat('victory');
       });
     } else if (allPlayersDead) {
       console.log('💀 All players defeated! Defeat!');
+      // Clear timeline to prevent normal combat end check
+      this.timeline = null;
+      this.pendingPostState = null;
+      
       this.time.delayedCall(1000, () => {
         this.endCombat('defeat');
       });
+    } else {
+      console.log('[Ultimate] Combat continues - some actors still alive');
     }
   }
 
@@ -4227,87 +4530,12 @@ export class BattleScene extends Phaser.Scene {
 
   // UI Helper Methods
   private updateQueueDisplay(): void {
-    // Remove old queue display
+    // SIMPLIFIED: Only show minimal queue info in lock button
+    // Remove old queue display completely
     if (this.queueDisplay) {
       this.queueDisplay.destroy();
       this.queueDisplay = null;
     }
-
-    if (this.queuedActions.length === 0) return;
-
-    // Create queue display above lock button
-    const centerX = this.scale.width / 2;
-    const y = this.scale.height - 230;
-
-    this.queueDisplay = this.add.container(centerX, y);
-    this.queueDisplay.setDepth(900);
-
-    // Background
-    const width = Math.min(600, this.queuedActions.length * 80 + 40);
-    const bg = this.add.rectangle(0, 0, width, 60, 0x2c3e50, 0.95);
-    bg.setStrokeStyle(2, 0x4a90e2, 0.8);
-    this.queueDisplay.add(bg);
-
-    // Title
-    const title = this.add.text(-width / 2 + 10, -20, 'Queued Cards (click to remove):', {
-      fontSize: '12px',
-      color: '#aaaaaa',
-      fontFamily: 'Arial, sans-serif',
-    });
-    title.setOrigin(0, 0.5);
-    this.queueDisplay.add(title);
-
-    // Show queued cards
-    const cardSpacing = 70;
-    const startX = -((this.queuedActions.length - 1) * cardSpacing) / 2;
-
-    this.queuedActions.forEach((action, index) => {
-      const card = getCardById(action.cardId || '');
-      if (!card) return;
-
-      const x = startX + index * cardSpacing;
-      const cardContainer = this.add.container(x, 10);
-
-      // Card mini icon
-      const cardBg = this.add.rectangle(0, 0, 60, 35, 0x3a4a5a, 1);
-      cardBg.setStrokeStyle(2, 0x5a90e2, 0.9);
-      cardBg.setInteractive({ useHandCursor: true });
-      cardContainer.add(cardBg);
-
-      const cardName = this.add.text(0, -8, card.name, {
-        fontSize: '11px',
-        color: '#ffffff',
-        fontFamily: 'Arial, sans-serif',
-        fontStyle: 'bold',
-      });
-      cardName.setOrigin(0.5);
-      cardContainer.add(cardName);
-
-      const cardAP = this.add.text(0, 5, `${card.ap} AP`, {
-        fontSize: '9px',
-        color: '#ffaa00',
-        fontFamily: 'Arial, sans-serif',
-      });
-      cardAP.setOrigin(0.5);
-      cardContainer.add(cardAP);
-
-      // Hover effects
-      cardBg.on('pointerover', () => {
-        cardBg.setFillStyle(0xe74c3c, 1);
-        cardName.setText('✖ Remove');
-      });
-      cardBg.on('pointerout', () => {
-        cardBg.setFillStyle(0x3a4a5a, 1);
-        cardName.setText(card.name);
-      });
-
-      // Click to remove from queue
-      cardBg.on('pointerdown', () => {
-        this.removeFromQueue(index);
-      });
-
-      this.queueDisplay!.add(cardContainer);
-    });
   }
 
   private removeFromQueue(index: number): void {
@@ -4353,36 +4581,48 @@ export class BattleScene extends Phaser.Scene {
   private showLockButton(): void {
     this.hideLockButton();
 
-    // Position button much higher to avoid covering cards (300px from bottom instead of 150px)
-    this.lockButton = this.add.container(this.scale.width / 2, this.scale.height - 300);
+    // Position button higher to avoid covering cards
+    this.lockButton = this.add.container(this.scale.width / 2, this.scale.height - 280);
 
-    // Show different text based on whether cards were played
+    // Get current AP info
+    const playerActor = this.players.find(p => p.userId === this.userId);
+    const currentAP = playerActor ? (this.playerAP.get(playerActor.id) || 0) : 0;
+    const maxAP = 30; // Assuming max AP is 30
+
+    // Create comprehensive button text with all info
     let buttonText: string;
     let buttonColor: number;
     
     if (this.queuedActions.length > 0) {
-      // Cards queued - make it clear this locks in the turn
-      buttonText = `✅ LOCK IN TURN (${this.queuedActions.length} card${this.queuedActions.length > 1 ? 's' : ''})`;
+      // Cards queued - show AP usage and card count
+      const totalAPUsed = this.queuedActions.reduce((sum, action) => {
+        const card = getCardById(action.cardId || '');
+        return sum + (card?.ap || 0);
+      }, 0);
+      
+      buttonText = `✅ LOCK IN TURN\n${this.queuedActions.length} card${this.queuedActions.length > 1 ? 's' : ''} • ${totalAPUsed} AP used\nAP: ${currentAP}/${maxAP}`;
       buttonColor = 0x27ae60; // Green - ready to go
     } else {
-      // No cards queued - make it clear this skips the turn
-      buttonText = '⏭️ SKIP TURN (No Cards)';
+      // No cards queued - show skip option
+      buttonText = `⏭️ SKIP TURN\nNo cards selected\nAP: ${currentAP}/${maxAP}`;
       buttonColor = 0xe67e22; // Orange - warning color
     }
     
-    // Calculate button width based on text
-    const buttonWidth = Math.max(220, buttonText.length * 10);
+    // Calculate button size for multi-line text
+    const buttonWidth = Math.max(280, buttonText.split('\n')[0].length * 12);
+    const buttonHeight = 80; // Taller for multi-line text
     
-    const bg = this.add.rectangle(0, 0, buttonWidth, 50, buttonColor, 1);
+    const bg = this.add.rectangle(0, 0, buttonWidth, buttonHeight, buttonColor, 1);
     bg.setStrokeStyle(3, 0xffffff, 0.9);
     bg.setInteractive({ useHandCursor: true });
     this.lockButton.add(bg);
     
     const text = this.add.text(0, 0, buttonText, {
-      fontSize: '18px',
+      fontSize: '16px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
+      align: 'center',
     });
     text.setOrigin(0.5);
     this.lockButton.add(text);
@@ -4410,6 +4650,13 @@ export class BattleScene extends Phaser.Scene {
     bg.on('pointerdown', () => {
       this.lockAction();
     });
+
+    // Add small "Clear Queue" button if cards are queued
+    if (this.queuedActions.length > 0) {
+      this.showClearQueueButton();
+    } else {
+      this.hideClearQueueButton();
+    }
   }
 
   private hideLockButton(): void {
@@ -4418,26 +4665,74 @@ export class BattleScene extends Phaser.Scene {
       this.lockButton.destroy();
       this.lockButton = null;
     }
+    this.hideClearQueueButton();
   }
 
-  private showPendingActionText(text: string, color = '#f39c12'): void {
-    this.hidePendingActionText();
+  private showClearQueueButton(): void {
+    this.hideClearQueueButton();
 
-    // Move pending action text higher to not overlap with repositioned button
-    this.pendingActionDisplay = this.add.text(
-      this.scale.width / 2,
-      this.scale.height - 350,
-      text,
-      {
-        fontSize: '18px',
-        color,
-        fontFamily: 'Arial, sans-serif',
-        fontStyle: 'bold',
-        backgroundColor: '#000000',
-        padding: { x: 10, y: 5 },
-      }
-    );
-    this.pendingActionDisplay.setOrigin(0.5);
+    // Position small button to the right of lock button
+    this.clearQueueButton = this.add.container(this.scale.width / 2 + 160, this.scale.height - 280);
+
+    const bg = this.add.rectangle(0, 0, 80, 40, 0xe74c3c, 1);
+    bg.setStrokeStyle(2, 0xffffff, 0.9);
+    bg.setInteractive({ useHandCursor: true });
+    this.clearQueueButton.add(bg);
+
+    const text = this.add.text(0, 0, '✖ Clear', {
+      fontSize: '12px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    text.setOrigin(0.5);
+    this.clearQueueButton.add(text);
+
+    bg.on('pointerover', () => {
+      bg.setFillStyle(0xc0392b);
+    });
+
+    bg.on('pointerout', () => {
+      bg.setFillStyle(0xe74c3c);
+    });
+
+    bg.on('pointerdown', () => {
+      this.clearAllQueuedActions();
+    });
+  }
+
+  private hideClearQueueButton(): void {
+    if (this.clearQueueButton) {
+      this.clearQueueButton.destroy();
+      this.clearQueueButton = null;
+    }
+  }
+
+  private clearAllQueuedActions(): void {
+    if (!this.userId) return;
+
+    // Refund all AP from queued actions
+    const playerActor = this.players.find(p => p.userId === this.userId);
+    if (!playerActor) return;
+
+    const totalRefund = this.queuedActions.reduce((sum, action) => {
+      const card = getCardById(action.cardId || '');
+      return sum + (card?.ap || 0);
+    }, 0);
+
+    const currentAP = this.playerAP.get(playerActor.id) || 0;
+    const refundedAP = Math.min(30, currentAP + totalRefund); // Respect AP cap
+    this.playerAP.set(playerActor.id, refundedAP);
+
+    // Clear all queued actions
+    this.queuedActions = [];
+    this.updateQueueDisplay();
+    this.showLockButton(); // Refresh lock button
+  }
+
+  private showPendingActionText(_text: string, _color = '#f39c12'): void {
+    // REMOVED: No longer show separate pending action text
+    // This information is now integrated into the lock button
   }
 
   private hidePendingActionText(): void {
@@ -4572,6 +4867,139 @@ export class BattleScene extends Phaser.Scene {
     });
     
     this.debugUltimateButton = container;
+  }
+
+  /**
+   * Create debug button to skip +1 level (for testing)
+   */
+  private createDebugSkipLevelButton(): void {
+    const x = this.scale.width - 120;
+    const y = 130;
+    
+    const container = this.add.container(x, y);
+    
+    // Background
+    const bg = this.add.rectangle(0, 0, 100, 40, 0x00ff00, 0.8);
+    bg.setStrokeStyle(2, 0xffffff, 1);
+    bg.setInteractive({ useHandCursor: true });
+    container.add(bg);
+    
+    // Text
+    const text = this.add.text(0, 0, 'DEBUG:\n+1 Level', {
+      fontSize: '12px',
+      color: '#ffffff',
+      fontFamily: 'Arial',
+      fontStyle: 'bold',
+      align: 'center',
+    });
+    text.setOrigin(0.5);
+    container.add(text);
+    
+    // Hover effects
+    bg.on('pointerover', () => {
+      bg.setFillStyle(0x44ff44, 1);
+      container.setScale(1.1);
+    });
+    
+    bg.on('pointerout', () => {
+      bg.setFillStyle(0x00ff00, 0.8);
+      container.setScale(1);
+    });
+    
+    // Click handler - instantly win current battle and advance to next stage
+    bg.on('pointerdown', () => {
+      if (!this.isHost) {
+        console.log('⚠️ Only host can skip levels');
+        return;
+      }
+      
+      console.log(`🔧 DEBUG: Skipping to Stage ${this.currentStage + 1}`);
+      
+      // Flash effect
+      this.tweens.add({
+        targets: container,
+        scale: 1.3,
+        duration: 100,
+        yoyo: true,
+        ease: 'Back.easeOut',
+      });
+      
+      // Send debug skip message to sync all players
+      if (this.lobbyId) {
+        sendDebugSkip(this.lobbyId, 'next').catch(err => {
+          console.error('Failed to send debug skip:', err);
+        });
+      }
+    });
+    
+    this.debugSkipLevelButton = container;
+  }
+
+  /**
+   * Create debug button to skip to boss of current world (for testing)
+   */
+  private createDebugSkipToBossButton(): void {
+    const x = this.scale.width - 120;
+    const y = 180;
+    
+    const container = this.add.container(x, y);
+    
+    // Background
+    const bg = this.add.rectangle(0, 0, 100, 40, 0xff9900, 0.8);
+    bg.setStrokeStyle(2, 0xffffff, 1);
+    bg.setInteractive({ useHandCursor: true });
+    container.add(bg);
+    
+    // Text
+    const text = this.add.text(0, 0, 'DEBUG:\nTO BOSS', {
+      fontSize: '12px',
+      color: '#ffffff',
+      fontFamily: 'Arial',
+      fontStyle: 'bold',
+      align: 'center',
+    });
+    text.setOrigin(0.5);
+    container.add(text);
+    
+    // Hover effects
+    bg.on('pointerover', () => {
+      bg.setFillStyle(0xffbb44, 1);
+      container.setScale(1.1);
+    });
+    
+    bg.on('pointerout', () => {
+      bg.setFillStyle(0xff9900, 0.8);
+      container.setScale(1);
+    });
+    
+    // Click handler - skip directly to stage 6 (Demon Boss)
+    bg.on('pointerdown', () => {
+      if (!this.isHost) {
+        console.log('⚠️ Only host can skip to boss');
+        return;
+      }
+      
+      const bossStage = 6;
+      console.log(`🔧 DEBUG: Skipping to Boss Fight (Stage ${bossStage})`);
+      
+      // Flash effect
+      this.tweens.add({
+        targets: container,
+        scale: 1.3,
+        duration: 100,
+        yoyo: true,
+        ease: 'Back.easeOut',
+      });
+      
+      // Send debug skip message to sync all players
+      if (this.lobbyId) {
+        sendDebugSkip(this.lobbyId, 'boss').catch(err => {
+          console.error('Failed to send debug skip:', err);
+        });
+      }
+    });
+    
+    this.debugSkipToBossButton = container;
   }
 
   /**
@@ -4750,6 +5178,21 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
+  private handleDebugSkip(skipType: 'next' | 'boss'): void {
+    console.log(`🔧 DEBUG SKIP RECEIVED: ${skipType}`);
+    
+    if (skipType === 'boss') {
+      // Skip to boss stage
+      const bossStage = 6;
+      console.log(`Setting stage to ${bossStage - 1} to make next battle the boss`);
+      this.currentStage = bossStage - 1;
+    }
+    // For 'next', just end combat normally (stage increments naturally)
+    
+    // End combat as victory for all players
+    this.endCombat('victory');
+  }
+
   private createRemoteCursor(userId: string, userName?: string, color?: string): Phaser.GameObjects.Container {
     const container = this.add.container(0, 0);
     container.setDepth(1000); // Always on top
@@ -4814,30 +5257,31 @@ export class BattleScene extends Phaser.Scene {
   private ensureViewportBounds(element: Phaser.GameObjects.GameObject, margin: number = 10): void {
     if (!element || !element.scene) return;
 
-    const bounds = element.getBounds();
+    // Cast to a type that has position properties
+    const positionedElement = element as any;
     const viewportWidth = this.scale.width;
     const viewportHeight = this.scale.height;
 
-    let newX = element.x;
-    let newY = element.y;
+    let newX = positionedElement.x;
+    let newY = positionedElement.y;
 
     // Check horizontal bounds
-    if (bounds.left < margin) {
-      newX = margin - bounds.left + element.x;
-    } else if (bounds.right > viewportWidth - margin) {
-      newX = viewportWidth - margin - bounds.right + element.x;
+    if (positionedElement.x < margin) {
+      newX = margin;
+    } else if (positionedElement.x > viewportWidth - margin) {
+      newX = viewportWidth - margin;
     }
 
     // Check vertical bounds
-    if (bounds.top < margin) {
-      newY = margin - bounds.top + element.y;
-    } else if (bounds.bottom > viewportHeight - margin) {
-      newY = viewportHeight - margin - bounds.bottom + element.y;
+    if (positionedElement.y < margin) {
+      newY = margin;
+    } else if (positionedElement.y > viewportHeight - margin) {
+      newY = viewportHeight - margin;
     }
 
     // Apply corrections if needed
-    if (newX !== element.x || newY !== element.y) {
-      element.setPosition(newX, newY);
+    if (newX !== positionedElement.x || newY !== positionedElement.y) {
+      positionedElement.setPosition(newX, newY);
     }
   }
 
@@ -5142,6 +5586,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   shutdown(): void {
+    console.log('[BattleScene] Shutting down and cleaning up...');
+    
     if (this.unsubscribe) {
       this.unsubscribe();
     }
@@ -5158,11 +5604,38 @@ export class BattleScene extends Phaser.Scene {
     this.hidePendingActionText();
     this.hideTargetSelector();
     
+    // CRITICAL: Destroy all party and enemy slots to prevent stacking in next battle
+    console.log(`🗑️ Shutdown: Destroying ${this.partySlots.length} party slots and ${this.enemySlots.length} enemy slots...`);
+    for (const slot of this.partySlots) {
+      if (slot) slot.destroy();
+    }
+    for (const slot of this.enemySlots) {
+      if (slot) slot.destroy();
+    }
+    for (const button of this.actionButtons) {
+      if (button) button.destroy();
+    }
+    this.partySlots = [];
+    this.enemySlots = [];
+    this.actionButtons = [];
+    
     // Clean up queue display
     if (this.queueDisplay) {
       this.queueDisplay.destroy();
       this.queueDisplay = null;
     }
+    
+    // Clean up hand UI
+    if (this.handUI) {
+      this.handUI.destroy();
+      this.handUI = null;
+    }
+    
+    // Clean up status effect containers
+    for (const container of this.statusEffectContainers.values()) {
+      if (container) container.destroy();
+    }
+    this.statusEffectContainers.clear();
     
     // Clean up skip button if exists
     const skipButtons = this.children.list.filter((obj: any) => obj.getData && obj.getData('skipButton'));
@@ -5171,6 +5644,8 @@ export class BattleScene extends Phaser.Scene {
     // Clean up remote cursors
     this.remoteCursors.forEach(cursor => cursor.destroy());
     this.remoteCursors.clear();
+    
+    console.log('[BattleScene] Cleanup complete');
   }
 
   private showAPGainNotification(apGained: number, newTotal: number): void {
@@ -5385,6 +5860,6 @@ export class BattleScene extends Phaser.Scene {
     if (this.hudContainer) this.hudContainer.destroy();
     if (this.combatLogContainer) this.combatLogContainer.destroy();
     
-    super.destroy();
+    // Scene cleanup is handled by Phaser automatically
   }
 }

@@ -18,20 +18,26 @@ export class HandUI {
   private onCardSelect?: (cardId: string) => void;
   private selectedCardId: string | null = null;
   private ultimateCardId: string | null = null; // Track if ultimate is in hand
+  private drawPileText: Phaser.GameObjects.Text | null = null;
+  private discardPileText: Phaser.GameObjects.Text | null = null;
+  private drawPileVisual: Phaser.GameObjects.Container | null = null;
+  private discardPileVisual: Phaser.GameObjects.Container | null = null;
 
   constructor(
     scene: Phaser.Scene,
     cards: string[],
-    onCardSelect?: (cardId: string) => void
+    onCardSelect?: (cardId: string) => void,
+    hideCardsForAnimation?: string[] // Cards that should start hidden for draw animation
   ) {
     this.scene = scene;
     this.onCardSelect = onCardSelect;
     
     this.container = scene.add.container(0, 0);
-    this.createHand(cards);
+    this.createHand(cards, hideCardsForAnimation);
+    this.createPileIndicators();
   }
 
-  private createHand(cardIds: string[]): void {
+  private createHand(cardIds: string[], hideCards?: string[]): void {
     const centerX = this.scene.scale.width / 2;
     const y = this.scene.scale.height - CARD_HEIGHT / 2 - 20;
     
@@ -47,6 +53,11 @@ export class HandUI {
       const cardContainer = this.createCardDisplay(card, x, y);
       this.container.add(cardContainer);
       this.cardContainers.set(cardId, cardContainer);
+      
+      // Hide cards that will be animated in
+      if (hideCards && hideCards.includes(cardId)) {
+        cardContainer.setVisible(false);
+      }
     });
 
     this.updateCardStates();
@@ -420,6 +431,299 @@ export class HandUI {
       ease: 'Sine.easeInOut',
       delay: 200,
     });
+  }
+
+  /**
+   * Create visual indicators for draw pile and discard pile sizes
+   */
+  private createPileIndicators(): void {
+    const centerX = this.scene.scale.width / 2;
+    const y = this.scene.scale.height - CARD_HEIGHT - 60;
+    
+    // Draw pile visual (left side in black area)
+    this.drawPileVisual = this.scene.add.container(55, y);
+    this.createCardStack(this.drawPileVisual, 0, 'Draw');
+    this.container.add(this.drawPileVisual);
+    
+    // Draw pile text
+    this.drawPileText = this.scene.add.text(55, y + 100, 'Draw: 0', {
+      fontSize: '14px',
+      color: '#ffffff',
+      backgroundColor: '#2c3e50',
+      padding: { x: 6, y: 3 }
+    });
+    this.drawPileText.setOrigin(0.5, 0.5);
+    this.drawPileText.setDepth(100);
+    this.container.add(this.drawPileText);
+    
+    // Discard pile visual (right side in black area)
+    this.discardPileVisual = this.scene.add.container(this.scene.scale.width - 55, y);
+    this.createCardStack(this.discardPileVisual, 0, 'Discard');
+    this.container.add(this.discardPileVisual);
+    
+    // Discard pile text
+    this.discardPileText = this.scene.add.text(this.scene.scale.width - 55, y + 100, 'Discard: 0', {
+      fontSize: '14px',
+      color: '#ffffff',
+      backgroundColor: '#2c3e50',
+      padding: { x: 6, y: 3 }
+    });
+    this.discardPileText.setOrigin(0.5, 0.5);
+    this.discardPileText.setDepth(100);
+    this.container.add(this.discardPileText);
+  }
+
+  /**
+   * Create a visual stack of cards for draw/discard piles
+   */
+  private createCardStack(container: Phaser.GameObjects.Container, count: number, type: 'Draw' | 'Discard'): void {
+    // Clear existing cards
+    container.removeAll();
+    
+    if (count === 0) {
+      // Show empty pile indicator
+      const emptyText = this.scene.add.text(0, 0, 'Empty', {
+        fontSize: '12px',
+        color: '#888888',
+        backgroundColor: '#1a1a1a',
+        padding: { x: 4, y: 2 }
+      });
+      emptyText.setOrigin(0.5, 0.5);
+      container.add(emptyText);
+      return;
+    }
+    
+    // Create visual stack of cards
+    const maxVisibleCards = Math.min(count, 8); // Show max 8 cards in stack
+    const cardScale = 0.08; // Much smaller scale for pile cards (1024x1536 -> ~82x123)
+    const stackOffset = 1; // Smaller offset between cards in stack
+    
+    for (let i = 0; i < maxVisibleCards; i++) {
+      const cardBack = this.scene.add.image(0, -i * stackOffset, 'cardback');
+      cardBack.setScale(cardScale);
+      cardBack.setDepth(i);
+      container.add(cardBack);
+    }
+    
+    // Add count indicator if more cards than visible
+    if (count > maxVisibleCards) {
+      const moreText = this.scene.add.text(0, -maxVisibleCards * stackOffset - 20, `+${count - maxVisibleCards}`, {
+        fontSize: '10px',
+        color: '#ffffff',
+        backgroundColor: '#e74c3c',
+        padding: { x: 3, y: 1 }
+      });
+      moreText.setOrigin(0.5, 0.5);
+      moreText.setDepth(maxVisibleCards);
+      container.add(moreText);
+    }
+  }
+
+  /**
+   * Update the pile size indicators
+   */
+  updatePileIndicators(drawPileSize: number, discardPileSize: number): void {
+    if (this.drawPileText) {
+      this.drawPileText.setText(`Draw: ${drawPileSize}`);
+    }
+    if (this.discardPileText) {
+      this.discardPileText.setText(`Discard: ${discardPileSize}`);
+    }
+    
+    // Update visual stacks
+    if (this.drawPileVisual) {
+      this.createCardStack(this.drawPileVisual, drawPileSize, 'Draw');
+    }
+    if (this.discardPileVisual) {
+      this.createCardStack(this.discardPileVisual, discardPileSize, 'Discard');
+    }
+  }
+
+  /**
+   * Animate drawing a card from draw pile to hand
+   */
+  animateDrawCard(cardId: string, targetHandPosition: number, delayMs: number = 0): void {
+    if (!this.drawPileVisual) return;
+
+    // Get the card data to show the front
+    const card = getCardById(cardId);
+    if (!card) return;
+    
+    // Card should already be hidden when HandUI was created
+    const cardContainer = this.cardContainers.get(cardId);
+    if (!cardContainer) return;
+
+    // Delay the animation start based on card index
+    this.scene.time.delayedCall(delayMs, () => {
+      // Create a temporary card back for animation (convert to world coordinates)
+      const animatedCard = this.scene.add.image(
+        this.drawPileVisual!.x + this.container.x, 
+        this.drawPileVisual!.y + this.container.y, 
+        'cardback'
+      );
+      animatedCard.setScale(0.08);
+      animatedCard.setDepth(200 + targetHandPosition); // Stack animations
+
+      // Calculate target position in hand
+      const centerX = this.scene.scale.width / 2;
+      const handY = this.scene.scale.height - CARD_HEIGHT / 2 - 20;
+      const totalWidth = 4 * (CARD_WIDTH + CARD_SPACING) - CARD_SPACING; // Assuming 4 cards max
+      const startX = centerX - totalWidth / 2;
+      const targetX = startX + targetHandPosition * (CARD_WIDTH + CARD_SPACING) + CARD_WIDTH / 2;
+      const targetY = handY;
+
+      // Calculate the scale for hand cards (1024x1536 -> 120x180)
+      const handCardScale = CARD_WIDTH / 1024; // ~0.117
+
+      // Animate the card from draw pile to hand
+      this.scene.tweens.add({
+        targets: animatedCard,
+        x: targetX,
+        y: targetY,
+        scaleX: handCardScale, // Scale to match hand card size
+        scaleY: handCardScale,
+        duration: 600,
+        ease: 'Power2.easeOut',
+        onComplete: () => {
+          // Remove the animated card
+          animatedCard.destroy();
+          
+          // Show the actual card in hand now
+          if (cardContainer) {
+            cardContainer.setVisible(true);
+          }
+        }
+      });
+
+      // Add a flip animation that reveals the card face halfway through
+      this.scene.tweens.add({
+        targets: animatedCard,
+        scaleX: 0, // Flip to invisible (side view)
+        duration: 300, // First half of animation
+        ease: 'Power2.easeIn',
+        onComplete: () => {
+          // Switch to card front image
+          animatedCard.setTexture(`card_${card.type}`);
+          
+          // Flip back out to reveal the card face
+          this.scene.tweens.add({
+            targets: animatedCard,
+            scaleX: handCardScale, // Flip to full scale
+            duration: 300, // Second half of animation
+            ease: 'Power2.easeOut'
+          });
+        }
+      });
+
+      // Add a subtle rotation during animation
+      this.scene.tweens.add({
+        targets: animatedCard,
+        rotation: Math.PI * 0.15, // Slight rotation
+        duration: 600,
+        ease: 'Sine.easeInOut'
+      });
+    });
+  }
+
+  /**
+   * Animate discarding a card from hand to discard pile
+   */
+  animateDiscardCard(cardId: string, sourceHandPosition: number, delayMs: number = 0): void {
+    if (!this.discardPileVisual) return;
+
+    // Find the card container in hand
+    const cardContainer = this.cardContainers.get(cardId);
+    if (!cardContainer) return;
+
+    // Create a temporary card for animation (use the actual card image)
+    const card = getCardById(cardId);
+    if (!card) return;
+
+    // Calculate the scale for hand cards (1024x1536 -> 120x180)
+    const handCardScale = CARD_WIDTH / 1024; // ~0.117
+
+    // Get the card's current WORLD position before hiding it
+    const startX = cardContainer.x + this.container.x; // Convert to world coordinates
+    const startY = cardContainer.y + this.container.y;
+
+    // Hide the card from hand immediately
+    cardContainer.setVisible(false);
+
+    // Delay the animation start based on card index
+    this.scene.time.delayedCall(delayMs, () => {
+      const animatedCard = this.scene.add.image(
+        startX, 
+        startY, 
+        `card_${card.type}` // Start with card face
+      );
+      animatedCard.setScale(handCardScale); // Start at hand card size
+      animatedCard.setDepth(200 + sourceHandPosition); // Stack animations
+
+      // Calculate target position in discard pile (convert to world coordinates)
+      const targetX = this.discardPileVisual!.x + this.container.x;
+      const targetY = this.discardPileVisual!.y + this.container.y;
+
+      // Animate the card from hand to discard pile
+      this.scene.tweens.add({
+        targets: animatedCard,
+        x: targetX,
+        y: targetY,
+        scaleX: 0.08, // Scale down to pile card size
+        scaleY: 0.08,
+        duration: 500,
+        ease: 'Power2.easeIn',
+        onComplete: () => {
+          // Remove the animated card
+          animatedCard.destroy();
+          
+          // Card is already hidden, no need to refresh
+        }
+      });
+
+      // Add a flip animation that turns the card to back halfway through (opposite of draw)
+      this.scene.tweens.add({
+        targets: animatedCard,
+        scaleX: 0, // Flip to invisible (side view)
+        duration: 250, // First half of animation
+        ease: 'Power2.easeIn',
+        onComplete: () => {
+          // Switch to card back image
+          animatedCard.setTexture('cardback');
+          
+          // Flip back out to reveal the card back
+          this.scene.tweens.add({
+            targets: animatedCard,
+            scaleX: 0.08, // Flip to discard pile scale
+            duration: 250, // Second half of animation
+            ease: 'Power2.easeOut'
+          });
+        }
+      });
+
+      // Add rotation during animation
+      this.scene.tweens.add({
+        targets: animatedCard,
+        rotation: Math.PI * 0.15, // Spin the card
+        duration: 500,
+        ease: 'Power2.easeIn'
+      });
+
+      // Fade out slightly
+      this.scene.tweens.add({
+        targets: animatedCard,
+        alpha: 0.7,
+        duration: 500,
+        ease: 'Power2.easeIn'
+      });
+    });
+  }
+
+  /**
+   * Refresh the hand display (called after animations)
+   */
+  private refreshHand(): void {
+    // This would be called by the parent to refresh the hand UI
+    // The parent should handle updating the card containers
   }
 }
 
