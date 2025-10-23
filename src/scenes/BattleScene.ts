@@ -85,6 +85,7 @@ export class BattleScene extends Phaser.Scene {
   };
   private currentTurn = 1;
   private currentStage = 1; // Track which battle this is (Stage 1, 2, 3, etc.)
+  private battleBackgroundKey: string = 'battleground1'; // Track which background is used
   private phase: 'planning' | 'resolving' | 'idle' = 'planning';
   private playerPlans = new Map<ActorId, ActionPlan[]>(); // Multiple actions per player
   private isLocked = false;
@@ -450,6 +451,7 @@ export class BattleScene extends Phaser.Scene {
     } else if (this.currentStage === 2) {
       bgKey = 'battleground2';
     }
+    this.battleBackgroundKey = bgKey; // Store for passing to LootScene
     console.log(`Loading background for stage ${this.currentStage}: ${bgKey}`);
     const bg = this.add.image(0, 0, bgKey);
     bg.setOrigin(0, 0);
@@ -4540,6 +4542,7 @@ export class BattleScene extends Phaser.Scene {
           currentNodeId: this.currentNodeId, // Pass current position
           stage: this.currentStage, // Pass current stage
           goldReward: goldReward, // Pass calculated gold reward
+          battleBackground: this.battleBackgroundKey, // Pass background for continuity
         });
       } else {
         // Return to lobby on defeat - DON'T save ultimate power (fresh start)

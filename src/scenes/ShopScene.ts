@@ -1,12 +1,12 @@
 import Phaser from 'phaser';
-import { COLORS } from '../game/config';
+import { Card, getAllAvailableCardsForClass } from '../game/cards';
 import { SoundManager } from '../game/sound';
 import { subscribeMap, sendMapVote, sendMapVoteResult } from '../net/match';
-import { getGold, spendGold, initializeInventory } from '../game/inventory';
+import { getGold, spendGold, initializeInventory, addCardToDeck } from '../game/inventory';
 import { getCurrentUserId } from '../net/supa';
 
 /**
- * Shop scene - Template for item purchasing
+ * Shop scene - Purchase cards with goldc
  */
 export class ShopScene extends Phaser.Scene {
   private soundManager: SoundManager | null = null;
@@ -15,18 +15,26 @@ export class ShopScene extends Phaser.Scene {
   private mapSeed: number | null = null;
   private visitedNodes: string[] = [];
   private currentNodeId: string | null = null;
-  private currentStage = 1; // Track battle stage number
+  private currentStage = 1;
   
   // Shop data
-  private items: ShopItem[] = [];
+  private shopCards: ShopCard[] = [];
   private playerGold = 0;
   private userId: string = '';
+  private isHost = false;
   
   // UI elements
   private titleText: Phaser.GameObjects.Text | null = null;
   private goldText: Phaser.GameObjects.Text | null = null;
-  private itemContainer: Phaser.GameObjects.Container | null = null;
-  private continueButton: Phaser.GameObjects.Text | null = null;
+  private cardContainers: Phaser.GameObjects.Container[] = [];
+  private continueButton: Phaser.GameObjects.Container | null = null;
+  private fadeOverlay: Phaser.GameObjects.Rectangle | null = null;
+  
+  // Voting system
+  private myVote: string | null = null;
+  private shopVotes: Map<string, string> | null = null;
+  private votingUI: Phaser.GameObjects.Container | null = null;
+  private unsubscribe: (() => void) | null = null;
 
   constructor() {
     super({ key: 'ShopScene' });
@@ -46,38 +54,61 @@ export class ShopScene extends Phaser.Scene {
     this.mapSeed = data.mapSeed || null;
     this.visitedNodes = data.visitedNodes || [];
     this.currentNodeId = data.currentNodeId || null;
-    this.currentStage = data.stage || 1; // Receive stage number
+    this.currentStage = data.stage || 1;
     
-    console.log('ShopScene initialized with node:', data.nodeId);
-    console.log('Current stage:', this.currentStage);
+    console.log('[ShopScene] Initialized with node:', data.nodeId);
+    console.log('[ShopScene] Current stage:', this.currentStage);
   }
 
   async create(): Promise<void> {
     const width = this.scale.width;
     const height = this.scale.height;
 
-    // Fantasy dark background
-    this.cameras.main.setBackgroundColor('#0d0820');
-    this.createFantasyBackground();
-
-    // Initialize sound
-    this.soundManager = new SoundManager(this);
-
-    // Generate shop items
-    this.generateShopItems();
-
     // Get current user and load gold from inventory
-    this.userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      console.error('[ShopScene] Failed to get user ID');
+      return;
+    }
+    this.userId = userId;
     initializeInventory(this.userId);
     this.playerGold = getGold(this.userId);
     console.log('[ShopScene] Player gold:', this.playerGold);
     
     this.isHost = this.players.length > 0 && this.players[0].userId === this.userId;
 
+    // Fantasy dark background
+    this.cameras.main.setBackgroundColor('#0d0820');
+    this.createFantasyBackground();
+    
+    // Fade-in from black
+    this.fadeOverlay = this.add.rectangle(0, 0, width, height, 0x000000, 1);
+    this.fadeOverlay.setOrigin(0);
+    this.fadeOverlay.setDepth(50000);
+    
+    this.tweens.add({
+      targets: this.fadeOverlay,
+      alpha: 0,
+      duration: 800,
+      ease: 'Power2',
+      onComplete: () => {
+        if (this.fadeOverlay) {
+          this.fadeOverlay.destroy();
+          this.fadeOverlay = null;
+        }
+      }
+    });
+
+    // Initialize sound
+    this.soundManager = new SoundManager(this);
+
+    // Generate shop cards
+    this.generateShopCards();
+
     // Create UI
     this.createTitle();
     this.createGoldDisplay();
-    this.createItemGrid();
+    this.createCardGrid();
     this.createContinueButton();
 
     // Setup voting if multiple players
@@ -97,21 +128,21 @@ export class ShopScene extends Phaser.Scene {
       onMapVoteResult: this.handleVoteResult.bind(this),
     }).then((unsubscribe) => {
       this.unsubscribe = unsubscribe;
-      console.log('Shop voting system initialized');
+      console.log('[ShopScene] Voting system initialized');
     }).catch((error) => {
-      console.error('Failed to setup shop voting:', error);
+      console.error('[ShopScene] Failed to setup voting:', error);
     });
   }
 
-  private handleRemoteVote(userId: string, itemId: string): void {
-    console.log(`Remote shop vote from ${userId}: ${itemId}`);
+  private handleRemoteVote(userId: string, cardId: string): void {
+    console.log(`[ShopScene] Remote vote from ${userId}: ${cardId}`);
     
     if (userId === this.userId) return;
     
     if (!this.shopVotes) {
       this.shopVotes = new Map<string, string>();
     }
-    this.shopVotes.set(userId, itemId);
+    this.shopVotes.set(userId, cardId);
     this.updateVotingUI();
     
     if (this.isHost) {
@@ -119,21 +150,20 @@ export class ShopScene extends Phaser.Scene {
     }
   }
 
-  private handleVoteResult(selectedItemId: string, votes: { [itemId: string]: string[] }): void {
-    console.log('🎯 RECEIVED SHOP VOTE RESULT:', selectedItemId, votes);
-    this.executeVoteResult(selectedItemId);
+  private handleVoteResult(selectedCardId: string, votes: { [cardId: string]: string[] }): void {
+    console.log('[ShopScene] Received vote result:', selectedCardId, votes);
+    this.executeVoteResult(selectedCardId);
   }
 
-  private executeVoteResult(selectedItemId: string): void {
-    console.log('🎯 EXECUTING VOTE RESULT:', selectedItemId);
+  private executeVoteResult(selectedCardId: string): void {
+    console.log('[ShopScene] Executing vote result:', selectedCardId);
     
-    if (selectedItemId === 'continue') {
+    if (selectedCardId === 'continue') {
       this.continueToMap();
     } else {
-      // Purchase the selected item
-      const item = this.items.find(i => i.id === selectedItemId);
-      if (item) {
-        this.purchaseItemDirectly(item);
+      const shopCard = this.shopCards.find(c => c.card.id === selectedCardId);
+      if (shopCard) {
+        this.purchaseCardDirectly(shopCard);
       }
     }
   }
@@ -145,26 +175,23 @@ export class ShopScene extends Phaser.Scene {
     const votesReceived = (this.shopVotes?.size || 0) + (this.myVote ? 1 : 0);
     
     if (votesReceived >= totalPlayers) {
-      console.log('All shop votes received, resolving...');
+      console.log('[ShopScene] All votes received, resolving...');
       this.resolveVotes();
     }
   }
 
   private resolveVotes(): void {
-    // Count votes for each item + continue option
     const voteCounts = new Map<string, string[]>();
     
-    // Add remote votes
     if (this.shopVotes) {
-      for (const [userId, itemId] of this.shopVotes.entries()) {
-        if (!voteCounts.has(itemId)) {
-          voteCounts.set(itemId, []);
+      for (const [userId, cardId] of this.shopVotes.entries()) {
+        if (!voteCounts.has(cardId)) {
+          voteCounts.set(cardId, []);
         }
-        voteCounts.get(itemId)!.push(userId);
+        voteCounts.get(cardId)!.push(userId);
       }
     }
     
-    // Add my vote
     if (this.myVote) {
       if (!voteCounts.has(this.myVote)) {
         voteCounts.set(this.myVote, []);
@@ -172,7 +199,6 @@ export class ShopScene extends Phaser.Scene {
       voteCounts.get(this.myVote)!.push(this.userId!);
     }
     
-    // Find winner(s)
     let maxVotes = 0;
     let winningOptions: string[] = [];
     
@@ -185,150 +211,101 @@ export class ShopScene extends Phaser.Scene {
       }
     }
     
-    // Select winner (coin toss if tie)
     const selectedOption = winningOptions[Math.floor(Math.random() * winningOptions.length)];
     
-    console.log(`Shop vote resolution: ${selectedOption} wins with ${maxVotes} votes`);
+    console.log(`[ShopScene] Vote resolution: ${selectedOption} wins with ${maxVotes} votes`);
     
-    // Convert Map to object for network
-    const votesObject: { [itemId: string]: string[] } = {};
-    for (const [itemId, voters] of voteCounts.entries()) {
-      votesObject[itemId] = voters;
+    const votesObject: { [cardId: string]: string[] } = {};
+    for (const [cardId, voters] of voteCounts.entries()) {
+      votesObject[cardId] = voters;
     }
     
-    // Broadcast result
     if (this.lobbyId) {
       sendMapVoteResult(this.lobbyId, selectedOption, votesObject).catch(err => {
-        console.error('Failed to send shop vote result:', err);
+        console.error('[ShopScene] Failed to send vote result:', err);
       });
     }
     
-    // Host should also execute the result directly (in case network fails)
-    console.log('🎯 HOST EXECUTING RESULT DIRECTLY:', selectedOption);
     this.executeVoteResult(selectedOption);
   }
 
   private updateVotingUI(): void {
-    // Remove old UI
     if (this.votingUI) {
       this.votingUI.destroy();
     }
     
     if (this.players.length <= 1) return;
     
-    // Create voting status UI
     this.votingUI = this.add.container(50, this.scale.height - 100);
     this.votingUI.setScrollFactor(0);
     this.votingUI.setDepth(1000);
     
     const bg = this.add.rectangle(0, 0, 300, 80, 0x1a0f2e, 0.9);
-    bg.setStrokeStyle(2, 0x8b7355, 0.8);
+    bg.setStrokeStyle(2, 0xd4af37, 0.8);
     this.votingUI.add(bg);
     
-    // Voting status text
     const totalPlayers = this.players.length;
     const votesReceived = (this.shopVotes?.size || 0) + (this.myVote ? 1 : 0);
     
     const statusText = this.add.text(0, -15, 'Voting for Purchase...', {
       fontSize: '16px',
       color: '#d4af37',
-      fontFamily: 'Georgia, serif',
-      fontStyle: 'bold',
+      fontFamily: 'Arial Black',
     });
     statusText.setOrigin(0.5);
     this.votingUI.add(statusText);
     
     const progressText = this.add.text(0, 10, `${votesReceived}/${totalPlayers} votes`, {
       fontSize: '14px',
-      color: '#b8a890',
-      fontFamily: 'Georgia, serif',
+      color: '#ffffff',
+      fontFamily: 'Arial',
     });
     progressText.setOrigin(0.5);
     this.votingUI.add(progressText);
     
-    // Show current vote
     if (this.myVote) {
-      const myVoteText = this.add.text(0, 30, `Your vote: ${this.myVote === 'continue' ? 'Continue' : this.getItemName(this.myVote)}`, {
+      const myVoteText = this.add.text(0, 30, `Your vote: ${this.myVote === 'continue' ? 'Continue' : 'Purchase'}`, {
         fontSize: '12px',
         color: '#44ff88',
-        fontFamily: 'Georgia, serif',
+        fontFamily: 'Arial',
       });
       myVoteText.setOrigin(0.5);
       this.votingUI.add(myVoteText);
     }
   }
 
-  private getItemName(itemId: string): string {
-    const item = this.items.find(i => i.id === itemId);
-    return item ? item.name : 'Unknown';
-  }
-
   private createFantasyBackground(): void {
     const width = this.scale.width;
     const height = this.scale.height;
     
-    // Create gradient background
     const graphics = this.add.graphics();
     graphics.fillGradientStyle(0x0d0820, 0x0d0820, 0x1a0f2e, 0x1a0f2e, 1, 1, 1, 1);
     graphics.fillRect(0, 0, width, height);
     graphics.setDepth(-100);
     
-    // Add decorative elements
-    this.createCornerDecorations();
-  }
-
-  private createCornerDecorations(): void {
-    const width = this.scale.width;
-    const height = this.scale.height;
-    
-    // Corner scrolls
-    const scrollGraphics = this.add.graphics();
-    scrollGraphics.lineStyle(3, 0x8b7355, 0.6);
-    
-    // Top-left scroll
-    scrollGraphics.beginPath();
-    scrollGraphics.moveTo(50, 50);
-    scrollGraphics.lineTo(150, 50);
-    scrollGraphics.lineTo(170, 70);
-    scrollGraphics.lineTo(150, 90);
-    scrollGraphics.lineTo(50, 90);
-    scrollGraphics.lineTo(30, 70);
-    scrollGraphics.closePath();
-    scrollGraphics.strokePath();
-    
-    // Top-right scroll
-    scrollGraphics.beginPath();
-    scrollGraphics.moveTo(width - 50, 50);
-    scrollGraphics.lineTo(width - 150, 50);
-    scrollGraphics.lineTo(width - 170, 70);
-    scrollGraphics.lineTo(width - 150, 90);
-    scrollGraphics.lineTo(width - 50, 90);
-    scrollGraphics.lineTo(width - 30, 70);
-    scrollGraphics.closePath();
-    scrollGraphics.strokePath();
-    
-    scrollGraphics.setDepth(-50);
+    // Decorative border
+    const border = this.add.graphics();
+    border.lineStyle(3, 0xd4af37, 0.3);
+    border.strokeRect(20, 20, width - 40, height - 40);
+    border.setDepth(-50);
   }
 
   private createTitle(): void {
     const width = this.scale.width;
     
-    // Shop title with glow
-    this.titleText = this.add.text(width / 2, 80, 'MYSTERIOUS MERCHANT', {
+    this.titleText = this.add.text(width / 2, 60, 'MERCHANT\'S WARES', {
       fontSize: '48px',
       color: '#d4af37',
-      fontFamily: 'Georgia, serif',
-      fontStyle: 'bold',
-      stroke: '#8b7355',
-      strokeThickness: 3,
+      fontFamily: 'Arial Black',
+      stroke: '#000000',
+      strokeThickness: 6,
     });
     this.titleText.setOrigin(0.5);
     this.titleText.setDepth(100);
 
-    // Add glow effect
     this.tweens.add({
       targets: this.titleText,
-      alpha: { from: 0.8, to: 1.0 },
+      alpha: { from: 0.9, to: 1.0 },
       duration: 2000,
       yoyo: true,
       repeat: -1,
@@ -338,164 +315,255 @@ export class ShopScene extends Phaser.Scene {
   private createGoldDisplay(): void {
     const width = this.scale.width;
     
-    // Gold display
-    const goldBg = this.add.rectangle(width - 120, 80, 200, 50, 0x1a0f2e, 0.9);
-    goldBg.setStrokeStyle(2, 0x8b7355, 0.8);
-    goldBg.setDepth(50);
-    
-    this.goldText = this.add.text(width - 120, 80, `💰 ${this.playerGold}`, {
-      fontSize: '20px',
-      color: '#d4af37',
-      fontFamily: 'Georgia, serif',
-      fontStyle: 'bold',
+    this.goldText = this.add.text(width - 30, 30, `💰 ${this.playerGold} Gold`, {
+      fontSize: '28px',
+      color: '#ffd700',
+      fontFamily: 'Arial Black',
+      stroke: '#000000',
+      strokeThickness: 4,
     });
-    this.goldText.setOrigin(0.5);
+    this.goldText.setOrigin(1, 0);
     this.goldText.setDepth(100);
   }
 
-  private generateShopItems(): void {
-    // TODO: Generate based on player level, seed, etc.
-    this.items = [
-      {
-        id: 'health_potion',
-        name: 'Health Potion',
-        description: 'Restores 50 HP',
-        cost: 25,
-        type: 'consumable',
-        icon: '🧪',
-      },
-      {
-        id: 'mana_potion',
-        name: 'Mana Potion', 
-        description: 'Restores 30 MP',
-        cost: 20,
-        type: 'consumable',
-        icon: '💙',
-      },
-      {
-        id: 'iron_sword',
-        name: 'Iron Sword',
-        description: '+5 Attack Power',
-        cost: 75,
-        type: 'weapon',
-        icon: '⚔️',
-      },
-      {
-        id: 'leather_armor',
-        name: 'Leather Armor',
-        description: '+3 Defense',
-        cost: 60,
-        type: 'armor',
-        icon: '🛡️',
-      },
-    ];
+  private generateShopCards(): void {
+    const myPlayer = this.players.find(p => p.userId === this.userId);
+    const myClass = myPlayer?.class || 'Warrior';
+    
+    // Get all available cards for the player's class
+    const allCards = getAllAvailableCardsForClass(myClass);
+    
+    // Shuffle cards
+    const shuffled = [...allCards];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    
+    // Base prices for card types
+    const basePrice = 40;
+    
+    // Pick 6 cards with pricing tiers
+    const selectedCards = shuffled.slice(0, 6);
+    
+    this.shopCards = selectedCards.map((card, index) => {
+      let discount = 0;
+      let discountLabel = '';
+      
+      if (index < 2) {
+        // First 2: Normal price
+        discount = 0;
+        discountLabel = '';
+      } else if (index < 5) {
+        // Next 3: 25% off
+        discount = 0.25;
+        discountLabel = '25% OFF';
+      } else {
+        // Last 1: 50% off
+        discount = 0.5;
+        discountLabel = '50% OFF!';
+      }
+      
+      const price = Math.round(basePrice * (1 - discount));
+      
+      return {
+        card,
+        price,
+        discount,
+        discountLabel,
+      };
+    });
+    
+    console.log('[ShopScene] Generated shop cards:', this.shopCards.map(sc => ({
+      name: sc.card.name,
+      price: sc.price,
+      discount: sc.discountLabel
+    })));
   }
 
-  private createItemGrid(): void {
+  private createCardGrid(): void {
     const width = this.scale.width;
     const height = this.scale.height;
     
-    this.itemContainer = this.add.container(width / 2, height / 2);
-    this.itemContainer.setDepth(50);
+    const CARD_WIDTH = 140;
+    const CARD_HEIGHT = 210;
+    const CARD_SPACING = 30;
     
-    // Create item slots (2x2 grid)
-    const slotSize = 200;
-    const spacing = 50;
-    const startX = -slotSize - spacing / 2;
-    const startY = -slotSize - spacing / 2;
+    // 3x2 grid layout
+    const cardsPerRow = 3;
+    const rows = 2;
     
-    for (let i = 0; i < Math.min(this.items.length, 4); i++) {
-      const item = this.items[i];
-      const row = Math.floor(i / 2);
-      const col = i % 2;
+    const totalWidth = (CARD_WIDTH * cardsPerRow) + (CARD_SPACING * (cardsPerRow - 1));
+    const totalHeight = (CARD_HEIGHT * rows) + (CARD_SPACING * (rows - 1));
+    
+    const startX = (width - totalWidth) / 2 + (CARD_WIDTH / 2);
+    const startY = (height - totalHeight) / 2 + 80;
+    
+    this.shopCards.forEach((shopCard, index) => {
+      const row = Math.floor(index / cardsPerRow);
+      const col = index % cardsPerRow;
       
-      const x = startX + col * (slotSize + spacing);
-      const y = startY + row * (slotSize + spacing);
+      const x = startX + col * (CARD_WIDTH + CARD_SPACING);
+      const y = startY + row * (CARD_HEIGHT + CARD_SPACING);
       
-      this.createItemSlot(item, x, y);
-    }
+      this.createShopCard(shopCard, x, y);
+    });
   }
 
-  private createItemSlot(item: ShopItem, x: number, y: number): void {
-    if (!this.itemContainer) return;
+  private createShopCard(shopCard: ShopCard, x: number, y: number): void {
+    const CARD_WIDTH = 140;
+    const CARD_HEIGHT = 210;
     
-    const slotSize = 200;
+    const container = this.add.container(x, y);
+    container.setDepth(10);
     
-    // Item slot background
-    const slotBg = this.add.rectangle(x, y, slotSize, slotSize, 0x1a0f2e, 0.9);
-    slotBg.setStrokeStyle(2, 0x8b7355, 0.8);
-    slotBg.setInteractive();
+    // Card background image based on type
+    const imageKey = `card_${shopCard.card.type}`;
+    const cardImage = this.add.image(0, 0, imageKey);
+    cardImage.setDisplaySize(CARD_WIDTH, CARD_HEIGHT);
     
-    // Item icon
-    const icon = this.add.text(x, y - 40, item.icon, {
-      fontSize: '48px',
+    if (shopCard.card.type === 'neutral') {
+      cardImage.setTint(0x888888);
+    }
+    
+    container.add(cardImage);
+    
+    // Border frame
+    const canAfford = this.playerGold >= shopCard.price;
+    const border = this.add.rectangle(0, 0, CARD_WIDTH, CARD_HEIGHT, 0x000000, 0);
+    border.setStrokeStyle(3, canAfford ? 0x444444 : 0xff4444, 0.8);
+    container.add(border);
+    
+    // Card name
+    const words = shopCard.card.name.split(' ');
+    const displayText = words.length > 1 ? words.join('\n') : shopCard.card.name;
+    
+    const nameText = this.add.text(0, -CARD_HEIGHT / 2 + 50, displayText, {
+      fontSize: '15px',
+      color: '#ffffff',
+      fontFamily: 'Arial',
+      fontStyle: 'bold',
+      align: 'center',
+      stroke: '#000000',
+      strokeThickness: 4,
+      lineSpacing: -5,
     });
-    icon.setOrigin(0.5);
+    nameText.setOrigin(0.5);
+    container.add(nameText);
     
-    // Item name
-    const name = this.add.text(x, y, item.name, {
+    // AP badge
+    const apBadge = this.add.container(CARD_WIDTH / 2 - 8, -CARD_HEIGHT / 2 + 8);
+    const apBg = this.add.circle(0, 0, 12, 0x000000, 0.9);
+    apBg.setStrokeStyle(2, 0xffaa00, 1);
+    apBadge.add(apBg);
+    
+    const apText = this.add.text(0, 0, `${shopCard.card.ap}`, {
+      fontSize: '14px',
+      color: '#ffaa00',
+      fontFamily: 'Arial',
+      fontStyle: 'bold',
+    });
+    apText.setOrigin(0.5);
+    apBadge.add(apText);
+    container.add(apBadge);
+    
+    // Description
+    const descText = this.add.text(0, 20, shopCard.card.desc, {
+      fontSize: '13px',
+      color: '#ffffff',
+      fontFamily: 'Arial',
+      align: 'center',
+      wordWrap: { width: CARD_WIDTH - 20 },
+      stroke: '#000000',
+      strokeThickness: 3,
+      lineSpacing: -3,
+    });
+    descText.setOrigin(0.5);
+    container.add(descText);
+    
+    // Price background
+    const priceBg = this.add.rectangle(0, CARD_HEIGHT / 2 - 30, CARD_WIDTH - 10, 50, 0x000000, 0.85);
+    container.add(priceBg);
+    
+    // Discount label (if applicable)
+    if (shopCard.discountLabel) {
+      const discountBadge = this.add.text(0, CARD_HEIGHT / 2 - 50, shopCard.discountLabel, {
+        fontSize: '13px',
+        color: '#ffff00',
+        fontFamily: 'Arial Black',
+        backgroundColor: '#ff4444',
+        padding: { x: 6, y: 3 },
+        stroke: '#000000',
+        strokeThickness: 2,
+      });
+      discountBadge.setOrigin(0.5);
+      container.add(discountBadge);
+    }
+    
+    // Price text
+    const priceText = this.add.text(0, CARD_HEIGHT / 2 - 30, `${shopCard.price} Gold`, {
       fontSize: '16px',
-      color: '#d4af37',
-      fontFamily: 'Georgia, serif',
-      fontStyle: 'bold',
+      color: canAfford ? '#ffd700' : '#ff4444',
+      fontFamily: 'Arial Black',
+      stroke: '#000000',
+      strokeThickness: 3,
     });
-    name.setOrigin(0.5);
+    priceText.setOrigin(0.5);
+    container.add(priceText);
     
-    // Item description
-    const description = this.add.text(x, y + 20, item.description, {
-      fontSize: '12px',
-      color: '#b8a890',
-      fontFamily: 'Georgia, serif',
-    });
-    description.setOrigin(0.5);
-    
-    // Item cost
-    const cost = this.add.text(x, y + 50, `${item.cost}💰`, {
-      fontSize: '14px',
-      color: '#ff6b6b',
-      fontFamily: 'Georgia, serif',
-      fontStyle: 'bold',
-    });
-    cost.setOrigin(0.5);
-    
-    // Purchase button
-    const canAfford = this.playerGold >= item.cost;
-    const buyButton = this.add.text(x, y + 75, canAfford ? 'VOTE TO BUY' : 'TOO EXPENSIVE', {
-      fontSize: '14px',
-      color: canAfford ? '#44ff88' : '#666666',
-      fontFamily: 'Georgia, serif',
-      fontStyle: 'bold',
-    });
-    buyButton.setOrigin(0.5);
-    
+    // Make interactive if can afford
     if (canAfford) {
-      buyButton.setInteractive();
-      buyButton.on('pointerdown', () => this.voteForItem(item.id));
-      buyButton.on('pointerover', () => {
-        buyButton.setColor('#66ffaa');
-        // TODO: Add UI hover sound
+      border.setInteractive({ useHandCursor: true });
+      
+      border.on('pointerover', () => {
+        border.setStrokeStyle(4, 0xffffff, 1);
+        this.tweens.add({
+          targets: container,
+          scale: 1.05,
+          duration: 150,
+          ease: 'Power2',
+        });
       });
-      buyButton.on('pointerout', () => {
-        buyButton.setColor('#44ff88');
+      
+      border.on('pointerout', () => {
+        border.setStrokeStyle(3, 0x444444, 0.8);
+        this.tweens.add({
+          targets: container,
+          scale: 1,
+          duration: 150,
+          ease: 'Power2',
+        });
       });
+      
+      border.on('pointerdown', () => {
+        this.voteForCard(shopCard);
+      });
+    } else {
+      // Show "Can't Afford" text
+      const cantAffordText = this.add.text(0, CARD_HEIGHT / 2 - 12, 'Not Enough Gold', {
+        fontSize: '11px',
+        color: '#ff4444',
+        fontFamily: 'Arial',
+        fontStyle: 'bold',
+      });
+      cantAffordText.setOrigin(0.5);
+      container.add(cantAffordText);
     }
     
-    // Add all elements to container
-    this.itemContainer.add([slotBg, icon, name, description, cost, buyButton]);
+    this.cardContainers.push(container);
   }
 
-  private async voteForItem(itemId: string): Promise<void> {
+  private async voteForCard(shopCard: ShopCard): Promise<void> {
     if (this.players.length > 1) {
-      // Multiplayer: Vote for item
-      this.myVote = itemId;
+      this.myVote = shopCard.card.id;
       this.updateVotingUI();
       
       if (this.lobbyId) {
         try {
-          await sendMapVote(this.lobbyId, itemId);
-          console.log(`Voted for item: ${itemId}`);
+          await sendMapVote(this.lobbyId, shopCard.card.id);
+          console.log(`[ShopScene] Voted for card: ${shopCard.card.name}`);
         } catch (error) {
-          console.error('Failed to send shop vote:', error);
+          console.error('[ShopScene] Failed to send vote:', error);
         }
       }
       
@@ -503,81 +571,86 @@ export class ShopScene extends Phaser.Scene {
         this.checkAllVotesIn();
       }
     } else {
-      // Single player: Direct purchase
-      const item = this.items.find(i => i.id === itemId);
-      if (item) {
-        this.purchaseItemDirectly(item);
-      }
+      this.purchaseCardDirectly(shopCard);
     }
   }
 
-  private purchaseItemDirectly(item: ShopItem): void {
-    if (this.playerGold < item.cost) {
-      console.log('Cannot afford item');
+  private purchaseCardDirectly(shopCard: ShopCard): void {
+    if (this.playerGold < shopCard.price) {
+      console.log('[ShopScene] Cannot afford card');
       return;
     }
     
-    // Use inventory system to spend gold
-    const success = spendGold(this.userId, item.cost);
+    const success = spendGold(this.userId, shopCard.price);
     if (!success) {
-      console.log('Failed to spend gold');
+      console.log('[ShopScene] Failed to spend gold');
       return;
     }
     
-    // Update local gold tracking
-    this.playerGold = getGold(this.userId);
-    console.log(`✅ Purchased ${item.name} for ${item.cost} gold. New balance: ${this.playerGold}`);
+    // Add card to inventory
+    addCardToDeck(this.userId, shopCard.card);
     
-    // TODO: Add item to player inventory
+    this.playerGold = getGold(this.userId);
+    console.log(`[ShopScene] Purchased ${shopCard.card.name} for ${shopCard.price} gold. New balance: ${this.playerGold}`);
     
     // Update gold display
     if (this.goldText) {
-      this.goldText.setText(`💰 ${this.playerGold}`);
+      this.goldText.setText(`💰 ${this.playerGold} Gold`);
     }
     
-    // Refresh item grid
-    this.itemContainer?.destroy();
-    this.createItemGrid();
+    // Refresh card grid
+    this.cardContainers.forEach(c => c.destroy());
+    this.cardContainers = [];
+    this.generateShopCards();
+    this.createCardGrid();
   }
 
   private createContinueButton(): void {
     const width = this.scale.width;
     const height = this.scale.height;
     
-    this.continueButton = this.add.text(width / 2, height - 80, 'CONTINUE JOURNEY', {
-      fontSize: '24px',
-      color: '#d4af37',
-      fontFamily: 'Georgia, serif',
-      fontStyle: 'bold',
-      stroke: '#8b7355',
-      strokeThickness: 2,
-    });
-    this.continueButton.setOrigin(0.5);
-    this.continueButton.setInteractive();
+    this.continueButton = this.add.container(width / 2, height - 100);
     this.continueButton.setDepth(100);
     
-    this.continueButton.on('pointerdown', () => this.voteToContinue());
-    this.continueButton.on('pointerover', () => {
-      this.continueButton?.setColor('#f4e4bc');
-      // TODO: Add UI hover sound
+    const lockButtonImage = this.add.image(0, 0, 'lock_button');
+    lockButtonImage.setDisplaySize(120, 80);
+    lockButtonImage.setInteractive({ useHandCursor: true });
+    this.continueButton.add(lockButtonImage);
+    
+    // Pulse animation
+    this.tweens.add({
+      targets: this.continueButton,
+      scale: 1.05,
+      duration: 500,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
     });
-    this.continueButton.on('pointerout', () => {
-      this.continueButton?.setColor('#d4af37');
+    
+    lockButtonImage.on('pointerover', () => {
+      lockButtonImage.setTint(0xcccccc);
+    });
+    
+    lockButtonImage.on('pointerout', () => {
+      lockButtonImage.clearTint();
+    });
+    
+    lockButtonImage.on('pointerdown', () => {
+      this.voteToContinue();
     });
   }
 
   private async voteToContinue(): Promise<void> {
     if (this.players.length > 1) {
-      // Multiplayer: Vote to continue
       this.myVote = 'continue';
       this.updateVotingUI();
       
       if (this.lobbyId) {
         try {
           await sendMapVote(this.lobbyId, 'continue');
-          console.log('Voted to continue');
+          console.log('[ShopScene] Voted to continue');
         } catch (error) {
-          console.error('Failed to send continue vote:', error);
+          console.error('[ShopScene] Failed to send continue vote:', error);
         }
       }
       
@@ -585,14 +658,25 @@ export class ShopScene extends Phaser.Scene {
         this.checkAllVotesIn();
       }
     } else {
-      // Single player: Direct continue
       this.continueToMap();
     }
   }
 
   private continueToMap(): void {
+    // Fade to black
+    const { width, height } = this.cameras.main;
+    const fadeOut = this.add.rectangle(0, 0, width, height, 0x000000, 0);
+    fadeOut.setOrigin(0);
+    fadeOut.setDepth(20000);
+    
+    this.tweens.add({
+      targets: fadeOut,
+      alpha: 1,
+      duration: 600,
+      ease: 'Power2',
+      onComplete: () => {
     // Mark this node as visited
-    if (this.currentNodeId) {
+        if (this.currentNodeId && !this.visitedNodes.includes(this.currentNodeId)) {
       this.visitedNodes.push(this.currentNodeId);
     }
     
@@ -603,12 +687,13 @@ export class ShopScene extends Phaser.Scene {
       mapSeed: this.mapSeed,
       visitedNodes: this.visitedNodes,
       currentNodeId: this.currentNodeId,
-      stage: this.currentStage, // Pass stage back to map
+          stage: this.currentStage,
+        });
+      }
     });
   }
 
   shutdown(): void {
-    // Cleanup
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = null;
@@ -624,12 +709,10 @@ export class ShopScene extends Phaser.Scene {
   }
 }
 
-// Item data structure
-interface ShopItem {
-  id: string;
-  name: string;
-  description: string;
-  cost: number;
-  type: 'weapon' | 'armor' | 'consumable' | 'accessory';
-  icon: string;
+// Shop card with pricing
+interface ShopCard {
+  card: Card;
+  price: number;
+  discount: number;
+  discountLabel: string;
 }

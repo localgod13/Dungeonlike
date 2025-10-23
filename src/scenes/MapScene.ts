@@ -120,6 +120,21 @@ export class MapScene extends Phaser.Scene {
     
     // Create fantasy background
     this.createFantasyBackground();
+    
+    // Fade-in from black
+    const fadeOverlay = this.add.rectangle(0, 0, width, height, 0x000000, 1);
+    fadeOverlay.setOrigin(0);
+    fadeOverlay.setDepth(50000);
+    
+    this.tweens.add({
+      targets: fadeOverlay,
+      alpha: 0,
+      duration: 800,
+      ease: 'Power2',
+      onComplete: () => {
+        fadeOverlay.destroy();
+      }
+    });
 
     // Initialize sound
     this.soundManager = new SoundManager(this);

@@ -17,6 +17,7 @@ interface LootSceneData {
   currentNodeId?: number;
   stage: number;
   goldReward: number;
+  battleBackground?: string; // Key of the background image used in battle
 }
 
 /**
@@ -31,10 +32,12 @@ export class LootScene extends Phaser.Scene {
   private currentNodeId?: number;
   private stage: number = 1;
   private goldReward: number = 0;
+  private battleBackground: string = 'battleground1';
   
   private selectedCard: Card | null = null;
   private isReady: boolean = false;
   private userId: string = '';
+  private fadeOverlay: Phaser.GameObjects.Rectangle | null = null;
 
   constructor() {
     super({ key: 'LootScene' });
@@ -48,11 +51,13 @@ export class LootScene extends Phaser.Scene {
     this.currentNodeId = data.currentNodeId;
     this.stage = data.stage || 1;
     this.goldReward = data.goldReward || 0;
+    this.battleBackground = data.battleBackground || 'battleground1';
     
     this.selectedCard = null;
     this.isReady = false;
     
     console.log('[LootScene] Initialized with gold:', this.goldReward);
+    console.log('[LootScene] Using background:', this.battleBackground);
   }
 
   async create(): Promise<void> {
@@ -66,61 +71,111 @@ export class LootScene extends Phaser.Scene {
     addGold(this.userId, this.goldReward);
     const totalGold = getGold(this.userId);
     
-    // Background
-    this.add.rectangle(0, 0, width, height, 0x1a1a2e).setOrigin(0);
+    // Use same background as battle
+    const bg = this.add.image(0, 0, this.battleBackground);
+    bg.setOrigin(0, 0);
+    bg.setDepth(-1);
+    
+    // Scale background to cover screen
+    const scaleX = width / bg.width;
+    const scaleY = height / bg.height;
+    const scale = Math.max(scaleX, scaleY);
+    bg.setScale(scale);
+    bg.setPosition(
+      (width - bg.width * scale) / 2,
+      (height - bg.height * scale) / 2
+    );
+    
+    // Darken overlay for better text visibility
+    const darkOverlay = this.add.rectangle(0, 0, width, height, 0x000000, 0.5);
+    darkOverlay.setOrigin(0);
+    darkOverlay.setDepth(0);
+    
+    // Fade-in effect
+    this.fadeOverlay = this.add.rectangle(0, 0, width, height, 0x000000, 1);
+    this.fadeOverlay.setOrigin(0);
+    this.fadeOverlay.setDepth(10000);
+    
+    this.tweens.add({
+      targets: this.fadeOverlay,
+      alpha: 0,
+      duration: 800,
+      ease: 'Power2',
+      onComplete: () => {
+        if (this.fadeOverlay) {
+          this.fadeOverlay.destroy();
+          this.fadeOverlay = null;
+        }
+      }
+    });
     
     // Title
-    const title = this.add.text(width / 2, 60, '🎉 Victory! 🎉', {
-      fontSize: '48px',
+    const title = this.add.text(width / 2, 80, 'Victory!', {
+      fontSize: '52px',
       fontFamily: 'Arial Black',
       color: '#ffd700',
       stroke: '#000000',
-      strokeThickness: 6,
-    }).setOrigin(0.5);
+      strokeThickness: 8,
+    }).setOrigin(0.5).setDepth(1);
     
     // Gold reward display
-    const goldText = this.add.text(width / 2, 140, `💰 +${this.goldReward} Gold (Total: ${totalGold})`, {
-      fontSize: '36px',
+    const goldText = this.add.text(width / 2, 160, `💰 +${this.goldReward} Gold (Total: ${totalGold})`, {
+      fontSize: '32px',
+      fontFamily: 'Arial',
+      color: '#ffffff',
+      stroke: '#000000',
+      strokeThickness: 6,
+    }).setOrigin(0.5).setDepth(1);
+    
+    // Subtitle
+    const subtitle = this.add.text(width / 2, 220, 'Choose 1 card to add to your deck:', {
+      fontSize: '28px',
       fontFamily: 'Arial',
       color: '#ffffff',
       stroke: '#000000',
       strokeThickness: 4,
-    }).setOrigin(0.5);
-    
-    // Subtitle
-    const subtitle = this.add.text(width / 2, 200, 'Choose 1 card to add to your deck:', {
-      fontSize: '24px',
-      fontFamily: 'Arial',
-      color: '#ffffff',
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setDepth(1);
     
     // Generate 3 card options
     const cardOptions = this.generateCardOptions();
     
-    // Display card options
-    const startX = width / 2 - 350;
-    const cardY = 320;
-    const cardSpacing = 250;
+    // Display card options - centered with proper spacing
+    const CARD_WIDTH = 140;
+    const CARD_HEIGHT = 210;
+    const cardSpacing = 60;
+    const totalWidth = (CARD_WIDTH * 3) + (cardSpacing * 2);
+    const startX = (width - totalWidth) / 2 + (CARD_WIDTH / 2);
+    const cardY = height / 2 + 20;
     
     cardOptions.forEach((card, index) => {
-      this.createCardOption(card, startX + (index * cardSpacing), cardY);
+      this.createCardOption(card, startX + (index * (CARD_WIDTH + cardSpacing)), cardY);
     });
     
-    // Continue button (disabled until card is selected)
-    const continueBtn = this.add.text(width / 2, height - 80, 'Continue to Map', {
-      fontSize: '28px',
-      fontFamily: 'Arial',
-      color: '#888888',
-      backgroundColor: '#333333',
-      padding: { x: 30, y: 15 },
-    })
-    .setOrigin(0.5)
-    .setInteractive({ useHandCursor: false });
+    // Continue button (disabled until card is selected) - use same lock button as battle
+    const continueBtnContainer = this.add.container(width / 2, height - 120);
+    continueBtnContainer.setDepth(1);
+    
+    const lockButtonImage = this.add.image(0, 0, 'lock_button');
+    lockButtonImage.setDisplaySize(120, 80);
+    lockButtonImage.setAlpha(0.5); // Start disabled
+    lockButtonImage.setInteractive({ useHandCursor: false });
+    continueBtnContainer.add(lockButtonImage);
     
     // Store reference for updating
-    (this as any).continueBtn = continueBtn;
+    (this as any).continueBtn = continueBtnContainer;
+    (this as any).lockButtonImage = lockButtonImage;
     
-    continueBtn.on('pointerdown', () => {
+    lockButtonImage.on('pointerover', () => {
+      if (this.selectedCard) {
+        lockButtonImage.setTint(0xcccccc);
+      }
+    });
+    
+    lockButtonImage.on('pointerout', () => {
+      lockButtonImage.clearTint();
+    });
+    
+    lockButtonImage.on('pointerdown', () => {
       if (!this.selectedCard) return;
       
       console.log('[LootScene] Player selected:', this.selectedCard.name);
@@ -128,7 +183,10 @@ export class LootScene extends Phaser.Scene {
       // Add card to player's inventory
       addCardToDeck(this.userId, this.selectedCard);
       
-      // Transition back to map
+      // Disable button
+      lockButtonImage.disableInteractive();
+      
+      // Transition back to map with fade
       this.transitionToMap();
     });
   }
@@ -165,109 +223,184 @@ export class LootScene extends Phaser.Scene {
   }
   
   private createCardOption(card: Card, x: number, y: number): void {
+    const CARD_WIDTH = 140;
+    const CARD_HEIGHT = 210;
+    
     const container = this.add.container(x, y);
+    container.setDepth(1);
     
-    // Card background
-    const cardBg = this.add.rectangle(0, 0, 200, 280, 0x2c3e50)
-      .setStrokeStyle(3, 0x34495e);
+    // Card background image based on type (same as in-game)
+    const imageKey = `card_${card.type}`;
+    const cardImage = this.add.image(0, 0, imageKey);
+    cardImage.setDisplaySize(CARD_WIDTH, CARD_HEIGHT);
+    cardImage.setName('cardImage');
     
-    // Card type indicator
-    let bgColor = 0x2c3e50;
-    if (card.type === 'attack') bgColor = 0xc0392b;
-    else if (card.type === 'defense') bgColor = 0x3498db;
-    else if (card.type === 'magic') bgColor = 0x9b59b6;
-    else if (card.type === 'neutral') bgColor = 0x7f8c8d;
+    // Apply gray tint to neutral cards
+    if (card.type === 'neutral') {
+      cardImage.setTint(0x888888);
+    }
     
-    const typeBg = this.add.rectangle(0, -100, 200, 60, bgColor);
+    container.add(cardImage);
     
-    // Card name
-    const nameText = this.add.text(0, -100, card.name, {
-      fontSize: '18px',
-      fontFamily: 'Arial Black',
+    // Border frame
+    const border = this.add.rectangle(0, 0, CARD_WIDTH, CARD_HEIGHT, 0x000000, 0);
+    border.setStrokeStyle(3, 0x444444, 0.8);
+    border.setName('border');
+    container.add(border);
+    
+    // Card name (split multi-word titles vertically like in game)
+    const words = card.name.split(' ');
+    const displayText = words.length > 1 ? words.join('\n') : card.name;
+    
+    const nameText = this.add.text(0, -CARD_HEIGHT / 2 + 50, displayText, {
+      fontSize: '16px',
       color: '#ffffff',
-      align: 'center',
-      wordWrap: { width: 180 },
-    }).setOrigin(0.5);
-    
-    // AP cost
-    const apBadge = this.add.circle(-80, -100, 18, 0xf39c12);
-    const apText = this.add.text(-80, -100, card.ap.toString(), {
-      fontSize: '20px',
-      fontFamily: 'Arial Black',
-      color: '#ffffff',
-    }).setOrigin(0.5);
-    
-    // Card description
-    const descText = this.add.text(0, 0, card.desc, {
-      fontSize: '14px',
       fontFamily: 'Arial',
-      color: '#ecf0f1',
+      fontStyle: 'bold',
       align: 'center',
-      wordWrap: { width: 180 },
-    }).setOrigin(0.5);
+      stroke: '#000000',
+      strokeThickness: 4,
+      lineSpacing: -5,
+    });
+    nameText.setOrigin(0.5);
+    container.add(nameText);
+    
+    // AP cost badge (top right corner like in game)
+    const apBadge = this.add.container(CARD_WIDTH / 2 - 8, -CARD_HEIGHT / 2 + 8);
+    
+    const apBg = this.add.circle(0, 0, 12, 0x000000, 0.9);
+    apBg.setStrokeStyle(2, 0xffaa00, 1);
+    apBadge.add(apBg);
+    
+    const apText = this.add.text(0, 0, `${card.ap}`, {
+      fontSize: '14px',
+      color: '#ffaa00',
+      fontFamily: 'Arial',
+      fontStyle: 'bold',
+    });
+    apText.setOrigin(0.5);
+    apBadge.add(apText);
+    
+    container.add(apBadge);
+    
+    // Description
+    const descText = this.add.text(0, 20, card.desc, {
+      fontSize: '14px',
+      color: '#ffffff',
+      fontFamily: 'Arial',
+      align: 'center',
+      wordWrap: { width: CARD_WIDTH - 20 },
+      stroke: '#000000',
+      strokeThickness: 3,
+      lineSpacing: -3,
+    });
+    descText.setOrigin(0.5);
+    container.add(descText);
+    
+    // Target info
+    const targetText = this.add.text(0, CARD_HEIGHT / 2 - 35, `Target: ${card.target}`, {
+      fontSize: '12px',
+      color: '#cccccc',
+      fontFamily: 'Arial',
+      align: 'center',
+      stroke: '#000000',
+      strokeThickness: 3,
+    });
+    targetText.setOrigin(0.5);
+    container.add(targetText);
     
     // Consumable badge if applicable
     if (NEUTRAL_CONSUMABLE_ITEMS.some(c => c.id === card.id)) {
-      const consumableBadge = this.add.text(0, 120, '⚠️ Consumable', {
-        fontSize: '12px',
+      const consumableBadge = this.add.text(0, CARD_HEIGHT / 2 - 15, '⚠️ Consumable', {
+        fontSize: '11px',
         fontFamily: 'Arial',
         color: '#e74c3c',
         backgroundColor: '#000000',
-        padding: { x: 6, y: 3 },
+        padding: { x: 4, y: 2 },
+        stroke: '#000000',
+        strokeThickness: 2,
       }).setOrigin(0.5);
       container.add(consumableBadge);
     }
     
-    container.add([cardBg, typeBg, nameText, apBadge, apText, descText]);
-    
     // Make interactive
-    cardBg.setInteractive({ useHandCursor: true });
+    border.setInteractive({ useHandCursor: true });
     
-    cardBg.on('pointerover', () => {
-      cardBg.setStrokeStyle(4, 0xffd700);
-      container.setScale(1.05);
+    border.on('pointerover', () => {
+      border.setStrokeStyle(4, 0xffffff, 1);
+      this.tweens.add({
+        targets: container,
+        scale: 1.08,
+        duration: 150,
+        ease: 'Power2',
+      });
     });
     
-    cardBg.on('pointerout', () => {
+    border.on('pointerout', () => {
       if (this.selectedCard?.id !== card.id) {
-        cardBg.setStrokeStyle(3, 0x34495e);
-      }
-      if (this.selectedCard?.id !== card.id) {
-        container.setScale(1);
+        border.setStrokeStyle(3, 0x444444, 0.8);
+        this.tweens.add({
+          targets: container,
+          scale: 1,
+          duration: 150,
+          ease: 'Power2',
+        });
       }
     });
     
-    cardBg.on('pointerdown', () => {
-      this.selectCard(card, container, cardBg);
+    border.on('pointerdown', () => {
+      this.selectCard(card, container, border);
     });
     
     // Store reference for selection tracking
     (container as any).cardId = card.id;
-    (container as any).cardBg = cardBg;
+    (container as any).cardBorder = border;
   }
   
-  private selectCard(card: Card, container: Phaser.GameObjects.Container, cardBg: Phaser.GameObjects.Rectangle): void {
+  private selectCard(card: Card, container: Phaser.GameObjects.Container, cardBorder: Phaser.GameObjects.Rectangle): void {
     // Deselect previous card
     if (this.selectedCard) {
       this.children.list.forEach(child => {
         if (child instanceof Phaser.GameObjects.Container && (child as any).cardId === this.selectedCard?.id) {
-          child.setScale(1);
-          ((child as any).cardBg as Phaser.GameObjects.Rectangle).setStrokeStyle(3, 0x34495e);
+          this.tweens.add({
+            targets: child,
+            scale: 1,
+            duration: 150,
+            ease: 'Power2',
+          });
+          ((child as any).cardBorder as Phaser.GameObjects.Rectangle).setStrokeStyle(3, 0x444444, 0.8);
         }
       });
     }
     
     // Select new card
     this.selectedCard = card;
-    container.setScale(1.1);
-    cardBg.setStrokeStyle(4, 0xffd700);
+    this.tweens.add({
+      targets: container,
+      scale: 1.12,
+      duration: 150,
+      ease: 'Power2',
+    });
+    cardBorder.setStrokeStyle(5, 0x44ff44, 1);
     
     // Enable continue button
-    const continueBtn = (this as any).continueBtn as Phaser.GameObjects.Text;
-    if (continueBtn) {
-      continueBtn.setColor('#ffffff');
-      continueBtn.setBackgroundColor('#27ae60');
-      continueBtn.setInteractive({ useHandCursor: true });
+    const lockButtonImage = (this as any).lockButtonImage as Phaser.GameObjects.Image;
+    if (lockButtonImage) {
+      lockButtonImage.setAlpha(1);
+      lockButtonImage.setInteractive({ useHandCursor: true });
+      
+      // Add pulse animation
+      const continueBtn = (this as any).continueBtn as Phaser.GameObjects.Container;
+      if (continueBtn) {
+        this.tweens.add({
+          targets: continueBtn,
+          scale: 1.05,
+          duration: 500,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      }
     }
     
     console.log('[LootScene] Selected card:', card.name);
@@ -286,15 +419,29 @@ export class LootScene extends Phaser.Scene {
     
     console.log('[LootScene] Visited nodes after:', this.visitedNodes);
     
-    // Transition back to map
-    this.scene.start('MapScene', {
-      lobbyId: this.lobbyId,
-      players: this.players,
-      mapSeed: this.mapSeed,
-      visitedNodes: this.visitedNodes,
-      currentNodeId: this.currentNodeId,
-      stage: this.stage,
-      selectedCard: this.selectedCard, // Pass selected card to be added to deck
+    // Fade to black
+    const { width, height } = this.cameras.main;
+    const fadeOut = this.add.rectangle(0, 0, width, height, 0x000000, 0);
+    fadeOut.setOrigin(0);
+    fadeOut.setDepth(20000);
+    
+    this.tweens.add({
+      targets: fadeOut,
+      alpha: 1,
+      duration: 600,
+      ease: 'Power2',
+      onComplete: () => {
+        // Transition back to map (map will fade in)
+        this.scene.start('MapScene', {
+          lobbyId: this.lobbyId,
+          players: this.players,
+          mapSeed: this.mapSeed,
+          visitedNodes: this.visitedNodes,
+          currentNodeId: this.currentNodeId,
+          stage: this.stage,
+          selectedCard: this.selectedCard, // Pass selected card to be added to deck
+        });
+      }
     });
   }
 }
