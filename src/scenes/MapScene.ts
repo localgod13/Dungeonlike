@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
 import { generateMap, GameMap, MapNode, NodeType, getNodesInLayer, getAvailableNodes, visitNode } from '../game/mapgen';
-import { COLORS } from '../game/config';
 import { SoundManager } from '../game/sound';
 import { subscribeMap, sendMapVote, sendMapVoteResult, sendMapCursor } from '../net/match';
 import { CursorPosition } from '../net/proto';
 import { getGold, initializeInventory } from '../game/inventory';
+import { createEnemyAnimations } from '../game/enemySprites';
 
 /**
  * Map scene - Slay the Spire style node-based progression
@@ -114,6 +114,9 @@ export class MapScene extends Phaser.Scene {
     // Determine if host (first player)
     this.isHost = this.players.length > 0 && this.players[0].userId === this.userId;
     console.log('Is host:', this.isHost);
+
+    // Create enemy animations for previews
+    createEnemyAnimations(this);
 
     // Fantasy dark background with gradient
     this.cameras.main.setBackgroundColor('#0d0820');
@@ -481,6 +484,31 @@ export class MapScene extends Phaser.Scene {
     mist.fillRect(0, height - 200, width, 200);
     mist.setDepth(-95);
     
+    // Add floating particles/embers in background
+    for (let i = 0; i < 20; i++) {
+      const x = Math.random() * width;
+      const y = Math.random() * height;
+      const size = Math.random() * 1.5 + 0.5;
+      const particle = this.add.circle(x, y, size, 0xaa8866, 0.4);
+      particle.setDepth(-80);
+      
+      // Floating animation
+      this.tweens.add({
+        targets: particle,
+        y: y - 100 - Math.random() * 50,
+        x: x + (Math.random() - 0.5) * 50,
+        alpha: 0,
+        duration: 3000 + Math.random() * 2000,
+        repeat: -1,
+        delay: Math.random() * 2000,
+        ease: 'Sine.easeInOut',
+        onRepeat: () => {
+          particle.y = height + 20;
+          particle.alpha = 0.4;
+        }
+      });
+    }
+    
     // Decorative corner elements
     this.createCornerDecorations();
   }
@@ -549,22 +577,25 @@ export class MapScene extends Phaser.Scene {
     container.add(legendTitle);
 
     const entries = [
-      { type: 'Battle', color: 0xc72c41, icon: '⚔' },
-      { type: 'Shop', color: 0xd4af37, icon: '◆' },
-      { type: 'Event', color: 0x6a5acd, icon: '?' },
-      { type: 'Boss', color: 0x8b0000, icon: '☠' },
+      { type: 'Battle', color: 0x8b1f31, border: 0xc74452, icon: '⚔' },
+      { type: 'Shop', color: 0xa08028, border: 0xd4af37, icon: '💰' },
+      { type: 'Event', color: 0x4a3a8d, border: 0x7b68bb, icon: '?' },
+      { type: 'Boss', color: 0x660000, border: 0xcc3333, icon: '☠' },
     ];
 
     entries.forEach((entry, i) => {
       const y = -45 + i * 38;
       
-      // Node preview
-      const circle = this.add.circle(-55, y, 14, entry.color);
-      circle.setStrokeStyle(2, 0xffd700, 0.7);
+      // Node preview with darker colors
+      const bgCircle = this.add.circle(-55, y, 15, 0x0d0820, 0.6);
+      container.add(bgCircle);
+      
+      const circle = this.add.circle(-55, y, 12, entry.color, 0.9);
+      circle.setStrokeStyle(2, entry.border, 0.7);
       container.add(circle);
       
       const icon = this.add.text(-55, y, entry.icon, {
-        fontSize: '16px',
+        fontSize: '14px',
         color: '#ffffff',
         fontFamily: 'Arial, sans-serif',
       });
@@ -582,8 +613,6 @@ export class MapScene extends Phaser.Scene {
   }
 
   private renderMap(): void {
-    const width = this.scale.width;
-    
     // First, draw all connections as fantasy paths
     const connectionGraphics = this.add.graphics();
     connectionGraphics.setDepth(1);
@@ -606,12 +635,12 @@ export class MapScene extends Phaser.Scene {
             new Phaser.Math.Vector2(targetPos.x, targetPos.y)
           );
           
-          // Outer glow
-          connectionGraphics.lineStyle(6, 0x4a3f5f, 0.2);
+          // Outer glow (darker for better blending)
+          connectionGraphics.lineStyle(5, 0x2a1f3d, 0.3);
           curve.draw(connectionGraphics, 32);
           
-          // Inner path
-          connectionGraphics.lineStyle(3, 0x7a6b8f, 0.4);
+          // Inner path (more subtle)
+          connectionGraphics.lineStyle(2, 0x5a4b6f, 0.5);
           curve.draw(connectionGraphics, 32);
         }
       }
@@ -619,7 +648,9 @@ export class MapScene extends Phaser.Scene {
 
     // Then draw nodes on top
     for (const node of this.gameMap.nodes.values()) {
-      const visual = new NodeVisual(this, node, this.getNodePosition(node), this.NODE_RADIUS);
+      // Boss nodes are larger
+      const radius = node.type === NodeType.Boss ? this.NODE_RADIUS * 1.5 : this.NODE_RADIUS;
+      const visual = new NodeVisual(this, node, this.getNodePosition(node), radius);
       visual.on('click', () => this.handleNodeClick(node));
       this.nodeVisuals.set(node.id, visual);
     }
@@ -843,7 +874,7 @@ export class MapScene extends Phaser.Scene {
     const player = this.players.find(p => p.userId === this.userId);
     const userName = player?.name || 'Unknown';
     
-    sendMapCursor(this.lobbyId, x, y, userName).catch(err => {
+    sendMapCursor(this.lobbyId, x, y, userName).catch(() => {
       // Silently fail - don't spam console with cursor errors
     });
   }
@@ -1041,8 +1072,9 @@ export class MapScene extends Phaser.Scene {
  * Visual representation of a map node
  */
 class NodeVisual extends Phaser.GameObjects.Container {
+  private bgCircle: Phaser.GameObjects.Arc;
   private circle: Phaser.GameObjects.Arc;
-  private icon: Phaser.GameObjects.Text;
+  private icon: Phaser.GameObjects.Text | Phaser.GameObjects.Sprite | null = null;
   private node: MapNode;
   private isAvailable = false;
   private isVisited = false;
@@ -1061,20 +1093,195 @@ class NodeVisual extends Phaser.GameObjects.Container {
     this.glowCircle.setVisible(false);
     this.add(this.glowCircle);
 
+    // Dark background circle for better blending
+    this.bgCircle = scene.add.circle(0, 0, radius + 6, 0x0d0820, 0.8);
+    this.add(this.bgCircle);
+
     // Fantasy-styled main circle with inner shadow
-    const shadow = scene.add.circle(1, 1, radius, 0x000000, 0.5);
+    const shadow = scene.add.circle(2, 2, radius, 0x000000, 0.6);
     this.add(shadow);
 
     this.circle = scene.add.circle(0, 0, radius, this.getNodeColor());
-    this.circle.setStrokeStyle(4, this.getNodeBorderColor(), 0.9);
+    this.circle.setStrokeStyle(3, this.getNodeBorderColor(), 0.7);
     this.add(this.circle);
     
     // Inner highlight for depth
-    const highlight = scene.add.circle(-3, -3, radius - 6, 0xffffff, 0.15);
+    const highlight = scene.add.circle(-4, -4, radius - 8, 0xffffff, 0.15);
     this.add(highlight);
 
+    // Add content based on node type
+    this.createNodeContent(scene, node, radius);
+
+    // Interactive
+    this.circle.setInteractive({ useHandCursor: true });
+    this.circle.on('pointerover', () => this.onHover());
+    this.circle.on('pointerout', () => this.onHoverOut());
+    this.circle.on('pointerdown', () => this.onClick());
+  }
+
+  private createNodeContent(scene: Phaser.Scene, node: MapNode, _radius: number): void {
+    const stageNumber = node.layer + 1; // Layer 0 = Start, Layer 1 = Stage 1, etc.
+
+    if (node.type === NodeType.Battle || node.type === NodeType.Boss) {
+      // Show enemy preview for battle nodes
+      const sprite = this.createEnemyPreview(scene, stageNumber, node.type === NodeType.Boss);
+      if (sprite) {
+        this.icon = sprite;
+        this.add(sprite);
+      } else {
+        // Fallback to icon
+        this.createTextIcon(scene, this.getNodeIcon());
+      }
+    } else if (node.type === NodeType.Shop) {
+      // Shop gets a special sprite/icon
+      this.createShopIcon(scene);
+    } else if (node.type === NodeType.Event) {
+      // Event gets a special sprite/icon
+      this.createEventIcon(scene);
+    } else {
+      // Default text icon
+      this.createTextIcon(scene, this.getNodeIcon());
+    }
+  }
+
+  private createEnemyPreview(scene: Phaser.Scene, stage: number, isBoss: boolean): Phaser.GameObjects.Sprite | null {
+    try {
+      let spriteKey: string;
+      
+      // Match EXACT enemy from BattleScene.generateEnemiesForStage()
+      if (isBoss) {
+        // Stage 6 boss (Demon Boss)
+        spriteKey = 'demon_boss_idle';
+      } else {
+        switch (stage) {
+          case 1:
+            // Stage 1: Flying Demon
+            spriteKey = 'flying_demon_idle';
+            break;
+          case 2:
+            // Stage 2: Goblin Warrior (first enemy)
+            spriteKey = 'goblin_idle';
+            break;
+          case 3:
+            // Stage 3: Skele Mage (first enemy)
+            spriteKey = 'skele_mage_idle';
+            break;
+          case 4:
+            // Stage 4: Flying Demon (first enemy)
+            spriteKey = 'flying_demon_idle';
+            break;
+          case 5:
+            // Stage 5: Skele Mage (first enemy)
+            spriteKey = 'skele_mage_idle';
+            break;
+          default:
+            // Stage 7+: Skele Mage (first in rotation)
+            spriteKey = 'skele_mage_idle';
+        }
+      }
+
+      const sprite = scene.add.sprite(0, isBoss ? -15 : 0, spriteKey);
+      sprite.setScale(0.6); // Double the size (was 0.3, now 0.6)
+      
+      // Play idle animation
+      const animKey = spriteKey.replace('idle', 'idle_anim');
+      if (scene.anims.exists(animKey)) {
+        sprite.play(animKey);
+      }
+      
+      return sprite;
+    } catch (error) {
+      console.error('Failed to create enemy preview:', error);
+      return null;
+    }
+  }
+
+  private createShopIcon(scene: Phaser.Scene): void {
+    // Create shop icon with coin/gem visual
+    const container = scene.add.container(0, 0);
+    
+    // Gold bag icon
+    const iconShadow = scene.add.text(1, 1, '💰', {
+      fontSize: '28px',
+      color: '#000000',
+    });
+    iconShadow.setOrigin(0.5);
+    iconShadow.setAlpha(0.5);
+    container.add(iconShadow);
+    
+    const iconText = scene.add.text(0, 0, '💰', {
+      fontSize: '28px',
+    });
+    iconText.setOrigin(0.5);
+    container.add(iconText);
+    
+    this.icon = iconText;
+    this.add(container);
+  }
+
+  private createEventIcon(scene: Phaser.Scene): void {
+    // Create event icon with mystical visual
+    const container = scene.add.container(0, 0);
+    
+    // Draw a mystical rune/crystal
+    const graphics = scene.add.graphics();
+    
+    // Outer glow
+    graphics.fillStyle(0x9370db, 0.3);
+    graphics.fillCircle(0, 0, 18);
+    
+    // Crystal/diamond shape
+    graphics.fillStyle(0x9370db, 0.9);
+    graphics.lineStyle(2, 0xdda0dd, 1);
+    graphics.beginPath();
+    graphics.moveTo(0, -12);
+    graphics.lineTo(8, 0);
+    graphics.lineTo(0, 12);
+    graphics.lineTo(-8, 0);
+    graphics.closePath();
+    graphics.fillPath();
+    graphics.strokePath();
+    
+    // Question mark overlay
+    const iconShadow = scene.add.text(1, 1, '?', {
+      fontSize: '20px',
+      color: '#000000',
+      fontFamily: 'Arial Black',
+      fontStyle: 'bold',
+    });
+    iconShadow.setOrigin(0.5);
+    iconShadow.setAlpha(0.5);
+    container.add(iconShadow);
+    
+    const iconText = scene.add.text(0, 0, '?', {
+      fontSize: '20px',
+      color: '#ffffff',
+      fontFamily: 'Arial Black',
+      fontStyle: 'bold',
+    });
+    iconText.setOrigin(0.5);
+    container.add(iconText);
+    
+    container.add(graphics);
+    container.add(iconShadow);
+    container.add(iconText);
+    
+    this.icon = iconText;
+    this.add(container);
+    
+    // Mystical rotation animation
+    scene.tweens.add({
+      targets: graphics,
+      angle: 360,
+      duration: 4000,
+      repeat: -1,
+      ease: 'Linear',
+    });
+  }
+
+  private createTextIcon(scene: Phaser.Scene, iconText: string): void {
     // Icon with shadow
-    const iconShadow = scene.add.text(1, 1, this.getNodeIcon(), {
+    const iconShadow = scene.add.text(1, 1, iconText, {
       fontSize: '22px',
       color: '#000000',
       fontFamily: 'Arial, sans-serif',
@@ -1084,7 +1291,7 @@ class NodeVisual extends Phaser.GameObjects.Container {
     iconShadow.setAlpha(0.5);
     this.add(iconShadow);
 
-    this.icon = scene.add.text(0, 0, this.getNodeIcon(), {
+    this.icon = scene.add.text(0, 0, iconText, {
       fontSize: '22px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
@@ -1092,45 +1299,39 @@ class NodeVisual extends Phaser.GameObjects.Container {
     });
     this.icon.setOrigin(0.5);
     this.add(this.icon);
-
-    // Interactive
-    this.circle.setInteractive({ useHandCursor: true });
-    this.circle.on('pointerover', () => this.onHover());
-    this.circle.on('pointerout', () => this.onHoverOut());
-    this.circle.on('pointerdown', () => this.onClick());
   }
 
   private getNodeColor(): number {
     switch (this.node.type) {
       case NodeType.Start:
-        return 0x4a90e2; // Blue
+        return 0x2a4a6a; // Darker blue
       case NodeType.Battle:
-        return 0xc72c41; // Deep red
+        return 0x8b1f31; // Darker red
       case NodeType.Shop:
-        return 0xd4af37; // Gold
+        return 0xa08028; // Darker gold
       case NodeType.Event:
-        return 0x6a5acd; // Slate blue
+        return 0x4a3a8d; // Darker purple
       case NodeType.Boss:
-        return 0x8b0000; // Dark red
+        return 0x660000; // Darker crimson
       default:
-        return 0x666666;
+        return 0x444444;
     }
   }
 
   private getNodeBorderColor(): number {
     switch (this.node.type) {
       case NodeType.Start:
-        return 0x7fc8f8; // Light blue
+        return 0x5a8ab8; // Muted light blue
       case NodeType.Battle:
-        return 0xff6b7a; // Light red
+        return 0xc74452; // Muted red
       case NodeType.Shop:
-        return 0xffd700; // Bright gold
+        return 0xd4af37; // Gold
       case NodeType.Event:
-        return 0x9370db; // Medium purple
+        return 0x7b68bb; // Muted purple
       case NodeType.Boss:
-        return 0xff4500; // Orange-red
+        return 0xcc3333; // Muted orange-red
       default:
-        return 0x888888;
+        return 0x666666;
     }
   }
 
@@ -1170,18 +1371,21 @@ class NodeVisual extends Phaser.GameObjects.Container {
     // Current node is hidden (player marker is on top)
     if (this.isCurrent) {
       this.circle.setAlpha(0);
-      this.icon.setAlpha(0);
+      this.bgCircle.setAlpha(0);
+      if (this.icon) this.icon.setAlpha(0);
       this.glowCircle.setVisible(false);
     } else if (this.isVisited) {
-      this.circle.setAlpha(0.4);
-      this.icon.setAlpha(0.4);
+      this.circle.setAlpha(0.3);
+      this.bgCircle.setAlpha(0.5);
+      if (this.icon) this.icon.setAlpha(0.3);
       this.glowCircle.setVisible(false);
-      this.circle.setStrokeStyle(4, 0x666666, 0.5);
+      this.circle.setStrokeStyle(3, 0x444444, 0.4);
     } else if (this.isAvailable) {
-      this.circle.setAlpha(1);
-      this.icon.setAlpha(1);
+      this.circle.setAlpha(0.9);
+      this.bgCircle.setAlpha(0.8);
+      if (this.icon) this.icon.setAlpha(1);
       this.glowCircle.setVisible(true);
-      this.circle.setStrokeStyle(4, 0xffffff, 1);
+      this.circle.setStrokeStyle(3, 0xffffff, 0.9);
       
       // Pulse animation for available nodes
       this.scene.tweens.add({
@@ -1194,10 +1398,11 @@ class NodeVisual extends Phaser.GameObjects.Container {
         ease: 'Sine.easeInOut',
       });
     } else {
-      this.circle.setAlpha(0.6);
-      this.icon.setAlpha(0.6);
+      this.circle.setAlpha(0.5);
+      this.bgCircle.setAlpha(0.6);
+      if (this.icon) this.icon.setAlpha(0.5);
       this.glowCircle.setVisible(false);
-      this.circle.setStrokeStyle(4, 0x444444, 0.6);
+      this.circle.setStrokeStyle(3, 0x333333, 0.5);
     }
   }
 
