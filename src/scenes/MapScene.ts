@@ -15,6 +15,8 @@ export class MapScene extends Phaser.Scene {
   private soundManager: SoundManager | null = null;
   private currentNodeId: string | null = null; // Track player's current position
   private playerMarker: Phaser.GameObjects.Container | null = null; // Visual marker for current position
+  private traveledConnections = new Set<string>(); // Track which connections have been traveled
+  private connectionGraphics: Phaser.GameObjects.Graphics | null = null; // Store connection graphics for updates
   
   // Scene data
   private lobbyId: string | null = null;
@@ -33,10 +35,14 @@ export class MapScene extends Phaser.Scene {
   private cursorThrottle = 0;
   private readonly CURSOR_THROTTLE_MS = 50;
   
+  // Debug mode
+  private debugMode = false;
+  private debugText: Phaser.GameObjects.Text | null = null;
+  
   // Layout constants
   private readonly NODE_RADIUS = 25;
   private readonly LAYER_HEIGHT = 80; // Spacing for 7 layers
-  private readonly NODE_SPACING = 150; // Reduced horizontal spread to avoid overlap
+  private readonly NODE_SPACING = 200; // Increased spacing for better visual separation
   private readonly MAP_START_Y = 650; // Moved down to avoid taskbar
   private readonly MAP_MARGIN_LEFT = 220; // Left margin for spacing
   private readonly MAP_MARGIN_RIGHT = 220; // Right margin to avoid legend
@@ -247,6 +253,9 @@ export class MapScene extends Phaser.Scene {
       this.setupVoting();
     }
     
+    // Setup debug mode keyboard input
+    this.setupDebugMode();
+    
     // No scrolling needed - map fits on screen!
   }
 
@@ -257,6 +266,61 @@ export class MapScene extends Phaser.Scene {
     } catch (error) {
       console.error('Failed to get current user:', error);
       return null;
+    }
+  }
+
+  private setupDebugMode(): void {
+    let debugInput = '';
+    
+    this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
+      // Only process letter keys
+      if (event.key.length === 1 && event.key.match(/[a-zA-Z]/)) {
+        debugInput += event.key.toUpperCase();
+        
+        // Keep only last 5 characters
+        if (debugInput.length > 5) {
+          debugInput = debugInput.slice(-5);
+        }
+        
+        // Check if "DEBUG" was typed
+        if (debugInput.includes('DEBUG')) {
+          this.toggleDebugMode();
+          debugInput = ''; // Reset input
+        }
+      }
+    });
+  }
+
+  private toggleDebugMode(): void {
+    this.debugMode = !this.debugMode;
+    
+    if (this.debugMode) {
+      console.log('🔧 DEBUG MODE ENABLED - Click any node to travel there');
+      
+      // Create debug text indicator
+      this.debugText = this.add.text(50, 50, 'DEBUG MODE', {
+        fontSize: '24px',
+        color: '#ff0000',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 3,
+      });
+      this.debugText.setDepth(2000);
+      
+      // Make all nodes available for clicking
+      this.updateAvailableNodes();
+    } else {
+      console.log('🔧 DEBUG MODE DISABLED');
+      
+      // Remove debug text
+      if (this.debugText) {
+        this.debugText.destroy();
+        this.debugText = null;
+      }
+      
+      // Restore normal node availability
+      this.updateAvailableNodes();
     }
   }
 
@@ -449,40 +513,19 @@ export class MapScene extends Phaser.Scene {
     const width = this.scale.width;
     const height = this.scale.height;
     
-    // Create gradient background
-    const graphics = this.add.graphics();
+    // Create background image
+    const backgroundImage = this.add.image(width / 2, height / 2, 'map_bg');
     
-    // Dark purple/blue gradient
-    graphics.fillGradientStyle(0x0d0820, 0x0d0820, 0x1a0f2e, 0x1a0f2e, 1, 1, 1, 1);
-    graphics.fillRect(0, 0, width, height);
-    graphics.setDepth(-100);
+    // Scale image to fit screen while maintaining aspect ratio
+    const imageScale = Math.max(width / 1536, height / 1024);
+    backgroundImage.setScale(imageScale);
+    backgroundImage.setDepth(-100);
     
-    // Add stars
-    for (let i = 0; i < 80; i++) {
-      const x = Math.random() * width;
-      const y = Math.random() * height;
-      const size = Math.random() * 2 + 0.5;
-      const alpha = Math.random() * 0.5 + 0.3;
-      
-      const star = this.add.circle(x, y, size, 0xffffff, alpha);
-      star.setDepth(-90);
-      
-      // Twinkling animation
-      this.tweens.add({
-        targets: star,
-        alpha: alpha * 0.3,
-        duration: Math.random() * 2000 + 1000,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-      });
-    }
-    
-    // Add subtle mist/fog effect at bottom
-    const mist = this.add.graphics();
-    mist.fillGradientStyle(0x2a1f3d, 0x2a1f3d, 0x0d0820, 0x0d0820, 0.3, 0.3, 0, 0);
-    mist.fillRect(0, height - 200, width, 200);
-    mist.setDepth(-95);
+    // Add dark overlay for better text readability
+    const overlay = this.add.graphics();
+    overlay.fillStyle(0x000000, 0.3);
+    overlay.fillRect(0, 0, width, height);
+    overlay.setDepth(-99);
     
     // Add floating particles/embers in background
     for (let i = 0; i < 20; i++) {
@@ -613,9 +656,28 @@ export class MapScene extends Phaser.Scene {
   }
 
   private renderMap(): void {
-    // First, draw all connections as fantasy paths
-    const connectionGraphics = this.add.graphics();
-    connectionGraphics.setDepth(1);
+    // Create connection graphics container
+    this.connectionGraphics = this.add.graphics();
+    this.connectionGraphics.setDepth(1);
+
+    // Draw all connections
+    this.renderConnections();
+
+    // Then draw nodes on top
+    for (const node of this.gameMap.nodes.values()) {
+      // Boss nodes are larger
+      const radius = node.type === NodeType.Boss ? this.NODE_RADIUS * 1.5 : this.NODE_RADIUS;
+      const visual = new NodeVisual(this, node, this.getNodePosition(node), radius);
+      visual.on('click', () => this.handleNodeClick(node));
+      this.nodeVisuals.set(node.id, visual);
+    }
+  }
+
+  private renderConnections(): void {
+    if (!this.connectionGraphics) return;
+    
+    // Clear previous connections
+    this.connectionGraphics.clear();
 
     for (const node of this.gameMap.nodes.values()) {
       const nodePos = this.getNodePosition(node);
@@ -625,34 +687,83 @@ export class MapScene extends Phaser.Scene {
         if (targetNode) {
           const targetPos = this.getNodePosition(targetNode);
           
+          // Create connection key for tracking
+          const connectionKey = this.getConnectionKey(node.id, targetId);
+          const isTraveled = this.traveledConnections.has(connectionKey);
+          
+          // Calculate line endpoints that stop at the edge of the circles
+          const fromRadius = node.type === NodeType.Boss ? this.NODE_RADIUS * 1.5 : this.NODE_RADIUS;
+          const toRadius = targetNode.type === NodeType.Boss ? this.NODE_RADIUS * 1.5 : this.NODE_RADIUS;
+          
+          // Calculate direction vector between nodes
+          const dx = targetPos.x - nodePos.x;
+          const dy = targetPos.y - nodePos.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          
+          // Normalize direction and scale by radius to get edge points
+          const fromEdgeX = nodePos.x + (dx / distance) * fromRadius;
+          const fromEdgeY = nodePos.y + (dy / distance) * fromRadius;
+          const toEdgeX = targetPos.x - (dx / distance) * toRadius;
+          const toEdgeY = targetPos.y - (dy / distance) * toRadius;
+          
           // Create a slightly curved path using Phaser curves
           const curve = new Phaser.Curves.QuadraticBezier(
-            new Phaser.Math.Vector2(nodePos.x, nodePos.y),
+            new Phaser.Math.Vector2(fromEdgeX, fromEdgeY),
             new Phaser.Math.Vector2(
-              (nodePos.x + targetPos.x) / 2 + (Math.random() - 0.5) * 20,
-              (nodePos.y + targetPos.y) / 2
+              (fromEdgeX + toEdgeX) / 2 + (Math.random() - 0.5) * 20,
+              (fromEdgeY + toEdgeY) / 2
             ),
-            new Phaser.Math.Vector2(targetPos.x, targetPos.y)
+            new Phaser.Math.Vector2(toEdgeX, toEdgeY)
           );
           
-          // Outer glow (darker for better blending)
-          connectionGraphics.lineStyle(5, 0x2a1f3d, 0.3);
-          curve.draw(connectionGraphics, 32);
-          
-          // Inner path (more subtle)
-          connectionGraphics.lineStyle(2, 0x5a4b6f, 0.5);
-          curve.draw(connectionGraphics, 32);
+          if (isTraveled) {
+            // Solid line for traveled connections with white outline for visibility
+            this.connectionGraphics.lineStyle(5, 0xffffff, 0.8); // White outline
+            curve.draw(this.connectionGraphics, 32);
+            this.connectionGraphics.lineStyle(3, 0x00ff00, 1.0); // Bright green center
+            curve.draw(this.connectionGraphics, 32);
+          } else {
+            // Dotted line for untraveled connections - bright white with outline
+            this.drawDottedLine(curve, 0xffffff, 1.0);
+          }
         }
       }
     }
+  }
 
-    // Then draw nodes on top
-    for (const node of this.gameMap.nodes.values()) {
-      // Boss nodes are larger
-      const radius = node.type === NodeType.Boss ? this.NODE_RADIUS * 1.5 : this.NODE_RADIUS;
-      const visual = new NodeVisual(this, node, this.getNodePosition(node), radius);
-      visual.on('click', () => this.handleNodeClick(node));
-      this.nodeVisuals.set(node.id, visual);
+  private getConnectionKey(fromId: string, toId: string): string {
+    // Create a consistent key for the connection (bidirectional)
+    return [fromId, toId].sort().join('_');
+  }
+
+  private drawDottedLine(curve: Phaser.Curves.QuadraticBezier, color: number, alpha: number): void {
+    if (!this.connectionGraphics) return;
+    
+    // Get points along the curve
+    const points = curve.getPoints(64); // More points for smoother curves
+    
+    // Draw dotted line with much shorter dashes like the example
+    const dashLength = 3; // Very short dashes
+    const gapLength = 3;  // Equal gap length
+    
+    // Draw dark outline first for contrast
+    for (let i = 0; i < points.length - 1; i += dashLength + gapLength) {
+      const startPoint = points[i];
+      const endPoint = points[Math.min(i + dashLength, points.length - 1)];
+      
+      // Dark outline for contrast
+      this.connectionGraphics.lineStyle(5, 0x000000, 0.8);
+      this.connectionGraphics.beginPath();
+      this.connectionGraphics.moveTo(startPoint.x, startPoint.y);
+      this.connectionGraphics.lineTo(endPoint.x, endPoint.y);
+      this.connectionGraphics.strokePath();
+      
+      // Bright white center
+      this.connectionGraphics.lineStyle(3, color, alpha);
+      this.connectionGraphics.beginPath();
+      this.connectionGraphics.moveTo(startPoint.x, startPoint.y);
+      this.connectionGraphics.lineTo(endPoint.x, endPoint.y);
+      this.connectionGraphics.strokePath();
     }
   }
 
@@ -744,6 +855,18 @@ export class MapScene extends Phaser.Scene {
   }
 
   private updateAvailableNodes(): void {
+    // In debug mode, make all nodes available
+    if (this.debugMode) {
+      for (const [id, visual] of this.nodeVisuals.entries()) {
+        const node = this.gameMap.nodes.get(id)!;
+        const isCurrent = id === this.currentNodeId;
+        visual.setAvailable(!isCurrent); // Make all nodes available except current
+        visual.setVisited(node.visited);
+        visual.setCurrent(isCurrent);
+      }
+      return;
+    }
+    
     // Get nodes that are directly connected from current node and in higher layer
     let availableIds = new Set<string>();
     
@@ -777,6 +900,13 @@ export class MapScene extends Phaser.Scene {
   }
 
   private handleNodeClick(node: MapNode): void {
+    // In debug mode, allow clicking any node
+    if (this.debugMode) {
+      console.log(`🔧 DEBUG: Traveling to ${node.id} (${node.type})`);
+      this.transitionDirectly(node);
+      return;
+    }
+    
     // Check if node is available (connected to current node and forward only)
     let isAvailable = false;
     
@@ -846,6 +976,13 @@ export class MapScene extends Phaser.Scene {
   }
 
   private transitionDirectly(node: MapNode): void {
+    // Mark connection as traveled
+    if (this.currentNodeId) {
+      const connectionKey = this.getConnectionKey(this.currentNodeId, node.id);
+      this.traveledConnections.add(connectionKey);
+      console.log(`Marked connection as traveled: ${connectionKey}`);
+    }
+    
     // Mark as visited and update current position
     visitNode(this.gameMap, node.id);
     this.currentNodeId = node.id;
@@ -853,6 +990,9 @@ export class MapScene extends Phaser.Scene {
     // Update visuals
     this.createPlayerMarker(this.currentNodeId);
     this.updateAvailableNodes();
+    
+    // Redraw connections to show solid lines
+    this.renderConnections();
     
     // Transition based on node type
     this.time.delayedCall(300, () => {
@@ -926,6 +1066,13 @@ export class MapScene extends Phaser.Scene {
   }
 
   private transitionToNode(node: MapNode): void {
+    // Mark connection as traveled
+    if (this.currentNodeId) {
+      const connectionKey = this.getConnectionKey(this.currentNodeId, node.id);
+      this.traveledConnections.add(connectionKey);
+      console.log(`Marked connection as traveled: ${connectionKey}`);
+    }
+    
     // Get list of visited node IDs from the map
     const visitedNodes = Array.from(this.gameMap.nodes.values())
       .filter(n => n.visited)
@@ -936,7 +1083,6 @@ export class MapScene extends Phaser.Scene {
     
     switch (node.type) {
       case NodeType.Battle:
-      case NodeType.Boss:
         console.log(`Transitioning to battle... (Stage ${this.currentStage + 1})`);
         
         // Increment stage for each battle
@@ -963,6 +1109,36 @@ export class MapScene extends Phaser.Scene {
           visitedNodes: visitedNodes, // Pass visited nodes to maintain progress
           currentNodeId: node.id, // Pass the TARGET node as current position (player is moving to this node)
           stage: nextStage, // Increment stage for next battle
+        });
+        break;
+        
+      case NodeType.Boss:
+        console.log(`🔥 BOSS BATTLE! Transitioning to Stage 6...`);
+        
+        // Boss battles are always Stage 6 (regardless of current stage)
+        const bossStage = 6;
+        
+        // CRITICAL: Kill all tweens and stop all sounds immediately
+        console.log('🔇 Stopping all sounds and tweens before transition...');
+        this.tweens.killAll();
+        this.sound.stopAll();
+        
+        // Destroy sound manager to prevent lingering tweens
+        if (this.soundManager) {
+          console.log('🔇 Destroying sound manager...');
+          this.soundManager.destroy();
+          this.soundManager = null;
+        }
+        
+        // Transition immediately without delay
+        console.log('🚀 Transitioning to CardSelectScene...');
+        this.scene.start('CardSelectScene', {
+          lobbyId: this.lobbyId,
+          players: this.players,
+          mapSeed: this.gameMap.seed, // Pass map seed to maintain continuity
+          visitedNodes: visitedNodes, // Pass visited nodes to maintain progress
+          currentNodeId: node.id, // Pass the TARGET node as current position (player is moving to this node)
+          stage: bossStage, // Boss battles are always Stage 6
         });
         break;
         
@@ -1029,11 +1205,24 @@ export class MapScene extends Phaser.Scene {
     }
     this.nodeVisuals.clear();
     
+    // Destroy connection graphics
+    if (this.connectionGraphics) {
+      this.connectionGraphics.destroy();
+      this.connectionGraphics = null;
+    }
+    
     // Destroy player marker
     if (this.playerMarker) {
       this.playerMarker.destroy();
       this.playerMarker = null;
     }
+    
+    // Clean up debug mode
+    if (this.debugText) {
+      this.debugText.destroy();
+      this.debugText = null;
+    }
+    this.debugMode = false;
     
     // Destroy voting UI
     if (this.votingUI) {
@@ -1047,8 +1236,9 @@ export class MapScene extends Phaser.Scene {
     }
     this.remoteCursors.clear();
     
-    // Clear votes
+    // Clear votes and traveled connections
     this.mapVotes.clear();
+    this.traveledConnections.clear();
     
     // Unsubscribe from network
     if (this.unsubscribe) {
@@ -1072,7 +1262,6 @@ export class MapScene extends Phaser.Scene {
  * Visual representation of a map node
  */
 class NodeVisual extends Phaser.GameObjects.Container {
-  private bgCircle: Phaser.GameObjects.Arc;
   private circle: Phaser.GameObjects.Arc;
   private icon: Phaser.GameObjects.Text | Phaser.GameObjects.Sprite | null = null;
   private node: MapNode;
@@ -1080,6 +1269,7 @@ class NodeVisual extends Phaser.GameObjects.Container {
   private isVisited = false;
   private isCurrent = false;
   private glowCircle: Phaser.GameObjects.Arc;
+  private redX: Phaser.GameObjects.Text | null = null;
 
   constructor(scene: Phaser.Scene, node: MapNode, position: { x: number; y: number }, radius: number) {
     super(scene, position.x, position.y);
@@ -1088,29 +1278,36 @@ class NodeVisual extends Phaser.GameObjects.Container {
     scene.add.existing(this);
     this.setDepth(10);
 
-    // Outer magical glow (for available nodes)
-    this.glowCircle = scene.add.circle(0, 0, radius + 10, this.getNodeColor(), 0.4);
+    // Simple outer glow (for available nodes only)
+    this.glowCircle = scene.add.circle(0, 0, radius + 6, 0x888888, 0.3);
     this.glowCircle.setVisible(false);
     this.add(this.glowCircle);
 
-    // Dark background circle for better blending
-    this.bgCircle = scene.add.circle(0, 0, radius + 6, 0x0d0820, 0.8);
-    this.add(this.bgCircle);
+    // Dark rim for better visibility
+    const darkRim = scene.add.circle(0, 0, radius + 2, 0x000000, 0.8);
+    this.add(darkRim);
 
-    // Fantasy-styled main circle with inner shadow
-    const shadow = scene.add.circle(2, 2, radius, 0x000000, 0.6);
-    this.add(shadow);
-
+    // Clean main circle
     this.circle = scene.add.circle(0, 0, radius, this.getNodeColor());
-    this.circle.setStrokeStyle(3, this.getNodeBorderColor(), 0.7);
+    this.circle.setStrokeStyle(2, this.getNodeBorderColor(), 1.0);
     this.add(this.circle);
-    
-    // Inner highlight for depth
-    const highlight = scene.add.circle(-4, -4, radius - 8, 0xffffff, 0.15);
-    this.add(highlight);
 
     // Add content based on node type
     this.createNodeContent(scene, node, radius);
+
+    // Create red X for completed nodes (initially hidden)
+    this.redX = scene.add.text(0, 0, '✕', {
+      fontSize: '32px',
+      color: '#ff0000',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3,
+    });
+    this.redX.setOrigin(0.5);
+    this.redX.setVisible(false);
+    this.redX.setDepth(20); // Above everything else
+    this.add(this.redX);
 
     // Interactive
     this.circle.setInteractive({ useHandCursor: true });
@@ -1180,8 +1377,25 @@ class NodeVisual extends Phaser.GameObjects.Container {
         }
       }
 
-      const sprite = scene.add.sprite(0, isBoss ? -15 : 0, spriteKey);
-      sprite.setScale(0.6); // Double the size (was 0.3, now 0.6)
+      // Calculate position based on enemy type
+      let x = 0, y = 0;
+      if (isBoss) {
+        y = -15; // Boss position
+      } else if (spriteKey === 'skele_mage_idle') {
+        y = -15; // Move skele mages up 15px
+      } else if (spriteKey === 'goblin_idle') {
+        x = -6; // Move goblins left 6px (was -10, now -6 = +4px right)
+        y = -10; // Move goblins up 10px
+      }
+      
+      const sprite = scene.add.sprite(x, y, spriteKey);
+      sprite.setScale(0.7); // Slightly larger for better visibility
+      sprite.setAlpha(1.0); // Ensure full opacity
+      sprite.setTint(0xffffff); // Remove any tinting
+      
+      // Add a subtle background circle behind the enemy for better visibility
+      const enemyBg = scene.add.circle(x, y, 20, 0x000000, 0.3);
+      enemyBg.setDepth(-1); // Behind the sprite
       
       // Play idle animation
       const animKey = spriteKey.replace('idle', 'idle_anim');
@@ -1197,103 +1411,50 @@ class NodeVisual extends Phaser.GameObjects.Container {
   }
 
   private createShopIcon(scene: Phaser.Scene): void {
-    // Create shop icon with coin/gem visual
-    const container = scene.add.container(0, 0);
+    // Create shop icon using merchant image
+    const merchantSprite = scene.add.image(0, 0, 'merchant');
     
-    // Gold bag icon
-    const iconShadow = scene.add.text(1, 1, '💰', {
-      fontSize: '28px',
-      color: '#000000',
-    });
-    iconShadow.setOrigin(0.5);
-    iconShadow.setAlpha(0.5);
-    container.add(iconShadow);
+    // Scale down the 500x500 image to fit nicely in the node circle
+    // Node radius is typically 25px, so we want the image to be about 40px diameter
+    const targetSize = 40;
+    const scale = targetSize / 500; // 500 is the original image size
+    merchantSprite.setScale(scale);
+    merchantSprite.setOrigin(0.5, 0.5);
     
-    const iconText = scene.add.text(0, 0, '💰', {
-      fontSize: '28px',
-    });
-    iconText.setOrigin(0.5);
-    container.add(iconText);
-    
-    this.icon = iconText;
-    this.add(container);
+    this.icon = merchantSprite;
+    this.add(merchantSprite);
   }
 
   private createEventIcon(scene: Phaser.Scene): void {
-    // Create event icon with mystical visual
-    const container = scene.add.container(0, 0);
+    // Create event icon using event image
+    const eventSprite = scene.add.image(0, 0, 'event');
     
-    // Draw a mystical rune/crystal
-    const graphics = scene.add.graphics();
+    // Scale down the 500x500 image to fit nicely in the node circle
+    // Node radius is typically 25px, so we want the image to be about 40px diameter
+    const targetSize = 40;
+    const scale = targetSize / 500; // 500 is the original image size
+    eventSprite.setScale(scale);
+    eventSprite.setOrigin(0.5, 0.5);
     
-    // Outer glow
-    graphics.fillStyle(0x9370db, 0.3);
-    graphics.fillCircle(0, 0, 18);
-    
-    // Crystal/diamond shape
-    graphics.fillStyle(0x9370db, 0.9);
-    graphics.lineStyle(2, 0xdda0dd, 1);
-    graphics.beginPath();
-    graphics.moveTo(0, -12);
-    graphics.lineTo(8, 0);
-    graphics.lineTo(0, 12);
-    graphics.lineTo(-8, 0);
-    graphics.closePath();
-    graphics.fillPath();
-    graphics.strokePath();
-    
-    // Question mark overlay
-    const iconShadow = scene.add.text(1, 1, '?', {
-      fontSize: '20px',
-      color: '#000000',
-      fontFamily: 'Arial Black',
-      fontStyle: 'bold',
-    });
-    iconShadow.setOrigin(0.5);
-    iconShadow.setAlpha(0.5);
-    container.add(iconShadow);
-    
-    const iconText = scene.add.text(0, 0, '?', {
-      fontSize: '20px',
-      color: '#ffffff',
-      fontFamily: 'Arial Black',
-      fontStyle: 'bold',
-    });
-    iconText.setOrigin(0.5);
-    container.add(iconText);
-    
-    container.add(graphics);
-    container.add(iconShadow);
-    container.add(iconText);
-    
-    this.icon = iconText;
-    this.add(container);
-    
-    // Mystical rotation animation
-    scene.tweens.add({
-      targets: graphics,
-      angle: 360,
-      duration: 4000,
-      repeat: -1,
-      ease: 'Linear',
-    });
+    this.icon = eventSprite;
+    this.add(eventSprite);
   }
 
   private createTextIcon(scene: Phaser.Scene, iconText: string): void {
-    // Icon with shadow
+    // Icon with subtle shadow
     const iconShadow = scene.add.text(1, 1, iconText, {
-      fontSize: '22px',
+      fontSize: '20px',
       color: '#000000',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
     });
     iconShadow.setOrigin(0.5);
-    iconShadow.setAlpha(0.5);
+    iconShadow.setAlpha(0.3);
     this.add(iconShadow);
 
     this.icon = scene.add.text(0, 0, iconText, {
-      fontSize: '22px',
-      color: '#ffffff',
+      fontSize: '20px',
+      color: '#cccccc',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
     });
@@ -1304,15 +1465,15 @@ class NodeVisual extends Phaser.GameObjects.Container {
   private getNodeColor(): number {
     switch (this.node.type) {
       case NodeType.Start:
-        return 0x2a4a6a; // Darker blue
+        return 0x2a4a6a; // Blue for start (not in legend but keeping consistent)
       case NodeType.Battle:
-        return 0x8b1f31; // Darker red
+        return 0x4a5d23; // Dark green for normal battles (distinct from boss red)
       case NodeType.Shop:
-        return 0xa08028; // Darker gold
+        return 0xa08028; // Match legend Shop color
       case NodeType.Event:
-        return 0x4a3a8d; // Darker purple
+        return 0x4a3a8d; // Match legend Event color
       case NodeType.Boss:
-        return 0x660000; // Darker crimson
+        return 0x660000; // Match legend Boss color
       default:
         return 0x444444;
     }
@@ -1321,15 +1482,15 @@ class NodeVisual extends Phaser.GameObjects.Container {
   private getNodeBorderColor(): number {
     switch (this.node.type) {
       case NodeType.Start:
-        return 0x5a8ab8; // Muted light blue
+        return 0x5a8ab8; // Light blue border for start
       case NodeType.Battle:
-        return 0xc74452; // Muted red
+        return 0x6b7c33; // Light green border for normal battles
       case NodeType.Shop:
-        return 0xd4af37; // Gold
+        return 0xd4af37; // Match legend Shop border
       case NodeType.Event:
-        return 0x7b68bb; // Muted purple
+        return 0x7b68bb; // Match legend Event border
       case NodeType.Boss:
-        return 0xcc3333; // Muted orange-red
+        return 0xcc3333; // Match legend Boss border
       default:
         return 0x666666;
     }
@@ -1368,41 +1529,63 @@ class NodeVisual extends Phaser.GameObjects.Container {
   }
 
   private updateVisuals(): void {
+    // Show/hide red X based on visited state
+    if (this.redX) {
+      this.redX.setVisible(this.isVisited && !this.isCurrent);
+    }
+    
     // Current node is hidden (player marker is on top)
     if (this.isCurrent) {
       this.circle.setAlpha(0);
-      this.bgCircle.setAlpha(0);
       if (this.icon) this.icon.setAlpha(0);
       this.glowCircle.setVisible(false);
     } else if (this.isVisited) {
-      this.circle.setAlpha(0.3);
-      this.bgCircle.setAlpha(0.5);
-      if (this.icon) this.icon.setAlpha(0.3);
+      this.circle.setAlpha(0.2);
+      if (this.icon) {
+        // Keep enemy sprites more visible even when visited
+        if (this.icon instanceof Phaser.GameObjects.Sprite) {
+          this.icon.setAlpha(0.6); // More visible than other icons
+        } else {
+          this.icon.setAlpha(0.2);
+        }
+      }
       this.glowCircle.setVisible(false);
-      this.circle.setStrokeStyle(3, 0x444444, 0.4);
+      this.circle.setStrokeStyle(2, 0x666666, 0.3);
     } else if (this.isAvailable) {
-      this.circle.setAlpha(0.9);
-      this.bgCircle.setAlpha(0.8);
-      if (this.icon) this.icon.setAlpha(1);
+      this.circle.setAlpha(0.95);
+      if (this.icon) {
+        // Enemy sprites should be fully visible when available
+        if (this.icon instanceof Phaser.GameObjects.Sprite) {
+          this.icon.setAlpha(1.0); // Full opacity for enemy sprites
+        } else {
+          this.icon.setAlpha(1);
+        }
+      }
       this.glowCircle.setVisible(true);
-      this.circle.setStrokeStyle(3, 0xffffff, 0.9);
+      this.circle.setStrokeStyle(2, 0xcccccc, 0.9);
       
-      // Pulse animation for available nodes
+      // Subtle pulse animation for available nodes
       this.scene.tweens.add({
         targets: this.glowCircle,
-        alpha: { from: 0.3, to: 0.6 },
-        scale: { from: 1, to: 1.2 },
-        duration: 1000,
+        alpha: { from: 0.2, to: 0.4 },
+        scale: { from: 1, to: 1.1 },
+        duration: 1500,
         yoyo: true,
         repeat: -1,
         ease: 'Sine.easeInOut',
       });
     } else {
-      this.circle.setAlpha(0.5);
-      this.bgCircle.setAlpha(0.6);
-      if (this.icon) this.icon.setAlpha(0.5);
+      this.circle.setAlpha(0.4);
+      if (this.icon) {
+        // Keep enemy sprites more visible even when unavailable
+        if (this.icon instanceof Phaser.GameObjects.Sprite) {
+          this.icon.setAlpha(0.7); // More visible than other icons
+        } else {
+          this.icon.setAlpha(0.4);
+        }
+      }
       this.glowCircle.setVisible(false);
-      this.circle.setStrokeStyle(3, 0x333333, 0.5);
+      this.circle.setStrokeStyle(2, 0x555555, 0.4);
     }
   }
 

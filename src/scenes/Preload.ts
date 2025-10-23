@@ -107,6 +107,26 @@ export class Preload extends Phaser.Scene {
       'cardselectbg',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/cardselectbg.png'
     );
+    this.load.image(
+      'map_bg',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/map1bg.png'
+    );
+    this.load.image(
+      'merchant',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/merchant.png'
+    );
+    this.load.image(
+      'event',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/event.png'
+    );
+    this.load.image(
+      'merchantbg',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/merchantbg2.png'
+    );
+    this.load.image(
+      'items',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/items.png'
+    );
     console.log('[Preload] Background images queued for loading');
 
     // Load card type images
@@ -128,6 +148,12 @@ export class Preload extends Phaser.Scene {
     this.load.image(
       'card_neutral',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/defense.png'
+    );
+    
+    // Load consumable items card image using the items sprite sheet
+    this.load.image(
+      'card_consumable',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/items.png'
     );
 
     // Load custom lock button image

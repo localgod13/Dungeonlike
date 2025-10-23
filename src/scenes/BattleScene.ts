@@ -35,6 +35,7 @@ import { getCardById, requiresTarget } from '../game/cards';
 import { startBattleAP, refreshAP, canAfford, spendAP } from '../game/economy';
 import { SoundManager } from '../game/sound';
 import { DeckState, createDeck, drawCardsAtTurnStart, playCard as deckPlayCard, canPlayCard as deckCanPlayCard, resetReusableCharges } from '../game/deck';
+import { getConsumables } from '../game/inventory';
 import { createCharacterAnimations, createCharacterSprite, hasSprite, CharacterClass } from '../game/characterSprites';
 import { preloadEnemySprites, createEnemyAnimations, createEnemySprite, hasEnemySprite, EnemyType } from '../game/enemySprites';
 import { createUltimatePowerManager, destroyUltimatePowerManager, UltimatePowerManager, hasPersistedPower } from '../game/ultimate';
@@ -252,9 +253,11 @@ export class BattleScene extends Phaser.Scene {
         this.loadouts.set(loadout.userId, loadout.cards);
         
         // Create deck state with draw/discard mechanics
-        const deckState = createDeck(loadout.cards);
+        const consumableInventory = getConsumables(loadout.userId);
+        const deckState = createDeck(loadout.cards, consumableInventory);
         this.playerDecks.set(loadout.userId, deckState);
         console.log(`  Created deck - Hand: ${deckState.hand.length}, DrawPile: ${deckState.drawPile.length}`);
+        console.log(`  Consumable inventory:`, Array.from(consumableInventory.entries()));
       });
     } else {
       console.log('⚠️ No loadouts provided in init data!');
@@ -525,13 +528,17 @@ export class BattleScene extends Phaser.Scene {
       }
     });
 
-    // Play battle music starting at 2 seconds with fade in
-    this.soundManager.playMusicWithFadeIn('music_battle', { 
+    // Play appropriate music based on stage
+    const isBossBattle = this.currentStage === 6;
+    const musicKey = isBossBattle ? 'music_boss' : 'music_battle';
+    const musicType = isBossBattle ? 'BOSS' : 'BATTLE';
+    
+    this.soundManager.playMusicWithFadeIn(musicKey, { 
       volume: 0.3, 
       loop: true,
       seek: 2.0  // Start 2 seconds into the track
     }, 2000); // 2 second fade in for crossfade
-    console.log('Battle music started with 2s fade in from 2 seconds');
+    console.log(`${musicType} music started with 2s fade in from 2 seconds`);
 
     // Create battle layout
     this.createBattleLayout();
@@ -2129,16 +2136,30 @@ export class BattleScene extends Phaser.Scene {
     // Highlight valid targets based on target type
     let targets: Actor[];
     if (targetType === 'enemy' || targetType === 'Attack') {
-      targets = this.enemies;
+      // Only target alive enemies
+      targets = this.enemies.filter(enemy => enemy.hp > 0);
     } else if (targetType === 'ally' || targetType === 'Guard' || targetType === 'Skill') {
-      targets = this.players;
+      // Only target alive players
+      targets = this.players.filter(player => player.hp > 0);
     } else {
       targets = [];
     }
     
-    targets.forEach((target, index) => {
+    targets.forEach((target) => {
       const isEnemy = target.side === 'enemy';
-      const slot = isEnemy ? this.enemySlots[index] : this.partySlots[index];
+      
+      // Find the correct slot for this target
+      let slot: Phaser.GameObjects.Container | undefined;
+      if (isEnemy) {
+        // Find the slot index for this specific enemy
+        const enemyIndex = this.enemies.findIndex(enemy => enemy.id === target.id);
+        slot = this.enemySlots[enemyIndex];
+      } else {
+        // Find the slot index for this specific player
+        const playerIndex = this.players.findIndex(player => player.id === target.id);
+        slot = this.partySlots[playerIndex];
+      }
+      
       if (slot) {
         const highlight = this.add.rectangle(slot.x, slot.y, 100, 150, 0xffff00, 0.3);
         highlight.setStrokeStyle(3, 0xffff00, 0.8);
@@ -2498,6 +2519,16 @@ export class BattleScene extends Phaser.Scene {
         console.log(`Animation: Telegraph from ${srcId} to ${dstId}`);
         const srcName = this.getActorName(srcId);
         const dstName = dstId ? this.getActorName(dstId) : '';
+        
+        // Check if this is a boss turn and play boss turn sound
+        const srcActor = [...this.players, ...this.enemies].find(a => a.id === srcId);
+        if (srcActor && srcActor.side === 'enemy') {
+          const enemyType = this.getEnemyType(srcActor.name);
+          if (enemyType === 'DemonBoss' && this.soundManager) {
+            this.soundManager.playBossTurn();
+          }
+        }
+        
         if (dstId) {
           // Clean up orphaned text before adding combat log
           this.cleanupOrphanedTextElements();
@@ -3059,6 +3090,11 @@ export class BattleScene extends Phaser.Scene {
             console.log(`🔥 Playing enemy attack animation: ${attackAnimKey}`);
             sprite.play(attackAnimKey);
             
+            // Play boss attack sound if this is a boss
+            if (enemyType === 'DemonBoss' && this.soundManager) {
+              this.soundManager.playBossAttack();
+            }
+            
             // Return to idle after attack animation completes
             if (idleAnimKey && this.anims.exists(idleAnimKey)) {
               sprite.once('animationcomplete', () => {
@@ -3133,6 +3169,12 @@ export class BattleScene extends Phaser.Scene {
         }
       } else if (actor && actor.side === 'enemy') {
         // ENEMY HURT ANIMATIONS
+        // Skip hurt animations for dead enemies
+        if (actor.hp <= 0) {
+          console.log(`💀 Skipping hurt animation for dead enemy: ${actor.name}`);
+          return;
+        }
+        
         const enemyType = this.getEnemyType(actor.name);
         const sprite = dstSlot.list.find(obj => obj.type === 'Sprite') as Phaser.GameObjects.Sprite | undefined;
         
@@ -3158,10 +3200,20 @@ export class BattleScene extends Phaser.Scene {
             console.log(`💔 Playing enemy hurt animation: ${hurtAnimKey}`);
             sprite.play(hurtAnimKey);
             
-            // Return to idle after hurt animation completes
+            // Play boss hurt sound if this is a boss
+            if (enemyType === 'DemonBoss' && this.soundManager) {
+              this.soundManager.playBossHurt();
+            }
+            
+            // Return to idle after hurt animation completes (only if enemy is still alive)
             if (idleAnimKey && this.anims.exists(idleAnimKey)) {
               sprite.once('animationcomplete', () => {
-                sprite.play(idleAnimKey);
+                // Check if enemy is still alive before returning to idle
+                const enemy = this.enemies.find(e => e.id === dstId);
+                if (enemy && enemy.hp > 0) {
+                  sprite.play(idleAnimKey);
+                }
+                // If enemy is dead, don't return to idle - death animation will handle it
               });
             }
           }
@@ -3233,18 +3285,29 @@ export class BattleScene extends Phaser.Scene {
           // Play death animation
           sprite.play(deathAnimKey);
           
-          // Fade out after death animation completes
+          // When death animation completes, stay on the last frame
           sprite.once('animationcomplete', () => {
-            this.tweens.add({
-              targets: enemySlot,
-              alpha: 0,
-              duration: 500,
-              ease: 'Power2',
-              onComplete: () => {
-                // Keep invisible but don't destroy (causes issues with targeting)
-                enemySlot.setVisible(false);
-              },
-            });
+            console.log(`💀 Death animation complete for ${enemyType}, staying on last frame`);
+            
+            // Stop the animation and stay on the last frame
+            sprite.stop();
+            
+            // Get the last frame of the death animation
+            const deathAnim = this.anims.get(deathAnimKey);
+            if (deathAnim && deathAnim.frames.length > 0) {
+              const lastFrame = deathAnim.frames[deathAnim.frames.length - 1];
+              sprite.setFrame(lastFrame.textureFrame);
+            }
+            
+            // Keep enemy visible until battle ends (except flying demon which fades out)
+            if (enemyType !== 'FlyingDemon') {
+              // Mark as dead but keep visible
+              enemy.isDead = true;
+              console.log(`💀 ${enemyType} staying visible in death pose until battle ends`);
+            } else {
+              // Flying demon fades out as intended
+              enemySlot.setVisible(false);
+            }
           });
         } else {
           // Fallback: fade out without death animation
@@ -4487,8 +4550,33 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Clean up dead enemies - hide all dead enemies except flying demons
+   */
+  private cleanupDeadEnemies(): void {
+    console.log('🧹 Cleaning up dead enemies...');
+    
+    for (const enemy of this.enemies) {
+      if (enemy.hp <= 0) {
+        const enemySlot = this.getActorSlot(enemy.id);
+        if (enemySlot) {
+          const enemyType = this.getEnemyType(enemy.name);
+          
+          // Hide all dead enemies except flying demons (they already fade out)
+          if (enemyType !== 'FlyingDemon') {
+            console.log(`🧹 Hiding dead ${enemyType} at battle end`);
+            enemySlot.setVisible(false);
+          }
+        }
+      }
+    }
+  }
+
   private endCombat(result: 'victory' | 'defeat'): void {
     console.log(`Combat ended: ${result} (Stage ${this.currentStage})`);
+    
+    // Clean up dead enemies - hide all dead enemies except flying demons
+    this.cleanupDeadEnemies();
     
     // Show result banner
     const banner = this.add.rectangle(

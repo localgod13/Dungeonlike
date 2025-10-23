@@ -74,6 +74,128 @@ class SeededRandom {
 }
 
 /**
+ * Ensure minimum merchants and events with proper spacing
+ */
+function ensureMinimumSpecialNodes(nodes: Map<string, MapNode>, cfg: MapGenConfig, rng: SeededRandom): void {
+  const MIN_MERCHANTS = 3;
+  const MIN_EVENTS = 3;
+  const MIN_SPACING = 2; // Minimum layers between same type nodes
+  
+  // Get all non-start, non-boss nodes
+  const eligibleNodes = Array.from(nodes.values())
+    .filter(node => node.type !== NodeType.Start && node.type !== NodeType.Boss)
+    .sort((a, b) => a.layer - b.layer);
+  
+  // Count current merchants and events
+  let merchantCount = eligibleNodes.filter(node => node.type === NodeType.Shop).length;
+  let eventCount = eligibleNodes.filter(node => node.type === NodeType.Event).length;
+  
+  console.log(`[MapGen] Current merchants: ${merchantCount}, events: ${eventCount}`);
+  
+  // Track positions of merchants and events for spacing
+  const merchantLayers = new Set<number>();
+  const eventLayers = new Set<number>();
+  const specialLayers = new Set<number>(); // Combined merchants and events
+  
+  // Record existing positions
+  eligibleNodes.forEach(node => {
+    if (node.type === NodeType.Shop) {
+      merchantLayers.add(node.layer);
+      specialLayers.add(node.layer);
+    }
+    if (node.type === NodeType.Event) {
+      eventLayers.add(node.layer);
+      specialLayers.add(node.layer);
+    }
+  });
+  
+  // Convert battles to merchants if needed
+  while (merchantCount < MIN_MERCHANTS) {
+    const battleNodes = eligibleNodes.filter(node => 
+      node.type === NodeType.Battle && 
+      !merchantLayers.has(node.layer) &&
+      !merchantLayers.has(node.layer - 1) &&
+      !merchantLayers.has(node.layer + 1) &&
+      !specialLayers.has(node.layer - 1) && // No merchant/event in adjacent layer
+      !specialLayers.has(node.layer + 1)    // No merchant/event in adjacent layer
+    );
+    
+    if (battleNodes.length === 0) break;
+    
+    // Prefer middle layers for merchants (better strategic placement)
+    const sortedBattles = battleNodes.sort((a, b) => {
+      const midLayer = Math.floor(cfg.layers / 2);
+      const distA = Math.abs(a.layer - midLayer);
+      const distB = Math.abs(b.layer - midLayer);
+      return distA - distB;
+    });
+    
+    const targetNode = sortedBattles[0];
+    targetNode.type = NodeType.Shop;
+    merchantLayers.add(targetNode.layer);
+    specialLayers.add(targetNode.layer);
+    merchantCount++;
+    console.log(`[MapGen] Converted battle to merchant at layer ${targetNode.layer}`);
+  }
+  
+  // Convert battles to events if needed
+  while (eventCount < MIN_EVENTS) {
+    const battleNodes = eligibleNodes.filter(node => 
+      node.type === NodeType.Battle && 
+      !eventLayers.has(node.layer) &&
+      !eventLayers.has(node.layer - 1) &&
+      !eventLayers.has(node.layer + 1) &&
+      !specialLayers.has(node.layer - 1) && // No merchant/event in adjacent layer
+      !specialLayers.has(node.layer + 1)    // No merchant/event in adjacent layer
+    );
+    
+    if (battleNodes.length === 0) break;
+    
+    // Prefer middle layers for events (better strategic placement)
+    const sortedBattles = battleNodes.sort((a, b) => {
+      const midLayer = Math.floor(cfg.layers / 2);
+      const distA = Math.abs(a.layer - midLayer);
+      const distB = Math.abs(b.layer - midLayer);
+      return distA - distB;
+    });
+    
+    const targetNode = sortedBattles[0];
+    targetNode.type = NodeType.Event;
+    eventLayers.add(targetNode.layer);
+    specialLayers.add(targetNode.layer);
+    eventCount++;
+    console.log(`[MapGen] Converted battle to event at layer ${targetNode.layer}`);
+  }
+  
+  // If still not enough, convert battles without spacing constraints
+  while (merchantCount < MIN_MERCHANTS) {
+    const battleNodes = eligibleNodes.filter(node => node.type === NodeType.Battle);
+    if (battleNodes.length === 0) break;
+    
+    const targetNode = battleNodes[rng.nextInt(0, battleNodes.length - 1)];
+    targetNode.type = NodeType.Shop;
+    merchantLayers.add(targetNode.layer);
+    specialLayers.add(targetNode.layer);
+    merchantCount++;
+    console.log(`[MapGen] Force-converted battle to merchant at layer ${targetNode.layer}`);
+  }
+  
+  while (eventCount < MIN_EVENTS) {
+    const battleNodes = eligibleNodes.filter(node => node.type === NodeType.Battle);
+    if (battleNodes.length === 0) break;
+    
+    const targetNode = battleNodes[rng.nextInt(0, battleNodes.length - 1)];
+    targetNode.type = NodeType.Event;
+    eventLayers.add(targetNode.layer);
+    specialLayers.add(targetNode.layer);
+    eventCount++;
+    console.log(`[MapGen] Force-converted battle to event at layer ${targetNode.layer}`);
+  }
+  
+  console.log(`[MapGen] Final merchants: ${merchantCount}, events: ${eventCount}`);
+}
+
+/**
  * Generate a procedural map
  */
 export function generateMap(config: Partial<MapGenConfig> = {}): GameMap {
@@ -191,24 +313,50 @@ export function generateMap(config: Partial<MapGenConfig> = {}): GameMap {
   };
   nodes.set(bossNode.id, bossNode);
 
-  // Create connections between layers
+  // Create connections between layers - STRICT layer-by-layer progression
   for (let layer = 0; layer < cfg.layers - 1; layer++) {
     const currentLayerNodes = Array.from(nodes.values()).filter(n => n.layer === layer);
     const nextLayerNodes = Array.from(nodes.values()).filter(n => n.layer === layer + 1);
 
     for (const currentNode of currentLayerNodes) {
-      // Each node connects to 1-3 nodes in the next layer
-      const connectionCount = rng.nextInt(1, Math.min(3, nextLayerNodes.length));
+      // Each node connects to 1-2 nodes in the IMMEDIATE next layer only
+      const connectionCount = rng.nextInt(1, Math.min(2, nextLayerNodes.length));
       
-      // Prefer nearby nodes (by column)
+      // STRICT: Only connect to nodes in the immediate next layer (layer + 1)
+      // Calculate visual distance based on actual positioning
       const sortedNext = [...nextLayerNodes].sort((a, b) => {
-        const distA = Math.abs(a.column - currentNode.column);
-        const distB = Math.abs(b.column - currentNode.column);
+        // Calculate visual distance based on relative position within each layer
+        const currentLayerWidth = currentLayerNodes.length;
+        const nextLayerWidth = nextLayerNodes.length;
+        
+        // Convert column indices to relative positions (0.0 to 1.0)
+        const currentPos = currentLayerWidth > 1 ? currentNode.column / (currentLayerWidth - 1) : 0.5;
+        const aPos = nextLayerWidth > 1 ? a.column / (nextLayerWidth - 1) : 0.5;
+        const bPos = nextLayerWidth > 1 ? b.column / (nextLayerWidth - 1) : 0.5;
+        
+        const distA = Math.abs(aPos - currentPos);
+        const distB = Math.abs(bPos - currentPos);
         return distA - distB;
       });
 
-      // Add connections with some randomness
-      const candidateIndices = sortedNext
+      // STRICT: Only connect to nodes within reasonable visual distance
+      const nearbyNodes = sortedNext.filter(node => {
+        const currentLayerWidth = currentLayerNodes.length;
+        const nextLayerWidth = nextLayerNodes.length;
+        
+        // Convert to relative positions
+        const currentPos = currentLayerWidth > 1 ? currentNode.column / (currentLayerWidth - 1) : 0.5;
+        const nodePos = nextLayerWidth > 1 ? node.column / (nextLayerWidth - 1) : 0.5;
+        
+        // Allow connections within 0.4 of the layer width (40% of the layer)
+        return Math.abs(nodePos - currentPos) <= 0.4;
+      });
+
+      // If no nearby nodes, fall back to closest node
+      const candidateNodes = nearbyNodes.length > 0 ? nearbyNodes : [sortedNext[0]];
+
+      // Add connections with some randomness, but only from nearby nodes
+      const candidateIndices = candidateNodes
         .map((_, i) => i)
         .filter(() => rng.next() < cfg.connectionDensity || currentNode.connections.length < connectionCount);
 
@@ -219,7 +367,7 @@ export function generateMap(config: Partial<MapGenConfig> = {}): GameMap {
 
       // Add connections (limit to connectionCount)
       for (let i = 0; i < Math.min(connectionCount, candidateIndices.length); i++) {
-        const targetNode = sortedNext[candidateIndices[i]];
+        const targetNode = candidateNodes[candidateIndices[i]];
         if (!currentNode.connections.includes(targetNode.id)) {
           currentNode.connections.push(targetNode.id);
         }
@@ -227,14 +375,47 @@ export function generateMap(config: Partial<MapGenConfig> = {}): GameMap {
     }
 
     // Ensure all nodes in next layer have at least one incoming connection
+    // STRICT: Only from immediate previous layer
     for (const nextNode of nextLayerNodes) {
       const hasIncoming = currentLayerNodes.some(n => n.connections.includes(nextNode.id));
       if (!hasIncoming && currentLayerNodes.length > 0) {
-        const randomSource = currentLayerNodes[rng.nextInt(0, currentLayerNodes.length - 1)];
-        randomSource.connections.push(nextNode.id);
+        // Find the closest node in the immediate previous layer using visual distance
+        const sortedSources = [...currentLayerNodes].sort((a, b) => {
+          const currentLayerWidth = currentLayerNodes.length;
+          const nextLayerWidth = nextLayerNodes.length;
+          
+          // Convert to relative positions
+          const aPos = currentLayerWidth > 1 ? a.column / (currentLayerWidth - 1) : 0.5;
+          const bPos = currentLayerWidth > 1 ? b.column / (currentLayerWidth - 1) : 0.5;
+          const nextPos = nextLayerWidth > 1 ? nextNode.column / (nextLayerWidth - 1) : 0.5;
+          
+          const distA = Math.abs(aPos - nextPos);
+          const distB = Math.abs(bPos - nextPos);
+          return distA - distB;
+        });
+        
+        // STRICT: Only connect to nodes within reasonable visual distance
+        const nearbySources = sortedSources.filter(source => {
+          const currentLayerWidth = currentLayerNodes.length;
+          const nextLayerWidth = nextLayerNodes.length;
+          
+          // Convert to relative positions
+          const sourcePos = currentLayerWidth > 1 ? source.column / (currentLayerWidth - 1) : 0.5;
+          const nextPos = nextLayerWidth > 1 ? nextNode.column / (nextLayerWidth - 1) : 0.5;
+          
+          // Allow connections within 0.4 of the layer width (40% of the layer)
+          return Math.abs(sourcePos - nextPos) <= 0.4;
+        });
+        
+        // Use closest nearby source, or closest overall if no nearby sources
+        const sourceToUse = nearbySources.length > 0 ? nearbySources[0] : sortedSources[0];
+        sourceToUse.connections.push(nextNode.id);
       }
     }
   }
+
+  // Post-process to ensure minimum merchants and events with proper spacing
+  ensureMinimumSpecialNodes(nodes, cfg, rng);
 
   return {
     nodes,

@@ -384,6 +384,12 @@ export function resolveTurn(
               }
               
               targets.forEach((target, index) => {
+                // Skip dead enemies for AOE attacks
+                if (target.hp <= 0) {
+                  console.log(`[Combat] ${target.name} is dead, skipping AOE damage from ${card.name}`);
+                  return;
+                }
+                
                 let damage = baseDamage;
                 
                 // Apply vulnerability (increases damage)

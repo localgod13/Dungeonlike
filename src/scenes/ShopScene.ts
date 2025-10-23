@@ -116,8 +116,8 @@ export class ShopScene extends Phaser.Scene {
       this.setupVoting();
     }
 
-    // Play shop music (if available)
-    this.soundManager?.playMusic('shop', { loop: true, volume: 0.3 });
+    // Play merchant music
+    this.soundManager?.playMusic('music_merchant', { loop: true, volume: 0.3 });
   }
 
   private setupVoting(): void {
@@ -278,10 +278,19 @@ export class ShopScene extends Phaser.Scene {
     const width = this.scale.width;
     const height = this.scale.height;
     
-    const graphics = this.add.graphics();
-    graphics.fillGradientStyle(0x0d0820, 0x0d0820, 0x1a0f2e, 0x1a0f2e, 1, 1, 1, 1);
-    graphics.fillRect(0, 0, width, height);
-    graphics.setDepth(-100);
+    // Load merchant background image
+    const backgroundImage = this.add.image(width / 2, height / 2, 'merchantbg');
+    
+    // Scale the image to fit the screen while maintaining aspect ratio
+    const scaleX = width / 1536; // 1536 is the original image width
+    const scaleY = height / 1024; // 1024 is the original image height
+    const scale = Math.max(scaleX, scaleY); // Use the larger scale to ensure full coverage
+    backgroundImage.setScale(scale);
+    
+    // Add a dark overlay for better text readability
+    const overlay = this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.3);
+    overlay.setDepth(-90);
+    backgroundImage.setDepth(-100);
     
     // Decorative border
     const border = this.add.graphics();

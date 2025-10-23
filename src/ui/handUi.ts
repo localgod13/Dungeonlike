@@ -193,20 +193,6 @@ export class HandUI {
     descText.setDepth(20);
     container.add(descText);
 
-    // Target info (no background - just text with shadow)
-    const targetText = this.scene.add.text(0, CARD_HEIGHT / 2 - 30, `Target: ${card.target}`, {
-      fontSize: '11px',
-      color: '#cccccc',
-      fontFamily: 'Arial, sans-serif',
-      align: 'center',
-      stroke: '#000000',
-      strokeThickness: 3,
-    });
-    targetText.setOrigin(0.5);
-    targetText.setName('targetText');
-    targetText.setDepth(20);
-    container.add(targetText);
-
     // Make interactive
     bg.setInteractive({ useHandCursor: true });
     bg.on('pointerover', () => {

@@ -79,8 +79,8 @@ export class EventScene extends Phaser.Scene {
       this.setupVoting();
     }
 
-    // Play ambient sounds
-    this.soundManager?.playMusic('ambient', { loop: true, volume: 0.2 });
+    // Play encounter music
+    this.soundManager?.playMusic('music_encounter', { loop: true, volume: 0.3 });
   }
 
   private async getCurrentUserId(): Promise<string | null> {

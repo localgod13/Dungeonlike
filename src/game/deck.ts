@@ -28,7 +28,7 @@ export const REUSABLE_CHARGES: Record<string, number> = {
 /**
  * Create a new deck state from a list of card IDs
  */
-export function createDeck(cardIds: string[]): DeckState {
+export function createDeck(cardIds: string[], consumableInventory?: Map<string, number>): DeckState {
   if (cardIds.length !== 10) {
     console.warn(`Deck should have exactly 10 cards, got ${cardIds.length}`);
   }
@@ -40,6 +40,15 @@ export function createDeck(cardIds: string[]): DeckState {
       reusableCharges.set(cardId, REUSABLE_CHARGES[cardId]);
     }
   });
+
+  // Initialize consumable inventory
+  const consumableInv = new Map<string, number>();
+  if (consumableInventory) {
+    // Copy the provided consumable inventory
+    consumableInventory.forEach((count, cardId) => {
+      consumableInv.set(cardId, count);
+    });
+  }
 
   // Shuffle the deck
   const shuffledDeck = [...cardIds];
@@ -53,7 +62,7 @@ export function createDeck(cardIds: string[]): DeckState {
     hand,
     discardPile: [],
     reusableCharges,
-    consumableInventory: new Map(),
+    consumableInventory: consumableInv,
   };
 }
 
@@ -77,11 +86,25 @@ function shuffleDeck(deck: string[]): void {
 export function drawCard(state: DeckState, onDrawAnimation?: (cardId: string, position: number, delay: number) => void, animationDelay: number = 0): string | null {
   console.log(`[Deck] Drawing card. Before: Hand=${state.hand.length}, DrawPile=${state.drawPile.length}, Discard=${state.discardPile.length}`);
   
-  // If draw pile is empty, reshuffle discard pile
+  // If draw pile is empty, reshuffle discard pile (excluding consumables)
   if (state.drawPile.length === 0 && state.discardPile.length > 0) {
     console.log('[Deck] 🔄 Draw pile empty! Reshuffling discard pile...');
-    state.drawPile = [...state.discardPile];
-    state.discardPile = [];
+    
+    // Filter out consumables from discard pile before reshuffling
+    const nonConsumableCards = state.discardPile.filter(cardId => {
+      const card = getCardById(cardId);
+      return !card || card.type !== 'consumable';
+    });
+    
+    const consumableCards = state.discardPile.filter(cardId => {
+      const card = getCardById(cardId);
+      return card && card.type === 'consumable';
+    });
+    
+    console.log(`[Deck] 📦 Reshuffling ${nonConsumableCards.length} non-consumable cards, removing ${consumableCards.length} consumables`);
+    
+    state.drawPile = [...nonConsumableCards];
+    state.discardPile = []; // Clear discard pile
     shuffleDeck(state.drawPile);
     console.log(`[Deck] ✓ Reshuffled ${state.drawPile.length} cards back into draw pile`);
   }
@@ -170,7 +193,7 @@ export function playCard(state: DeckState, cardId: string, onDiscardAnimation?: 
 
   // Check if it's a consumable item
   const card = getCardById(cardId);
-  if (card && card.desc.includes('(Consumable)')) {
+  if (card && card.type === 'consumable') {
     const count = state.consumableInventory.get(cardId) || 0;
     if (count <= 0) {
       console.warn(`[Deck] No consumables left for ${cardId}`);
@@ -179,14 +202,11 @@ export function playCard(state: DeckState, cardId: string, onDiscardAnimation?: 
     state.consumableInventory.set(cardId, count - 1);
     console.log(`[Deck] Used consumable ${cardId}, ${count - 1} remaining`);
     
-    // Remove from deck permanently if no more left
-    if (count - 1 <= 0) {
-      removeCardFromDeck(state, cardId);
-      return true; // Card was consumed, no need to discard
-    }
+    // Consumables are discarded normally but won't be reshuffled back
+    // They'll only be available again if obtained through loot/shop
   }
 
-  // Remove card from hand and add to discard pile
+  // Remove card from hand and add to discard pile (for ALL cards including consumables)
   const handIndex = state.hand.indexOf(cardId);
   if (handIndex !== -1) {
     state.hand.splice(handIndex, 1);
@@ -200,31 +220,6 @@ export function playCard(state: DeckState, cardId: string, onDiscardAnimation?: 
   }
 
   return true;
-}
-
-/**
- * Remove a card from the deck permanently (for consumed items)
- */
-function removeCardFromDeck(state: DeckState, cardId: string): void {
-  // Remove from hand
-  const handIndex = state.hand.indexOf(cardId);
-  if (handIndex !== -1) {
-    state.hand.splice(handIndex, 1);
-  }
-
-  // Remove from draw pile
-  const drawIndex = state.drawPile.indexOf(cardId);
-  if (drawIndex !== -1) {
-    state.drawPile.splice(drawIndex, 1);
-  }
-
-  // Remove from discard pile
-  const discardIndex = state.discardPile.indexOf(cardId);
-  if (discardIndex !== -1) {
-    state.discardPile.splice(discardIndex, 1);
-  }
-
-  console.log(`[Deck] Permanently removed ${cardId} from deck`);
 }
 
 /**
@@ -283,7 +278,7 @@ export function canPlayCard(state: DeckState, cardId: string): boolean {
 
   // Check consumable inventory
   const card = getCardById(cardId);
-  if (card && card.desc.includes('(Consumable)')) {
+  if (card && card.type === 'consumable') {
     const count = state.consumableInventory.get(cardId) || 0;
     return count > 0;
   }

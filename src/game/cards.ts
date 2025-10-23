@@ -6,7 +6,7 @@ export type Target = 'none' | 'ally' | 'enemy' | 'all_enemies' | 'all_allies';
 
 export type CardOpcode = 'DMG' | 'HEAL' | 'GUARD' | 'VULN' | 'STUN' | 'AOE_DMG' | 'TAUNT' | 'DOT' | 'SELF_GUARD' | 'BUFF' | 'CLEANSE' | 'BLIND' | 'ULTIMATE_GAIN' | 'REVIVE';
 
-export type CardType = 'attack' | 'defense' | 'magic' | 'neutral';
+export type CardType = 'attack' | 'defense' | 'magic' | 'neutral' | 'consumable';
 
 export interface Card {
   id: string;
@@ -540,8 +540,8 @@ export const NEUTRAL_CONSUMABLE_ITEMS: Card[] = [
     target: 'ally',
     opcode: 'HEAL',
     power: 25,
-    desc: '❤️ Heal ally for 25 HP (Consumable)',
-    type: 'defense',
+    desc: '❤️ Heal ally for 25 HP',
+    type: 'consumable',
     class: undefined,
   },
   {
@@ -551,8 +551,8 @@ export const NEUTRAL_CONSUMABLE_ITEMS: Card[] = [
     target: 'enemy',
     opcode: 'DMG',
     power: 15,
-    desc: '⚡ Deal 15 corrosive damage (Consumable)',
-    type: 'attack',
+    desc: '⚡ Deal 15 corrosive damage',
+    type: 'consumable',
     class: undefined,
   },
   {
@@ -562,8 +562,8 @@ export const NEUTRAL_CONSUMABLE_ITEMS: Card[] = [
     target: 'ally',
     opcode: 'GUARD',
     power: 10,
-    desc: '🛡️ Give ally 10 Shield (Consumable)',
-    type: 'defense',
+    desc: '🛡️ Give ally 10 Shield',
+    type: 'consumable',
     class: undefined,
   },
   {
@@ -573,8 +573,8 @@ export const NEUTRAL_CONSUMABLE_ITEMS: Card[] = [
     target: 'all_enemies',
     opcode: 'AOE_DMG',
     power: 12,
-    desc: '💥 Deal 12 damage to ALL enemies (Consumable)',
-    type: 'attack',
+    desc: '💥 Deal 12 damage to ALL enemies',
+    type: 'consumable',
     class: undefined,
   },
   {
@@ -584,8 +584,8 @@ export const NEUTRAL_CONSUMABLE_ITEMS: Card[] = [
     target: 'none',
     opcode: 'ULTIMATE_GAIN', // Changed to ULTIMATE_GAIN for ultimate power
     power: 25, // 25% ultimate power
-    desc: '⚡ Gain 25% ultimate power (Consumable)',
-    type: 'magic',
+    desc: '⚡ Gain 25% ultimate power',
+    type: 'consumable',
     class: undefined,
   },
   {
@@ -595,8 +595,8 @@ export const NEUTRAL_CONSUMABLE_ITEMS: Card[] = [
     target: 'ally',
     opcode: 'REVIVE', // Changed to REVIVE for reviving dead allies
     power: 75, // 75% HP revive
-    desc: '💎 Revive dead ally at 75% HP (Consumable)',
-    type: 'magic',
+    desc: '💎 Revive dead ally at 75% HP',
+    type: 'consumable',
     class: undefined,
   },
 ];

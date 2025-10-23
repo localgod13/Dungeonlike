@@ -117,6 +117,107 @@ export class SoundManager {
   }
 
   /**
+   * Play boss attack sound (alternates between two sounds)
+   */
+  private bossAttackCounter = 0;
+  playBossAttack(): void {
+    if (!this.soundsEnabled) return;
+    
+    this.bossAttackCounter++;
+    const soundKey = this.bossAttackCounter % 2 === 1 ? 'sfx_boss_attack1' : 'sfx_boss_attack2';
+    
+    try {
+      const volume = this.sfxVolume * this.masterVolume;
+      
+      // Vary the pitch/rate for different tones (0.8 to 1.2 range)
+      const pitchVariation = 0.8 + (Math.random() * 0.4); // Random pitch between 0.8x and 1.2x
+      
+      const sound = this.scene.sound.add(soundKey, {
+        volume,
+        loop: false,
+        rate: pitchVariation, // This changes the pitch/speed
+      });
+      
+      sound.play();
+      
+      // Clean up after playing
+      sound.on('complete', () => {
+        sound.destroy();
+      });
+      
+      console.log(`[SoundManager] Playing boss attack sound: ${soundKey} at ${pitchVariation.toFixed(2)}x rate`);
+    } catch (error) {
+      console.warn(`[SoundManager] Failed to play boss attack sound: ${soundKey}`, error);
+    }
+  }
+
+  /**
+   * Play boss hurt sound (randomly selects from three sounds)
+   */
+  playBossHurt(): void {
+    if (!this.soundsEnabled) return;
+    
+    const hurtSounds = ['sfx_boss_hurt1', 'sfx_boss_hurt2', 'sfx_boss_hurt3'];
+    const randomIndex = Math.floor(Math.random() * hurtSounds.length);
+    const soundKey = hurtSounds[randomIndex];
+    
+    try {
+      const volume = this.sfxVolume * this.masterVolume;
+      
+      // Vary the pitch/rate for different tones (0.7 to 1.3 range for hurt sounds)
+      const pitchVariation = 0.7 + (Math.random() * 0.6); // Random pitch between 0.7x and 1.3x
+      
+      const sound = this.scene.sound.add(soundKey, {
+        volume,
+        loop: false,
+        rate: pitchVariation, // This changes the pitch/speed
+      });
+      
+      sound.play();
+      
+      // Clean up after playing
+      sound.on('complete', () => {
+        sound.destroy();
+      });
+      
+      console.log(`[SoundManager] Playing boss hurt sound: ${soundKey} at ${pitchVariation.toFixed(2)}x rate`);
+    } catch (error) {
+      console.warn(`[SoundManager] Failed to play boss hurt sound: ${soundKey}`, error);
+    }
+  }
+
+  /**
+   * Play boss turn sound
+   */
+  playBossTurn(): void {
+    if (!this.soundsEnabled) return;
+    
+    try {
+      const volume = this.sfxVolume * this.masterVolume;
+      
+      // Vary the pitch/rate for different tones (0.9 to 1.1 range for turn sound)
+      const pitchVariation = 0.9 + (Math.random() * 0.2); // Random pitch between 0.9x and 1.1x
+      
+      const sound = this.scene.sound.add('sfx_boss_turn', {
+        volume,
+        loop: false,
+        rate: pitchVariation, // This changes the pitch/speed
+      });
+      
+      sound.play();
+      
+      // Clean up after playing
+      sound.on('complete', () => {
+        sound.destroy();
+      });
+      
+      console.log(`[SoundManager] Playing boss turn sound at ${pitchVariation.toFixed(2)}x rate`);
+    } catch (error) {
+      console.warn(`[SoundManager] Failed to play boss turn sound`, error);
+    }
+  }
+
+  /**
    * Fade out current music over specified duration
    * @param duration Duration in milliseconds (default: 1000ms)
    */
@@ -404,11 +505,22 @@ export const SOUND_ASSETS = {
   sfx_mage_fire2: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/wizard/fire2.mp3',
   sfx_huntress_arrow: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/huntress/arrow1.mp3',
   
+  // Boss sound effects
+  sfx_boss_attack1: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/boss1/bossattack.mp3',
+  sfx_boss_attack2: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/boss1/bossattack2.mp3',
+  sfx_boss_hurt1: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/boss1/bosshurt.mp3',
+  sfx_boss_hurt2: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/boss1/bosshurt2.mp3',
+  sfx_boss_hurt3: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/boss1/bosshurt3.mp3',
+  sfx_boss_turn: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/boss1/bossturn.mp3',
+  
   // Background music (converted to jsDelivr CDN)
   music_battle: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/music/battle1.mp3',
+  music_boss: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/music/boss1bgm.mp3',
   music_title: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/music/title.mp3',
   music_cardselect: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/music/cardselectbgm.mp3',
   music_map: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/music/mapmusic.mp3',
+  music_merchant: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/merchantbgm.mp3',
+  music_encounter: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/encounter1.mp3',
 } as const;
 
 /**

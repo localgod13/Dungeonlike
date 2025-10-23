@@ -297,32 +297,6 @@ export class LootScene extends Phaser.Scene {
     descText.setOrigin(0.5);
     container.add(descText);
     
-    // Target info
-    const targetText = this.add.text(0, CARD_HEIGHT / 2 - 35, `Target: ${card.target}`, {
-      fontSize: '12px',
-      color: '#cccccc',
-      fontFamily: 'Arial',
-      align: 'center',
-      stroke: '#000000',
-      strokeThickness: 3,
-    });
-    targetText.setOrigin(0.5);
-    container.add(targetText);
-    
-    // Consumable badge if applicable
-    if (NEUTRAL_CONSUMABLE_ITEMS.some(c => c.id === card.id)) {
-      const consumableBadge = this.add.text(0, CARD_HEIGHT / 2 - 15, '⚠️ Consumable', {
-        fontSize: '11px',
-        fontFamily: 'Arial',
-        color: '#e74c3c',
-        backgroundColor: '#000000',
-        padding: { x: 4, y: 2 },
-        stroke: '#000000',
-        strokeThickness: 2,
-      }).setOrigin(0.5);
-      container.add(consumableBadge);
-    }
-    
     // Make interactive
     border.setInteractive({ useHandCursor: true });
     

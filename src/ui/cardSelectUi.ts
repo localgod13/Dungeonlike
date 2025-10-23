@@ -314,19 +314,6 @@ export class CardSelectUI {
     descText.setOrigin(0.5);
     descText.setDepth(10);
     container.add(descText);
-
-    // Target info (no background - just text with shadow)
-    const targetText = this.scene.add.text(0, CARD_HEIGHT / 2 - 35, `Target: ${card.target}`, {
-      fontSize: '12px',
-      color: '#cccccc',
-      fontFamily: 'Arial, sans-serif',
-      align: 'center',
-      stroke: '#000000',
-      strokeThickness: 3,
-    });
-    targetText.setOrigin(0.5);
-    targetText.setDepth(10);
-    container.add(targetText);
     
     // Consumable count badge (if applicable)
     if ((card as any).consumableCount !== undefined) {

@@ -80,7 +80,7 @@ export function addCardToDeck(playerId: string, card: Card): void {
   if (!inventory) return;
   
   // Check if it's a consumable
-  if (card.class === undefined && (card.desc.includes('Consumable') || card.desc.includes('consumable'))) {
+  if (card.class === undefined && card.type === 'consumable') {
     // Add to consumables map
     const currentCount = inventory.consumables.get(card.id) || 0;
     inventory.consumables.set(card.id, currentCount + 1);
