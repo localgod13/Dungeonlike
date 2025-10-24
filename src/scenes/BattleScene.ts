@@ -104,6 +104,8 @@ export class BattleScene extends Phaser.Scene {
 
   // Animation timeline
   private timeline: AnimationTimeline | null = null;
+  private combatEndedEarly = false; // Flag to prevent normal timeline completion when ultimate ends combat
+  private combatEnded = false; // Flag to prevent endCombat from being called multiple times
 
   // Player data
   private players: BattleActor[] = [];
@@ -177,6 +179,8 @@ export class BattleScene extends Phaser.Scene {
     this.selectedCardId = null;
     this.pendingPostState = null;
     this.timeline = null;
+    this.combatEndedEarly = false;
+    this.combatEnded = false;
     
     // Clear UI elements
     if (this.handUI) {
@@ -972,31 +976,31 @@ export class BattleScene extends Phaser.Scene {
     // Bottom left HUD with proper positioning and sizing
     const statsWidth = 220;
     const statsHeight = 80;
-    const statsX = 10; // Small margin from left edge
+    const statsX = 20; // Small margin from left edge (moved 10px right total)
     const statsY = this.scale.height - statsHeight - 10; // Small margin from bottom edge
     
     // Create stats background as direct scene child to avoid coordinate issues
-    const bottomLeftBg = this.add.rectangle(statsX + statsWidth / 2, statsY + statsHeight / 2, statsWidth, statsHeight, 0x1a1a1a, 0.9);
-    bottomLeftBg.setStrokeStyle(1, 0x4a90e2, 0.6);
+    const bottomLeftBg = this.add.image(statsX + statsWidth / 2, statsY + statsHeight / 2, 'charplate');
+    bottomLeftBg.setDisplaySize(280, 180); // Increased height by another 10px (5px top + 5px bottom)
     bottomLeftBg.setDepth(1000);
     // Don't add to hudContainer to avoid coordinate issues
 
     // Store references to stat text objects so we can update them - direct scene children
-    this.playerHpText = this.add.text(statsX + 10, statsY + 15, 'HP: 100%', {
+    this.playerHpText = this.add.text(statsX + 20, statsY + 15, 'HP: 100%', {
       fontSize: '16px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
     });
     this.playerHpText.setDepth(1001);
 
-    this.playerLevelText = this.add.text(statsX + 10, statsY + 35, 'Level: 1', {
+    this.playerLevelText = this.add.text(statsX + 20, statsY + 35, 'Level: 1', {
       fontSize: '16px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
     });
     this.playerLevelText.setDepth(1001);
 
-    this.playerApText = this.add.text(statsX + 10, statsY + 55, 'AP: 5', {
+    this.playerApText = this.add.text(statsX + 20, statsY + 55, 'AP: 5', {
       fontSize: '16px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
@@ -1231,19 +1235,62 @@ export class BattleScene extends Phaser.Scene {
     console.log(`Creating hand UI with ${myDeck.hand.length} cards from deck:`, myDeck.hand);
     console.log(`  Remaining in draw pile: ${myDeck.drawPile.length}, Discard: ${myDeck.discardPile.length}`);
     
+    // Extra cleanup before creating HandUI to ensure no orphaned animated cards
+    console.log('[BattleScene] Cleaning up any orphaned animated cards before creating HandUI');
+    const allObjects = this.children.list;
+    for (let i = allObjects.length - 1; i >= 0; i--) {
+      const obj = allObjects[i];
+      if (obj && obj.name && (obj.name === 'animatedDrawCard' || obj.name === 'animatedDiscardCard')) {
+        console.log(`[BattleScene] DESTROYING orphaned animated card: ${obj.name}`);
+        obj.destroy();
+      }
+    }
+    
     // Create hand UI with current 4 cards from deck
+    // Hide all cards initially for turn 1 deal animation
     this.handUI = new HandUI(
       this,
       myDeck.hand,
-      (cardId) => this.selectCard(cardId)
+      (cardId) => this.selectCard(cardId),
+      this.currentTurn === 1 ? myDeck.hand : undefined // Hide all cards on turn 1 for deal animation
     );
 
     // Update AP display
     const currentAP = this.playerAP.get(this.userId) || 0;
     this.handUI.setAP(currentAP);
     
-    // Update pile indicators
-    this.handUI.updatePileIndicators(myDeck.drawPile.length, myDeck.discardPile.length);
+    // Update pile indicators immediately (no delay needed - created immediately in HandUI)
+    // On turn 1, show the full deck size before dealing (hand + draw pile)
+    // On other turns, show the actual draw pile size
+    if (this.currentTurn === 1) {
+      const initialDeckSize = myDeck.hand.length + myDeck.drawPile.length;
+      console.log(`[Deck] Turn 1: Showing initial deck size of ${initialDeckSize} cards in draw pile`);
+      this.handUI.updatePileIndicators(initialDeckSize, myDeck.discardPile.length);
+    } else {
+      this.handUI.updatePileIndicators(myDeck.drawPile.length, myDeck.discardPile.length);
+    }
+    
+    // Animate initial deal on turn 1
+    if (this.currentTurn === 1) {
+      console.log(`[Deck] Animating initial deal for turn 1`);
+      const ANIMATION_STAGGER_MS = 200; // Delay between each card animation
+      
+      const totalCardsInDeck = myDeck.hand.length + myDeck.drawPile.length;
+      myDeck.hand.forEach((cardId, index) => {
+        const animationDelay = index * ANIMATION_STAGGER_MS; // 0ms, 200ms, 400ms, 600ms
+        this.time.delayedCall(animationDelay + 100, () => { // Extra 100ms to ensure HandUI is ready
+          if (this.handUI) {
+            this.handUI.animateDrawCard(cardId, index, 0);
+            
+            // Update pile indicators after each card is dealt
+            // Show remaining cards: total cards - cards dealt so far - 1 (for the current card being dealt)
+            const remainingCards = totalCardsInDeck - index - 1;
+            console.log(`[Deck] After dealing card ${index + 1} of ${myDeck.hand.length}, remaining in draw pile: ${remainingCards}`);
+            this.handUI.updatePileIndicators(remainingCards, myDeck.discardPile.length);
+          }
+        });
+      });
+    }
 
     // Hide action buttons since we're using cards
     this.actionButtons.forEach(button => button.setVisible(false));
@@ -1333,6 +1380,11 @@ export class BattleScene extends Phaser.Scene {
           this.handUI.raiseCard(this.selectedCardId);
         }
         this.handUI.clearSelection();
+        
+        // Remove the ultimate card from hand after playing it
+        // This allows it to be re-added when ultimate is charged again
+        this.handUI.removeUltimateCard();
+        console.log(`✅ Removed ultimate card after playing`);
       }
 
       // Clear selection
@@ -2556,9 +2608,9 @@ export class BattleScene extends Phaser.Scene {
         }
         
         // Play sound based on the action note
-        // Only play card sounds for actual card names (not animation types like "slash")
+        // Only play card sounds for actual card names (not animation types)
         if (note && this.soundManager) {
-          const validCardNames = ['Strike', 'Nova', 'Bash'];
+          const validCardNames = ['Strike', 'Nova', 'Bash', 'Slash', 'Heavy Strike', 'Cleave'];
           if (validCardNames.includes(note)) {
             console.log(`Playing card sound for: ${note}`);
             this.soundManager.playCardSound(note);
@@ -4342,6 +4394,7 @@ export class BattleScene extends Phaser.Scene {
     this.playerPlans.clear();
     this.queuedActions = []; // Clear queued actions for new turn
     this.isLocked = false;
+    this.combatEndedEarly = false; // Reset flag for new turn
     this.selectedAction = null;
     this.selectedTarget = null;
     this.selectedCardId = null;
@@ -4391,12 +4444,23 @@ export class BattleScene extends Phaser.Scene {
           
           // Create animation callback for drawing cards (only for current player)
           const onDrawAnimation = (cardId: string, position: number, delay: number) => {
+            console.log(`[Deck] Animation callback triggered for ${cardId} at position ${position} with delay ${delay}ms`);
             if (this.handUI) {
               this.handUI.animateDrawCard(cardId, position, delay);
+            } else {
+              console.warn(`[Deck] HandUI not available for animation callback`);
             }
           };
           
-          drawCardsAtTurnStart(deck, onDrawAnimation);
+          // Create reshuffle callback to update pile indicators when discard pile is reshuffled
+          const onReshuffleCallback = (drawPileSize: number, discardPileSize: number) => {
+            console.log(`[Deck] Reshuffle callback: DrawPile=${drawPileSize}, Discard=${discardPileSize}`);
+            if (this.handUI) {
+              this.handUI.updatePileIndicators(drawPileSize, discardPileSize);
+            }
+          };
+          
+          drawCardsAtTurnStart(deck, onDrawAnimation, onReshuffleCallback);
           
           // Track which cards were just drawn
           newlyDrawnCards = deck.hand.slice(handSizeBefore);
@@ -4426,6 +4490,10 @@ export class BattleScene extends Phaser.Scene {
         console.log(`[Deck] Cards to hide for animation:`, newlyDrawnCards);
         console.log(`[Deck] ========================================`);
         
+        // Save ultimate card ID before destroying HandUI
+        const savedUltimateCardId = this.handUI.getUltimateCardId();
+        console.log(`[Deck] Ultimate card before destroy: ${savedUltimateCardId}`);
+        
         this.handUI.destroy();
         this.handUI = new HandUI(
           this,
@@ -4434,7 +4502,13 @@ export class BattleScene extends Phaser.Scene {
           newlyDrawnCards // Hide newly drawn cards for animation
         );
         
-        // Update pile indicators
+        // Re-add ultimate card if it existed
+        if (savedUltimateCardId) {
+          console.log(`[Deck] Re-adding ultimate card: ${savedUltimateCardId}`);
+          this.handUI.addUltimateCard(savedUltimateCardId);
+        }
+        
+        // Update pile indicators immediately (no delay needed - created immediately in HandUI)
         this.handUI.updatePileIndicators(myDeck.drawPile.length, myDeck.discardPile.length);
       }
     }
@@ -4474,35 +4548,43 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private showSkipTurnButton(): void {
-    // Skip button (bottom right corner)
-    const skipButton = this.add.container(this.scale.width - 120, this.scale.height - 150);
+    // Skip button - Compact and stylish
+    const skipButton = this.add.container(957, 669);
     skipButton.setDepth(100);
+    skipButton.setSize(140, 36);
 
-    const bg = this.add.rectangle(0, 0, 200, 45, 0x95a5a6, 0.9);
-    bg.setStrokeStyle(2, 0xffffff, 0.7);
-    bg.setInteractive({ useHandCursor: true });
+    // Smaller, more elegant background with rounded corners
+    const bg = this.add.rectangle(0, 0, 140, 36, 0x34495e, 1);
+    bg.setStrokeStyle(2, 0x3498db, 0.8);
     skipButton.add(bg);
 
     const currentAP = this.userId ? (this.playerAP.get(this.players.find(p => p.userId === this.userId)?.id || '') || 0) : 0;
-    const text = this.add.text(0, 0, `⏩ Skip (Save ${currentAP} AP)`, {
-      fontSize: '14px',
-      color: '#ffffff',
+    const text = this.add.text(0, 0, `⏩ Skip | +${currentAP} AP`, {
+      fontSize: '13px',
+      color: '#ecf0f1',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
     });
     text.setOrigin(0.5);
     skipButton.add(text);
 
+    // Make the container interactive for clicking - tight hit area to prevent overlap with cards
+    bg.setInteractive({ useHandCursor: true });
+    skipButton.setSize(140, 36);
+
     bg.on('pointerover', () => {
-      bg.setFillStyle(0xa0b0b6, 0.9);
+      bg.setFillStyle(0x3498db, 1);
+      bg.setStrokeStyle(2, 0x5dade2, 1);
+      text.setColor('#ffffff');
     });
 
     bg.on('pointerout', () => {
-      bg.setFillStyle(0x95a5a6, 0.9);
+      bg.setFillStyle(0x34495e, 1);
+      bg.setStrokeStyle(2, 0x3498db, 0.8);
+      text.setColor('#ecf0f1');
     });
 
     bg.on('pointerdown', () => {
-      // Don't deduct any AP - just skip turn
       this.showPendingActionText(`⏩ Skipping turn - Saving AP for next round!`, '#95a5a6');
       this.time.delayedCall(500, () => {
         this.lockAction();
@@ -4529,6 +4611,8 @@ export class BattleScene extends Phaser.Scene {
     
     if (allEnemiesDead) {
       console.log('🎉 All enemies defeated by ultimate! Victory!');
+      // Set flag to prevent normal timeline completion from interfering
+      this.combatEndedEarly = true;
       // Clear timeline to prevent normal combat end check
       this.timeline = null;
       this.pendingPostState = null;
@@ -4538,6 +4622,8 @@ export class BattleScene extends Phaser.Scene {
       });
     } else if (allPlayersDead) {
       console.log('💀 All players defeated! Defeat!');
+      // Set flag to prevent normal timeline completion from interfering
+      this.combatEndedEarly = true;
       // Clear timeline to prevent normal combat end check
       this.timeline = null;
       this.pendingPostState = null;
@@ -4573,34 +4659,62 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private endCombat(result: 'victory' | 'defeat'): void {
+    // Prevent duplicate calls
+    if (this.combatEnded) {
+      console.log(`⚠️ endCombat already called, ignoring duplicate call for ${result}`);
+      return;
+    }
+    this.combatEnded = true;
+    
     console.log(`Combat ended: ${result} (Stage ${this.currentStage})`);
     
     // Clean up dead enemies - hide all dead enemies except flying demons
     this.cleanupDeadEnemies();
     
     // Show result banner
-    const banner = this.add.rectangle(
-      this.scale.width / 2,
-      this.scale.height / 2,
-      400,
-      100,
-      result === 'victory' ? 0x27ae60 : 0xe74c3c,
-      0.9
-    );
-    banner.setStrokeStyle(3, 0xffffff, 0.8);
+    if (result === 'victory') {
+      // Display victory image (1024x1024, scaled to 250x250, positioned higher)
+      const victoryImage = this.add.image(
+        this.scale.width / 2,
+        this.scale.height / 2 - 100, // Move up 100 pixels
+        'victory'
+      );
+      victoryImage.setDisplaySize(250, 250);
+      victoryImage.setDepth(1000); // Ensure it's on top
+      
+      // Add a subtle scale-in animation
+      victoryImage.setScale(0);
+      this.tweens.add({
+        targets: victoryImage,
+        scale: 250 / 1024, // Scale from 1024x1024 to 250x250
+        duration: 500,
+        ease: 'Back.easeOut',
+      });
+    } else {
+      // Defeat banner (keep original style)
+      const banner = this.add.rectangle(
+        this.scale.width / 2,
+        this.scale.height / 2,
+        400,
+        100,
+        0xe74c3c,
+        0.9
+      );
+      banner.setStrokeStyle(3, 0xffffff, 0.8);
 
-    const bannerText = this.add.text(
-      this.scale.width / 2,
-      this.scale.height / 2,
-      result === 'victory' ? 'VICTORY!' : 'DEFEAT!',
-      {
-        fontSize: '36px',
-        color: '#ffffff',
-        fontFamily: 'Arial, sans-serif',
-        fontStyle: 'bold',
-      }
-    );
-    bannerText.setOrigin(0.5);
+      const bannerText = this.add.text(
+        this.scale.width / 2,
+        this.scale.height / 2,
+        'DEFEAT!',
+        {
+          fontSize: '36px',
+          color: '#ffffff',
+          fontFamily: 'Arial, sans-serif',
+          fontStyle: 'bold',
+        }
+      );
+      bannerText.setOrigin(0.5);
+    }
 
     // Return to map or lobby after delay
     this.time.delayedCall(3000, () => {
@@ -5227,6 +5341,13 @@ export class BattleScene extends Phaser.Scene {
         if (!this.timeline.isActive()) {
           console.log('Timeline complete - checking for combat end');
           
+          // Skip normal completion if combat ended early via ultimate
+          if (this.combatEndedEarly) {
+            console.log('Combat already ended via ultimate - skipping normal completion');
+            this.timeline = null;
+            return;
+          }
+          
           // Verify synchronization with pendingPostState (damage was already applied during animations)
           if (this.pendingPostState) {
             console.log('Verifying combat state synchronization...');
@@ -5234,18 +5355,26 @@ export class BattleScene extends Phaser.Scene {
             console.log('Expected post state:', this.pendingPostState);
             
             // Check if there are any discrepancies (this should not happen if damage was applied correctly)
-            let hasDiscrepancy = false;
+            let needsReconciliation = false;
             this.pendingPostState.forEach(expectedActor => {
               const currentActor = this.combatState.party.find(a => a.id === expectedActor.id) ||
                                    this.combatState.enemies.find(a => a.id === expectedActor.id);
               if (currentActor && currentActor.hp !== expectedActor.hp) {
                 console.warn(`⚠️ HP mismatch for ${currentActor.name}: current=${currentActor.hp}, expected=${expectedActor.hp}`);
-                hasDiscrepancy = true;
+                
+                // Only reconcile if expected HP is LOWER (more damage to apply)
+                // Never restore health by reconciling to a HIGHER HP value
+                if (expectedActor.hp < currentActor.hp) {
+                  console.warn(`   → Will reconcile: expected HP (${expectedActor.hp}) < current HP (${currentActor.hp})`);
+                  needsReconciliation = true;
+                } else {
+                  console.warn(`   → Skipping reconciliation: expected HP (${expectedActor.hp}) >= current HP (${currentActor.hp}) - would restore health!`);
+                }
               }
             });
             
-            // Only reconcile if there's a discrepancy (safety net)
-            if (hasDiscrepancy) {
+            // Only reconcile if needed (safety net)
+            if (needsReconciliation) {
               console.warn('Discrepancy detected! Applying corrective reconciliation...');
               reconcileState(this.combatState, this.pendingPostState);
               this.syncLocalArraysWithCombatState();

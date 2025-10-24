@@ -43,29 +43,32 @@ export class MainMenu extends Phaser.Scene {
     this.soundManager.playMusic('music_title', { volume: 0.3, loop: true });
     console.log('Title music started');
 
-    // Title (with shadow for visibility over background)
-    const title = this.add.text(width / 2, height / 3, 'DARKEST LIGHT', {
-      fontSize: '64px',
-      color: '#ffffff',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 8,
-    });
-    title.setOrigin(0.5);
+    // Title image (1024x1024)
+    const titleImage = this.add.image(width / 2, height / 3, 'titlename');
+    titleImage.setOrigin(0.5);
+    // Scale down the 1024x1024 image to fit nicely on screen
+    const titleScale = Math.min(width * 0.9 / 1024, height * 0.7 / 1024);
+    titleImage.setScale(titleScale);
 
-    // Subtitle (with shadow for visibility)
-    const subtitle = this.add.text(width / 2, height / 3 + 70, 'Co-op Dungeon Crawler', {
-      fontSize: '24px',
-      color: '#cccccc',
-      fontFamily: 'Arial, sans-serif',
-      stroke: '#000000',
-      strokeThickness: 4,
+    // Play button image (930x500)
+    const playButton = this.add.image(width / 2, height / 2 + 150, 'pb');
+    playButton.setOrigin(0.5);
+    // Scale down to reasonable size
+    const playButtonScale = Math.min(width * 0.3 / 930, height * 0.15 / 500);
+    playButton.setScale(playButtonScale);
+    playButton.setInteractive({ useHandCursor: true });
+    
+    // Hover effects
+    playButton.on('pointerover', () => {
+      playButton.setScale(playButtonScale * 1.05);
     });
-    subtitle.setOrigin(0.5);
-
-    // Play button
-    this.createButton(width / 2, height / 2 + 100, 'PLAY', () => {
+    
+    playButton.on('pointerout', () => {
+      playButton.setScale(playButtonScale);
+    });
+    
+    // Click to start game
+    playButton.on('pointerdown', () => {
       this.scene.start('Lobby');
     });
 

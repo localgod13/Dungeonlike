@@ -521,6 +521,26 @@ export class CardSelectUI {
     if (!cardId) return;
     
     if (this.pendingSwap) {
+      // Verify the pending swap card type matches the slot type
+      const swapCard = this.cardPool.find(c => c.id === this.pendingSwap);
+      if (!swapCard) {
+        this.pendingSwap = null;
+        this.highlightLoadoutSlots(false);
+        this.highlightItemSlots(false);
+        return;
+      }
+      
+      const swapCardIsItem = swapCard.class === undefined;
+      
+      // Only allow swap if types match
+      if (swapCardIsItem !== isItem) {
+        console.warn(`Cannot swap: card type mismatch (swap card isItem=${swapCardIsItem}, slot isItem=${isItem})`);
+        this.pendingSwap = null;
+        this.highlightLoadoutSlots(false);
+        this.highlightItemSlots(false);
+        return;
+      }
+      
       // Complete swap
       if (isItem) {
         this.removeItemFromLoadout(cardId);
@@ -556,8 +576,81 @@ export class CardSelectUI {
     if (emptySlotIndex >= SLOT_COUNT) return;
 
     this.selectedCards.push(cardId);
-    this.updateLoadoutSlot(emptySlotIndex, card);
-    this.updateLoadoutTitle();
+    
+    // Hide the card from the pool
+    const cardButton = this.cardButtons.get(cardId);
+    if (cardButton) {
+      cardButton.setVisible(false);
+    }
+    
+    // Animate the card from pool to loadout
+    this.animateCardToLoadout(cardId, card, emptySlotIndex, false);
+  }
+
+  private animateCardToLoadout(cardId: string, card: Card, targetSlotIndex: number, isItem: boolean): void {
+    // Get the source card button position
+    const sourceButton = this.cardButtons.get(cardId);
+    if (!sourceButton) {
+      // Fallback: just update without animation
+      if (isItem) {
+        this.updateItemSlot(targetSlotIndex, card);
+      } else {
+        this.updateLoadoutSlot(targetSlotIndex, card);
+      }
+      this.updateLoadoutTitle();
+      return;
+    }
+
+    // Get the target slot position
+    const targetSlot = isItem ? this.itemSlots[targetSlotIndex] : this.loadoutSlots[targetSlotIndex];
+    if (!targetSlot) return;
+
+    // Get world positions
+    const sourceX = sourceButton.x + (sourceButton.parentContainer?.x || 0);
+    const sourceY = sourceButton.y + (sourceButton.parentContainer?.y || 0);
+    const targetX = targetSlot.x + (targetSlot.parentContainer?.x || 0);
+    const targetY = targetSlot.y + (targetSlot.parentContainer?.y || 0);
+
+    // Create a temporary animated card - start at source card size
+    const imageKey = `card_${card.type}`;
+    const animatedCard = this.scene.add.image(sourceX, sourceY, imageKey);
+    
+    // Calculate scale to match source card display size (CARD_WIDTH x CARD_HEIGHT)
+    // Card textures are 1024x1536, so we need to scale them to match CARD_WIDTH x CARD_HEIGHT
+    const sourceScale = CARD_WIDTH / 1024; // This matches the source card's scale
+    animatedCard.setScale(sourceScale);
+    animatedCard.setDepth(1000); // High depth so it's on top
+    
+    // Apply gray tint to neutral cards
+    if (card.type === 'neutral') {
+      animatedCard.setTint(0x888888);
+    }
+
+    // Calculate target scale to match slot size
+    const targetScale = SLOT_WIDTH / 1024;
+
+    // Animate to target position and scale down to slot size
+    this.scene.tweens.add({
+      targets: animatedCard,
+      x: targetX,
+      y: targetY,
+      scale: targetScale,
+      duration: 400,
+      ease: 'Power2.easeOut',
+      onComplete: () => {
+        // Remove animated card
+        animatedCard.destroy();
+        
+        // Update the actual loadout slot
+        if (isItem) {
+          this.updateItemSlot(targetSlotIndex, card);
+          this.updateItemLoadoutTitle();
+        } else {
+          this.updateLoadoutSlot(targetSlotIndex, card);
+          this.updateLoadoutTitle();
+        }
+      }
+    });
   }
 
   private removeCardFromLoadout(cardId: string): void {
@@ -565,6 +658,12 @@ export class CardSelectUI {
     if (index === -1) return;
 
     this.selectedCards.splice(index, 1);
+    
+    // Show the card back in the pool
+    const cardButton = this.cardButtons.get(cardId);
+    if (cardButton) {
+      cardButton.setVisible(true);
+    }
     
     // Rebuild all slots
     for (let i = 0; i < SLOT_COUNT; i++) {
@@ -830,8 +929,16 @@ export class CardSelectUI {
     if (emptySlotIndex >= this.MAX_ITEMS) return;
 
     this.selectedItems.push(cardId);
-    this.updateItemSlot(emptySlotIndex, card);
-    this.updateItemLoadoutTitle();
+    
+    // Hide the item from the pool
+    const cardButton = this.cardButtons.get(cardId);
+    if (cardButton) {
+      cardButton.setVisible(false);
+    }
+    
+    // Animate the item from pool to loadout
+    this.animateCardToLoadout(cardId, card, emptySlotIndex, true);
+    // Title will be updated in animation complete callback
   }
 
   private removeItemFromLoadout(cardId: string): void {
@@ -839,6 +946,12 @@ export class CardSelectUI {
     if (index === -1) return;
 
     this.selectedItems.splice(index, 1);
+    
+    // Show the item back in the pool
+    const cardButton = this.cardButtons.get(cardId);
+    if (cardButton) {
+      cardButton.setVisible(true);
+    }
     
     // Rebuild all item slots
     for (let i = 0; i < this.MAX_ITEMS; i++) {

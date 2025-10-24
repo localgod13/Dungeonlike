@@ -127,6 +127,18 @@ export class Preload extends Phaser.Scene {
       'items',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/items.png'
     );
+    this.load.image(
+      'victory',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/victory.png'
+    );
+    this.load.image(
+      'titlename',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/titlename.png'
+    );
+    this.load.image(
+      'pb',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/pb.png'
+    );
     console.log('[Preload] Background images queued for loading');
 
     // Load card type images
@@ -166,6 +178,12 @@ export class Preload extends Phaser.Scene {
     this.load.image(
       'cardback',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/cardback.png'
+    );
+    
+    // Load character plate image for bottom left HUD
+    this.load.image(
+      'charplate',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/charplate.png'
     );
     console.log('[Preload] Card images queued for loading');
 

@@ -29,8 +29,9 @@ export const REUSABLE_CHARGES: Record<string, number> = {
  * Create a new deck state from a list of card IDs
  */
 export function createDeck(cardIds: string[], consumableInventory?: Map<string, number>): DeckState {
-  if (cardIds.length !== 10) {
-    console.warn(`Deck should have exactly 10 cards, got ${cardIds.length}`);
+  console.log(`[Deck] Creating deck with ${cardIds.length} cards`);
+  if (cardIds.length < 4) {
+    console.warn(`Deck has fewer than 4 cards (${cardIds.length}), may cause issues with initial hand`);
   }
 
   // Initialize reusable charges
@@ -82,8 +83,15 @@ function shuffleDeck(deck: string[]): void {
  * 
  * NOTE: Animation callback is called AFTER the card is added to hand,
  * so the hand UI must be created AFTER this function returns
+ * 
+ * @param onReshuffleCallback - Called when discard pile is reshuffled into draw pile (drawPileSize, discardPileSize)
  */
-export function drawCard(state: DeckState, onDrawAnimation?: (cardId: string, position: number, delay: number) => void, animationDelay: number = 0): string | null {
+export function drawCard(
+  state: DeckState, 
+  onDrawAnimation?: (cardId: string, position: number, delay: number) => void, 
+  animationDelay: number = 0,
+  onReshuffleCallback?: (drawPileSize: number, discardPileSize: number) => void
+): string | null {
   console.log(`[Deck] Drawing card. Before: Hand=${state.hand.length}, DrawPile=${state.drawPile.length}, Discard=${state.discardPile.length}`);
   
   // If draw pile is empty, reshuffle discard pile (excluding consumables)
@@ -107,6 +115,11 @@ export function drawCard(state: DeckState, onDrawAnimation?: (cardId: string, po
     state.discardPile = []; // Clear discard pile
     shuffleDeck(state.drawPile);
     console.log(`[Deck] ✓ Reshuffled ${state.drawPile.length} cards back into draw pile`);
+    
+    // Notify callback that reshuffle occurred
+    if (onReshuffleCallback) {
+      onReshuffleCallback(state.drawPile.length, state.discardPile.length);
+    }
   }
   
   // If still no cards available, return null
@@ -127,7 +140,7 @@ export function drawCard(state: DeckState, onDrawAnimation?: (cardId: string, po
       // Use setTimeout to defer animation until after hand UI is created
       setTimeout(() => {
         onDrawAnimation(card, state.hand.length - 1, animationDelay);
-      }, 100); // Delay to ensure hand UI is created first and cards can be hidden
+      }, 200); // Increased delay to ensure hand UI is fully created and cards can be hidden
     }
   }
   
@@ -138,7 +151,11 @@ export function drawCard(state: DeckState, onDrawAnimation?: (cardId: string, po
  * Draw cards at the start of each turn to maintain hand size
  * Only draws if hand is below target size
  */
-export function drawCardsAtTurnStart(state: DeckState, onDrawAnimation?: (cardId: string, position: number, delay: number) => void): void {
+export function drawCardsAtTurnStart(
+  state: DeckState, 
+  onDrawAnimation?: (cardId: string, position: number, delay: number) => void,
+  onReshuffleCallback?: (drawPileSize: number, discardPileSize: number) => void
+): void {
   console.log(`[Deck] === TURN START DRAW ===`);
   console.log(`[Deck] Current hand size: ${state.hand.length}`);
   
@@ -156,7 +173,7 @@ export function drawCardsAtTurnStart(state: DeckState, onDrawAnimation?: (cardId
   
   for (let i = 0; i < cardsNeeded; i++) {
     const animationDelay = i * ANIMATION_STAGGER_MS; // 0ms, 200ms, 400ms, 600ms
-    const card = drawCard(state, onDrawAnimation, animationDelay);
+    const card = drawCard(state, onDrawAnimation, animationDelay, onReshuffleCallback);
     if (!card) {
       console.log(`[Deck] Could only draw ${i} cards before running out`);
       break;

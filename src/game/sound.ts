@@ -465,6 +465,18 @@ export class SoundManager {
   }
 
   /**
+   * Play card deal sound effect with pitch variation - randomly selects between two sounds
+   */
+  playCardDeal(): void {
+    // Randomly select between two deal sounds
+    const dealSound = Math.random() < 0.5 ? 'sfx_deal' : 'sfx_deal2';
+    // Add pitch variation (0.85 to 1.15) for variety
+    const pitchVariation = 0.85 + Math.random() * 0.3;
+    console.log(`[SoundManager] Playing ${dealSound} at rate ${pitchVariation.toFixed(2)}`);
+    this.playSfx(dealSound, { volume: 0.5, rate: pitchVariation });
+  }
+
+  /**
    * Map card names to sound keys
    */
   private getCardSoundKey(cardName: string): string | null {
@@ -475,6 +487,9 @@ export class SoundManager {
       'Guard': 'sfx_guard',
       'Bash': 'sfx_bash',
       'Weaken': 'sfx_weaken',
+      'Slash': 'sfx_warrior_slash',
+      'Heavy Strike': 'sfx_warrior_heavy_strike',
+      'Cleave': 'sfx_warrior_cleave',
     };
 
     return soundMap[cardName] || null;
@@ -499,11 +514,17 @@ export const SOUND_ASSETS = {
   sfx_guard: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/guard.mp3',
   sfx_bash: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/bash.mp3',
   sfx_weaken: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/weaken.mp3',
+  sfx_deal: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/deal.mp3',
+  sfx_deal2: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/cardlick1.mp3',
+  sfx_card_click: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/cardclick2.mp3',
   
   // Character attack sound effects
   sfx_mage_fire1: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/wizard/fire1.mp3',
   sfx_mage_fire2: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/wizard/fire2.mp3',
   sfx_huntress_arrow: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/huntress/arrow1.mp3',
+  sfx_warrior_heavy_strike: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/warrior/heavystrike.mp3',
+  sfx_warrior_cleave: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/warrior/cleave.mp3',
+  sfx_warrior_slash: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/warrior/slash.mp3',
   
   // Boss sound effects
   sfx_boss_attack1: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/boss1/bossattack.mp3',
