@@ -33,6 +33,7 @@ export class LootScene extends Phaser.Scene {
   private stage: number = 1;
   private goldReward: number = 0;
   private battleBackground: string = 'battleground1';
+  private hasTransitioned = false; // Prevent duplicate scene transitions
   
   private selectedCard: Card | null = null;
   private isReady: boolean = false;
@@ -52,6 +53,7 @@ export class LootScene extends Phaser.Scene {
     this.stage = data.stage || 1;
     this.goldReward = data.goldReward || 0;
     this.battleBackground = data.battleBackground || 'battleground1';
+    this.hasTransitioned = false; // Reset transition flag for new scene instance
     
     this.selectedCard = null;
     this.isReady = false;
@@ -381,6 +383,13 @@ export class LootScene extends Phaser.Scene {
   }
   
   private transitionToMap(): void {
+    // Prevent duplicate transitions
+    if (this.hasTransitioned) {
+      console.log('[LootScene] Already transitioning, skipping...');
+      return;
+    }
+    this.hasTransitioned = true;
+    
     console.log('[LootScene] Transitioning to map...');
     console.log('[LootScene] Current node:', this.currentNodeId);
     console.log('[LootScene] Visited nodes before:', this.visitedNodes);

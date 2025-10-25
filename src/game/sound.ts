@@ -542,6 +542,7 @@ export const SOUND_ASSETS = {
   music_map: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/music/mapmusic.mp3',
   music_merchant: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/merchantbgm.mp3',
   music_encounter: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/encounter1.mp3',
+  sfx_victory: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/victoryscreen.mp3',
 } as const;
 
 /**

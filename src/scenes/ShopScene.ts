@@ -16,6 +16,7 @@ export class ShopScene extends Phaser.Scene {
   private visitedNodes: string[] = [];
   private currentNodeId: string | null = null;
   private currentStage = 1;
+  private hasTransitioned = false; // Prevent duplicate scene transitions
   
   // Shop data
   private shopCards: ShopCard[] = [];
@@ -34,6 +35,8 @@ export class ShopScene extends Phaser.Scene {
   private myVote: string | null = null;
   private shopVotes: Map<string, string> | null = null;
   private votingUI: Phaser.GameObjects.Container | null = null;
+  private readyPlayers = new Set<string>(); // Track which players are ready to continue
+  private readyIndicators: Phaser.GameObjects.Container | null = null;
   private unsubscribe: (() => void) | null = null;
 
   constructor() {
@@ -55,6 +58,7 @@ export class ShopScene extends Phaser.Scene {
     this.visitedNodes = data.visitedNodes || [];
     this.currentNodeId = data.currentNodeId || null;
     this.currentStage = data.stage || 1;
+    this.hasTransitioned = false; // Reset transition flag for new scene instance
     
     console.log('[ShopScene] Initialized with node:', data.nodeId);
     console.log('[ShopScene] Current stage:', this.currentStage);
@@ -143,6 +147,14 @@ export class ShopScene extends Phaser.Scene {
       this.shopVotes = new Map<string, string>();
     }
     this.shopVotes.set(userId, cardId);
+    
+    // If voting to continue, mark as ready
+    if (cardId === 'continue') {
+      this.readyPlayers.add(userId);
+      console.log(`[ShopScene] ${userId} is ready to continue`);
+      this.updateReadyIndicators();
+    }
+    
     this.updateVotingUI();
     
     if (this.isHost) {
@@ -152,6 +164,13 @@ export class ShopScene extends Phaser.Scene {
 
   private handleVoteResult(selectedCardId: string, votes: { [cardId: string]: string[] }): void {
     console.log('[ShopScene] Received vote result:', selectedCardId, votes);
+    
+    // Prevent duplicate execution if we're the host (we already called this locally)
+    if (this.isHost) {
+      console.log('[ShopScene] Host ignoring vote result (already executed locally)');
+      return;
+    }
+    
     this.executeVoteResult(selectedCardId);
   }
 
@@ -652,7 +671,15 @@ export class ShopScene extends Phaser.Scene {
   private async voteToContinue(): Promise<void> {
     if (this.players.length > 1) {
       this.myVote = 'continue';
+      
+      // Mark self as ready
+      if (this.userId) {
+        this.readyPlayers.add(this.userId);
+        console.log('[ShopScene] Marked self as ready');
+      }
+      
       this.updateVotingUI();
+      this.updateReadyIndicators();
       
       if (this.lobbyId) {
         try {
@@ -671,7 +698,77 @@ export class ShopScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Update ready indicators showing which players are ready to continue
+   */
+  private updateReadyIndicators(): void {
+    // Remove old indicators
+    if (this.readyIndicators) {
+      this.readyIndicators.destroy();
+    }
+    
+    if (this.players.length <= 1) return;
+    
+    // Create indicators container
+    const width = this.scale.width;
+    this.readyIndicators = this.add.container(width - 200, 100);
+    this.readyIndicators.setScrollFactor(0);
+    this.readyIndicators.setDepth(1100);
+    
+    // Background
+    const bg = this.add.rectangle(0, 0, 180, 40 + (this.players.length * 30), 0x1a0f2e, 0.9);
+    bg.setStrokeStyle(2, 0xd4af37, 0.8);
+    this.readyIndicators.add(bg);
+    
+    // Title
+    const title = this.add.text(0, -10 - (this.players.length * 15), 'Ready Status', {
+      fontSize: '14px',
+      color: '#d4af37',
+      fontFamily: 'Arial Black',
+    });
+    title.setOrigin(0.5);
+    this.readyIndicators.add(title);
+    
+    // Player ready status
+    this.players.forEach((player, index) => {
+      const isReady = this.readyPlayers.has(player.userId);
+      const yPos = index * 30 - 5;
+      
+      // Checkmark or X
+      const statusIcon = this.add.text(-70, yPos, isReady ? '✓' : '○', {
+        fontSize: '16px',
+        color: isReady ? '#44ff88' : '#888888',
+        fontFamily: 'Arial Black',
+      });
+      statusIcon.setOrigin(0.5);
+      this.readyIndicators.add(statusIcon);
+      
+      // Player name
+      const nameText = this.add.text(-50, yPos, player.name.substring(0, 10), {
+        fontSize: '12px',
+        color: isReady ? '#44ff88' : '#ffffff',
+        fontFamily: 'Arial',
+      });
+      nameText.setOrigin(0, 0.5);
+      this.readyIndicators.add(nameText);
+    });
+  }
+
   private continueToMap(): void {
+    // Prevent duplicate transitions
+    if (this.hasTransitioned) {
+      console.log('[ShopScene] Already transitioning, skipping...');
+      return;
+    }
+    this.hasTransitioned = true;
+    console.log('[ShopScene] Starting transition to map...');
+    
+    // Clear ready indicators
+    if (this.readyIndicators) {
+      this.readyIndicators.destroy();
+      this.readyIndicators = null;
+    }
+    
     // Fade to black
     const { width, height } = this.cameras.main;
     const fadeOut = this.add.rectangle(0, 0, width, height, 0x000000, 0);

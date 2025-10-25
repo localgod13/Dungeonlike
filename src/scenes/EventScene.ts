@@ -14,6 +14,10 @@ export class EventScene extends Phaser.Scene {
   private visitedNodes: string[] = [];
   private currentNodeId: string | null = null;
   private currentStage = 1; // Track battle stage number
+  private hasTransitioned = false; // Prevent duplicate scene transitions
+  private hasAppliedChoice = false; // Prevent duplicate choice application
+  private userId: string | null = null;
+  private isHost = false;
   
   // Event data
   private currentEvent: EventData | null = null;
@@ -45,6 +49,8 @@ export class EventScene extends Phaser.Scene {
     this.currentNodeId = data.currentNodeId || null;
     this.currentStage = data.stage || 1; // Receive stage number
     this.eventSeed = this.mapSeed || (Date.now() % 2147483647); // Keep within PostgreSQL integer range
+    this.hasTransitioned = false; // Reset transition flag for new scene instance
+    this.hasAppliedChoice = false; // Reset choice application flag for new scene instance
     
     console.log('EventScene initialized with node:', data.nodeId);
     console.log('Current stage:', this.currentStage);
@@ -53,7 +59,15 @@ export class EventScene extends Phaser.Scene {
   async create(): Promise<void> {
     const width = this.scale.width;
     const height = this.scale.height;
-
+    
+    // Get current user
+    this.userId = await this.getCurrentUserId();
+    console.log('[EventScene] Current userId:', this.userId);
+    
+    // Determine if host (first player)
+    this.isHost = this.players.length > 0 && this.players[0].userId === this.userId;
+    console.log('[EventScene] Is host:', this.isHost);
+    
     // Fantasy dark background
     this.cameras.main.setBackgroundColor('#0d0820');
     this.createFantasyBackground();
@@ -63,10 +77,6 @@ export class EventScene extends Phaser.Scene {
 
     // Generate random event
     this.generateEvent();
-
-    // Get current user and determine if host
-    this.userId = await this.getCurrentUserId();
-    this.isHost = this.players.length > 0 && this.players[0].userId === this.userId;
 
     // Create UI
     this.createTitle();
@@ -112,6 +122,19 @@ export class EventScene extends Phaser.Scene {
     
     if (userId === this.userId) return;
     
+    // Handle ready votes for continue button
+    if (choiceId === 'ready') {
+      this.readyPlayers.add(userId);
+      console.log(`[EventScene] ${userId} is ready to continue`);
+      this.updateReadyIndicators();
+      
+      if (this.isHost) {
+        this.checkAllPlayersReady();
+      }
+      return;
+    }
+    
+    // Handle choice votes
     if (!this.eventVotes) {
       this.eventVotes = new Map<string, string>();
     }
@@ -125,6 +148,19 @@ export class EventScene extends Phaser.Scene {
 
   private handleVoteResult(selectedChoiceId: string, votes: { [choiceId: string]: string[] }): void {
     console.log('Received event vote result:', selectedChoiceId, votes);
+    
+    // Handle continue signal
+    if (selectedChoiceId === 'continue') {
+      console.log('[EventScene] Received continue signal from host');
+      this.continueToMap();
+      return;
+    }
+    
+    // Prevent duplicate choice application
+    if (this.hasAppliedChoice) {
+      console.log('[EventScene] Choice already applied, ignoring vote result');
+      return;
+    }
     
     // Find the selected choice
     if (!this.currentEvent) return;
@@ -515,7 +551,7 @@ export class EventScene extends Phaser.Scene {
     buttonBg.on('pointerover', () => {
       buttonBg.setFillStyle(0x2a1f3d, 0.9);
       choiceText.setColor('#f4e4bc');
-      this.soundManager?.playSound('ui_hover');
+      this.soundManager?.playSfx('ui_hover');
     });
     
     buttonBg.on('pointerout', () => {
@@ -553,6 +589,13 @@ export class EventScene extends Phaser.Scene {
   }
 
   private makeChoiceDirectly(choice: EventChoice): void {
+    // Prevent duplicate choice application
+    if (this.hasAppliedChoice) {
+      console.log('[EventScene] Choice already applied, skipping...');
+      return;
+    }
+    this.hasAppliedChoice = true;
+    
     console.log(`Made choice: ${choice.text}`);
     
     // TODO: Apply choice effects (costs, rewards, etc.)
@@ -617,17 +660,148 @@ export class EventScene extends Phaser.Scene {
     this.continueButton.setDepth(200);
     this.continueButton.setVisible(false);
     
-    this.continueButton.on('pointerdown', () => this.continueToMap());
+    this.continueButton.on('pointerdown', () => {
+      this.soundManager?.playSfx('ui_click');
+      this.handleContinueButton();
+    });
     this.continueButton.on('pointerover', () => {
       this.continueButton?.setColor('#f4e4bc');
-      this.soundManager?.playSound('ui_hover');
+      this.soundManager?.playSfx('ui_hover');
     });
     this.continueButton.on('pointerout', () => {
       this.continueButton?.setColor('#d4af37');
     });
   }
 
+  /**
+   * Handle continue button - check if multiplayer and mark as ready
+   */
+  private handleContinueButton(): void {
+    if (this.players.length > 1 && this.lobbyId) {
+      console.log('[EventScene] Multiplayer - marking ready to continue');
+      
+      // Mark self as ready
+      if (this.userId) {
+        this.readyPlayers.add(this.userId);
+        console.log('[EventScene] Marked self as ready');
+      }
+      
+      this.updateReadyIndicators();
+      
+      // Send ready vote
+      if (this.lobbyId) {
+        sendMapVote(this.lobbyId, 'ready').catch(err => {
+          console.error('[EventScene] Failed to send ready vote:', err);
+        });
+      }
+      
+      // If host, check if all are ready
+      if (this.isHost) {
+        this.checkAllPlayersReady();
+      }
+    } else {
+      // Single player - continue immediately
+      this.continueToMap();
+    }
+  }
+  
+  /**
+   * Check if all players are ready to continue
+   */
+  private checkAllPlayersReady(): void {
+    if (!this.isHost) return;
+    
+    const totalPlayers = this.players.length;
+    const readyCount = this.readyPlayers.size;
+    
+    console.log(`[EventScene] Ready check: ${readyCount}/${totalPlayers} players ready`);
+    
+    if (readyCount >= totalPlayers) {
+      console.log('[EventScene] All players ready, continuing to map');
+      
+      // Broadcast continue signal
+      if (this.lobbyId) {
+        sendMapVoteResult(this.lobbyId, 'continue', {}).catch(err => {
+          console.error('[EventScene] Failed to send continue signal:', err);
+        });
+      }
+      
+      this.continueToMap();
+    }
+  }
+  
+  /**
+   * Update ready indicators showing which players are ready to continue
+   */
+  private updateReadyIndicators(): void {
+    // Remove old indicators
+    if (this.readyIndicators) {
+      this.readyIndicators.destroy();
+    }
+    
+    if (this.players.length <= 1) return;
+    
+    // Create indicators container
+    const width = this.scale.width;
+    this.readyIndicators = this.add.container(width - 200, 100);
+    this.readyIndicators.setScrollFactor(0);
+    this.readyIndicators.setDepth(1100);
+    
+    // Background
+    const bg = this.add.rectangle(0, 0, 180, 40 + (this.players.length * 30), 0x1a0f2e, 0.9);
+    bg.setStrokeStyle(2, 0x8b7355, 0.8);
+    this.readyIndicators.add(bg);
+    
+    // Title
+    const title = this.add.text(0, -10 - (this.players.length * 15), 'Ready Status', {
+      fontSize: '14px',
+      color: '#d4af37',
+      fontFamily: 'Georgia, serif',
+      fontStyle: 'bold',
+    });
+    title.setOrigin(0.5);
+    this.readyIndicators.add(title);
+    
+    // Player ready status
+    this.players.forEach((player, index) => {
+      const isReady = this.readyPlayers.has(player.userId);
+      const yPos = index * 30 - 5;
+      
+      // Checkmark or circle
+      const statusIcon = this.add.text(-70, yPos, isReady ? '✓' : '○', {
+        fontSize: '16px',
+        color: isReady ? '#44ff88' : '#888888',
+        fontFamily: 'Arial Black',
+      });
+      statusIcon.setOrigin(0.5);
+      this.readyIndicators.add(statusIcon);
+      
+      // Player name
+      const nameText = this.add.text(-50, yPos, player.name.substring(0, 10), {
+        fontSize: '12px',
+        color: isReady ? '#44ff88' : '#b8a890',
+        fontFamily: 'Georgia, serif',
+      });
+      nameText.setOrigin(0, 0.5);
+      this.readyIndicators.add(nameText);
+    });
+  }
+
   private continueToMap(): void {
+    // Prevent duplicate transitions
+    if (this.hasTransitioned) {
+      console.log('[EventScene] Already transitioning, skipping...');
+      return;
+    }
+    this.hasTransitioned = true;
+    console.log('[EventScene] Starting transition to map...');
+    
+    // Clear ready indicators
+    if (this.readyIndicators) {
+      this.readyIndicators.destroy();
+      this.readyIndicators = null;
+    }
+    
     // Mark this node as visited
     if (this.currentNodeId) {
       this.visitedNodes.push(this.currentNodeId);

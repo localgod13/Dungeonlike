@@ -49,6 +49,8 @@ export class UltimatePowerBar {
     this.classColor = config.classColor;
     
     this.container = scene.add.container(config.x, config.y);
+    this.container.setDepth(100); // Ensure it's visible over other UI elements
+    this.container.setScrollFactor(0); // Fixed to screen
     
     this.createVisuals();
   }

@@ -19,8 +19,8 @@ export class Boot extends Phaser.Scene {
     // Configure input
     this.input.mouse?.disableContextMenu();
 
-    // Move to preload
-    this.scene.start('Preload');
+    // Move to intro video
+    this.scene.start('IntroScene');
   }
 }
 

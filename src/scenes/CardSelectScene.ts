@@ -36,6 +36,7 @@ export class CardSelectScene extends Phaser.Scene {
   private visitedNodes: string[] = []; // Track visited nodes for map progression
   private currentNodeId: string | null = null; // Track current position on map
   private currentStage = 1; // Track battle stage number
+  private hasTransitioned = false; // Prevent duplicate scene transitions
 
   // UI
   private cardUI!: CardSelectUI;
@@ -61,6 +62,7 @@ export class CardSelectScene extends Phaser.Scene {
     this.players = data.players || [];
     this.mapSeed = data.mapSeed; // Store map seed for continuity
     this.visitedNodes = data.visitedNodes || []; // Store visited nodes
+    this.hasTransitioned = false; // Reset transition flag for new scene instance
     
     // Clear persisted ultimate power and inventories when starting a NEW run (no visited nodes)
     // NOTE: We check ONLY visitedNodes, NOT stage, because stage resets per battle but visited nodes persist
@@ -499,6 +501,12 @@ export class CardSelectScene extends Phaser.Scene {
     console.log(`🎬 Scene active: ${this.scene.isActive()}, Scene key: ${this.scene.key}`);
 
     // Prevent multiple transitions
+    if (this.hasTransitioned) {
+      console.log('⚠️ Already transitioning to battle, skipping...');
+      return;
+    }
+    this.hasTransitioned = true;
+
     if (!this.scene.isActive()) {
       console.log('⚠️ Scene already inactive, skipping transition');
       return;

@@ -133,10 +133,13 @@ export class BattleScene extends Phaser.Scene {
   // Combat log
   private combatLogContainer: Phaser.GameObjects.Container | null = null;
   private combatLogEntries: Phaser.GameObjects.Text[] = [];
-  private readonly MAX_LOG_ENTRIES = 4;
-  private readonly MAX_LOG_ENTRIES_EXPANDED = 12;
+  private readonly MAX_LOG_ENTRIES = 2; // Show only 2 entries in collapsed mode
+  private readonly MAX_LOG_ENTRIES_EXPANDED = 11; // Show 11 entries in expanded mode
   private isLogExpanded = false;
   private logExpandButton: Phaser.GameObjects.Container | null = null;
+  private logScrollOffset = 0; // Scroll offset for combat log
+  private maxLogScrollOffset = 0; // Maximum scroll offset
+  private logScrollIndicator: Phaser.GameObjects.Text | null = null; // Visual indicator for more entries
 
   // Sound manager
   private soundManager: SoundManager | null = null;
@@ -182,6 +185,10 @@ export class BattleScene extends Phaser.Scene {
     this.combatEndedEarly = false;
     this.combatEnded = false;
     
+    // Clear combat log for new stage
+    this.logScrollOffset = 0;
+    this.maxLogScrollOffset = 0;
+    
     // Clear UI elements
     if (this.handUI) {
       this.handUI.destroy();
@@ -220,6 +227,13 @@ export class BattleScene extends Phaser.Scene {
     // Destroy remote cursors
     for (const cursor of this.remoteCursors.values()) {
       if (cursor) cursor.destroy();
+    }
+    
+    // Clear combat log entries for new stage
+    for (const entry of this.combatLogEntries) {
+      if (entry && entry.scene === this) {
+        entry.destroy();
+      }
     }
     
     // Clear collections
@@ -734,7 +748,7 @@ export class BattleScene extends Phaser.Scene {
       this.statusEffectContainers.set(player.id, statusContainer);
     }
 
-    // Create ultimate power bar (below HP bar)
+    // Create ultimate power bar (positioned in bottom left, next to Draw pile)
     if (this.ultimatePowerManager && player.id) {
       const characterClass = battlePlayer.selectedClass;
       const classColor = getClassColor(characterClass);
@@ -745,18 +759,24 @@ export class BattleScene extends Phaser.Scene {
         this.ultimatePowerManager.initializeActor(player.id, characterClass);
       }
       
+      // Position next to "Draw:" text in bottom left
+      // Draw text is at x: 55, y: scene.scale.height - 110
+      // Position ultimate bar to the right of it
+      const barX = 125; // Right of "Draw: 0" text (moved 15px left)
+      const barY = this.scale.height - 110; // Same height as Draw text
+      
       // Create power bar UI
       const powerBar = new UltimatePowerBar(this, {
-        x: 0,
-        y: 90, // Below action indicator
-        width: 80,
-        height: 12,
+        x: barX,
+        y: barY,
+        width: 120,
+        height: 14,
         actorId: player.id,
         actorName: player.name,
         classColor: classColor,
       });
       
-      container.add(powerBar.getContainer());
+      // Don't add to container, add directly to scene at world position
       this.powerBars.set(player.id, powerBar);
       
       // Restore visual state if power was persisted
@@ -905,24 +925,23 @@ export class BattleScene extends Phaser.Scene {
     
     this.hudContainer = this.add.container(0, 0);
 
-    // Combat log panel (bottom right corner) - Create as direct children of scene
+    // Combat log panel (bottom right corner)
     const logWidth = 220;
     const logHeight = 80;
     const logX = this.scale.width - logWidth - 10; // Small margin from right edge
     const logY = this.scale.height - logHeight - 10; // Small margin from bottom edge
     
-    // Create combat log as direct children of scene to avoid coordinate issues
-    this.combatLogContainer = this.add.container(0, 0); // Create at origin
+    // Create combat log container at correct position
+    this.combatLogContainer = this.add.container(logX, logY);
     this.combatLogContainer.setDepth(1000);
 
-    // Combat log background with absolute positioning
-    const logBg = this.add.rectangle(logX + logWidth / 2, logY + logHeight / 2, logWidth, logHeight, 0x1a1a1a, 0.9);
+    // Combat log background with relative positioning (centered in container)
+    const logBg = this.add.rectangle(logWidth / 2, logHeight / 2, logWidth, logHeight, 0x1a1a1a, 0.9);
     logBg.setStrokeStyle(1, 0x4a90e2, 0.6);
     logBg.setName('logBg');
-    logBg.setDepth(1000);
 
-    // Combat log title with absolute positioning
-    const logTitle = this.add.text(logX + 10, logY + 10, 'Combat Log', {
+    // Combat log title with relative positioning
+    const logTitle = this.add.text(10, 10, 'Combat Log', {
       fontSize: '14px',
       color: '#4a90e2',
       fontFamily: 'Arial, sans-serif',
@@ -930,7 +949,26 @@ export class BattleScene extends Phaser.Scene {
     });
     logTitle.setOrigin(0, 0);
     logTitle.setName('logTitle');
-    logTitle.setDepth(1000);
+
+    // Add background and title to container
+    this.combatLogContainer.add([logBg, logTitle]);
+
+    // Scroll indicator (shows when there are more entries above)
+    this.logScrollIndicator = this.add.text(logWidth / 2, logHeight - 10, '▲ Scroll for more', {
+      fontSize: '9px',
+      color: '#888888',
+      fontFamily: 'Arial, sans-serif',
+      align: 'center',
+    });
+    this.logScrollIndicator.setOrigin(0.5);
+    this.logScrollIndicator.setVisible(false);
+    this.combatLogContainer.add(this.logScrollIndicator);
+
+    // Enable mouse wheel scrolling on the log background
+    logBg.setInteractive();
+    logBg.on('wheel', (pointer: any, deltaX: number, deltaY: number) => {
+      this.handleLogScroll(deltaY);
+    });
 
     // Expand/collapse button
     this.createLogExpandButton();
@@ -979,9 +1017,9 @@ export class BattleScene extends Phaser.Scene {
     const statsX = 20; // Small margin from left edge (moved 10px right total)
     const statsY = this.scale.height - statsHeight - 10; // Small margin from bottom edge
     
-    // Create stats background as direct scene child to avoid coordinate issues
-    const bottomLeftBg = this.add.image(statsX + statsWidth / 2, statsY + statsHeight / 2, 'charplate');
-    bottomLeftBg.setDisplaySize(280, 180); // Increased height by another 10px (5px top + 5px bottom)
+    // Create stats background as direct scene child to avoid coordinate issues - using lobby plate
+    const bottomLeftBg = this.add.image(statsX + statsWidth / 2, statsY + statsHeight / 2, 'lobbyplate');
+    bottomLeftBg.setDisplaySize(280, 105); // Scale to fit (1200x450 -> maintain aspect ratio)
     bottomLeftBg.setDepth(1000);
     // Don't add to hudContainer to avoid coordinate issues
 
@@ -4673,6 +4711,19 @@ export class BattleScene extends Phaser.Scene {
     
     // Show result banner
     if (result === 'victory') {
+      // Fade out battle music and play victory sound
+      if (this.soundManager) {
+        console.log('Victory - fading out battle music and playing victory sound');
+        this.soundManager.fadeOutMusic(500); // Fade out over 500ms
+        
+        // Play victory sound after a short delay
+        this.time.delayedCall(300, () => {
+          if (this.soundManager) {
+            this.soundManager.playSfx('sfx_victory', { volume: 0.4 });
+          }
+        });
+      }
+      
       // Display victory image (1024x1024, scaled to 250x250, positioned higher)
       const victoryImage = this.add.image(
         this.scale.width / 2,
@@ -4719,11 +4770,7 @@ export class BattleScene extends Phaser.Scene {
     // Return to map or lobby after delay
     this.time.delayedCall(3000, () => {
       if (result === 'victory') {
-        // Stop battle music before transitioning
-        if (this.soundManager) {
-          console.log('Victory - stopping battle music before transitioning to loot');
-          this.soundManager.stopAll();
-        }
+        // Note: Victory sound continues playing through loot scene and fades out in map scene
         
         // Save ultimate power state for next battle (carries over between stages)
         if (this.ultimatePowerManager) {
@@ -5619,30 +5666,29 @@ export class BattleScene extends Phaser.Scene {
     if (!this.combatLogContainer) return;
 
     const buttonSize = 20;
-    const logX = this.scale.width - 220 - 10; // Same as combat log container
-    const logY = this.scale.height - 80 - 10;
-    const buttonX = logX + 200; // Right side of log
-    const buttonY = logY + 10; // Top of log
+    const logWidth = 220;
+    
+    // Position button at top-right of log (relative to log container)
+    const buttonX = logWidth - 10; // 10px from right edge
+    const buttonY = 10; // 10px from top
 
-    this.logExpandButton = this.add.container(0, 0); // Create at origin
+    this.logExpandButton = this.add.container(buttonX, buttonY);
     this.logExpandButton.setDepth(1000);
 
-    // Button background with absolute positioning
-    const bg = this.add.rectangle(buttonX, buttonY, buttonSize, buttonSize, 0x4a90e2, 0.8);
+    // Button background with relative positioning (0, 0 within container)
+    const bg = this.add.rectangle(0, 0, buttonSize, buttonSize, 0x4a90e2, 0.8);
     bg.setStrokeStyle(1, 0xffffff, 0.5);
     bg.setInteractive({ useHandCursor: true });
     bg.setName('bg');
-    bg.setDepth(1000);
 
-    // Arrow icon (down/up) with absolute positioning
-    const arrow = this.add.text(buttonX, buttonY, '▼', {
+    // Arrow icon (down/up) with relative positioning
+    const arrow = this.add.text(0, 0, '▼', {
       fontSize: '12px',
       color: '#ffffff',
       fontFamily: 'Arial, sans-serif',
     });
     arrow.setOrigin(0.5);
     arrow.setName('arrow');
-    arrow.setDepth(1000);
 
     // Hover effect
     bg.on('pointerover', () => {
@@ -5657,6 +5703,10 @@ export class BattleScene extends Phaser.Scene {
       this.toggleLogExpand();
     });
 
+    // Add elements to the button container
+    this.logExpandButton.add([bg, arrow]);
+    
+    // Add button container to log container
     this.combatLogContainer.add(this.logExpandButton);
   }
 
@@ -5680,8 +5730,13 @@ export class BattleScene extends Phaser.Scene {
     // Update container position
     this.combatLogContainer.setPosition(logX, logY);
 
-    // Update arrow icon
+    // Update button position to stay at top-right corner
     if (this.logExpandButton) {
+      const buttonX = logWidth - 10; // 10px from right edge
+      const buttonY = 10; // 10px from top
+      this.logExpandButton.setPosition(buttonX, buttonY);
+      
+      // Update arrow icon
       const arrow = this.logExpandButton.getByName('arrow') as Phaser.GameObjects.Text;
       if (arrow) {
         arrow.setText(this.isLogExpanded ? '▲' : '▼');
@@ -5702,11 +5757,9 @@ export class BattleScene extends Phaser.Scene {
     }
 
     const startY = 28;
-    const lineHeight = this.isLogExpanded ? 20 : 14; // More spacing when expanded
-    const maxEntries = this.isLogExpanded ? this.MAX_LOG_ENTRIES_EXPANDED : this.MAX_LOG_ENTRIES;
-
-    // Show only the last N entries based on expanded state
-    const entriesToShow = this.combatLogEntries.slice(-maxEntries);
+    const entrySpacing = this.isLogExpanded ? 4 : 3; // Spacing between entries
+    const logHeight = this.isLogExpanded ? 300 : 80;
+    const visibleHeight = logHeight - 40; // Height available for entries (minus title and scroll indicator)
 
     // Remove all entries from container
     this.combatLogEntries.forEach(entry => {
@@ -5716,24 +5769,61 @@ export class BattleScene extends Phaser.Scene {
       }
     });
 
-    // Re-add and position visible entries with absolute positioning
-    const logX = this.scale.width - 220 - 10; // Same as combat log container
-    const logY = this.scale.height - 80 - 10;
-    entriesToShow.forEach((entry, index) => {
+    // Calculate total height of all entries
+    let totalContentHeight = 0;
+    this.combatLogEntries.forEach(entry => {
+      totalContentHeight += entry.height + entrySpacing;
+    });
+
+    // Calculate max scroll offset
+    this.maxLogScrollOffset = Math.max(0, totalContentHeight - visibleHeight);
+    
+    // Clamp scroll offset
+    this.logScrollOffset = Math.max(0, Math.min(this.logScrollOffset, this.maxLogScrollOffset));
+
+    // Position entries with scroll offset applied
+    let currentY = startY - this.logScrollOffset;
+    const entriesToShow: Phaser.GameObjects.Text[] = [];
+    
+    this.combatLogEntries.forEach((entry, index) => {
       // Safety check: ensure entry is valid and from this scene
       if (!entry || entry.scene !== this) {
         console.warn('Skipping invalid log entry from old scene');
         return;
       }
       
-      const targetY = logY + 30 + (index * lineHeight);
-      entry.setPosition(logX + 10, targetY);
-      entry.setDepth(1000);
-
-      // Fade out older entries
-      const alpha = 1 - (entriesToShow.length - 1 - index) * 0.15;
-      entry.setAlpha(Math.max(0.4, alpha));
+      const entryHeight = entry.height;
+      
+      // Only add entries that are visible in the viewport
+      if (currentY + entryHeight >= startY - 10 && currentY <= startY + visibleHeight + 10) {
+        entry.setPosition(10, currentY);
+        this.combatLogContainer!.add(entry);
+        entriesToShow.push(entry);
+        
+        // Fade based on position (newer = more opaque)
+        const alpha = 0.4 + (index / this.combatLogEntries.length) * 0.6;
+        entry.setAlpha(Math.max(0.4, Math.min(1, alpha)));
+      }
+      
+      currentY += entryHeight + entrySpacing;
     });
+
+    // Update scroll indicator visibility
+    if (this.logScrollIndicator) {
+      this.logScrollIndicator.setVisible(this.maxLogScrollOffset > 0);
+    }
+  }
+
+  private handleLogScroll(deltaY: number): void {
+    // Scroll up = negative deltaY, scroll down = positive deltaY
+    const scrollSpeed = 20;
+    this.logScrollOffset += deltaY * scrollSpeed * 0.01;
+    
+    // Clamp scroll offset
+    this.logScrollOffset = Math.max(0, Math.min(this.logScrollOffset, this.maxLogScrollOffset));
+    
+    // Refresh display with new scroll position
+    this.refreshLogEntries();
   }
 
   private addCombatLogEntry(message: string, color: string = '#ffffff'): void {
@@ -5748,29 +5838,22 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    // Create new log entry with absolute positioning and word wrap
-    const logX = this.scale.width - 220 - 10; // Same as combat log container
-    const logY = this.scale.height - 80 - 10;
-    const entry = this.add.text(logX + 10, logY + 30, `• ${message}`, {
-      fontSize: '10px',
+    // Create new log entry with relative positioning and word wrap
+    const entry = this.add.text(10, 30, `• ${message}`, {
+      fontSize: '11px',
       color,
       fontFamily: 'Arial, sans-serif',
       wordWrap: { width: 195 }, // Fit within 220px box with margins
       align: 'left',
+      lineSpacing: 2, // Add extra line spacing for multi-line entries
     });
     entry.setOrigin(0, 0);
-    entry.setDepth(1000);
 
-    // Add to entries array
+    // Add to entries array (no limit - keep all entries for scrolling)
     this.combatLogEntries.push(entry);
 
-    // Remove oldest entry if we exceed max for expanded view
-    if (this.combatLogEntries.length > this.MAX_LOG_ENTRIES_EXPANDED) {
-      const oldest = this.combatLogEntries.shift();
-      if (oldest) {
-        oldest.destroy();
-      }
-    }
+    // Auto-scroll to bottom to show newest entry
+    this.logScrollOffset = 999999; // Will be clamped in refreshLogEntries
 
     // Refresh display with new entry
     this.refreshLogEntries();
@@ -5785,6 +5868,29 @@ export class BattleScene extends Phaser.Scene {
       yoyo: true,
       ease: 'Back.easeOut',
     });
+  }
+
+  private clearCombatLog(): void {
+    // Destroy all log entries
+    this.combatLogEntries.forEach(entry => {
+      if (entry && entry.scene === this) {
+        entry.destroy();
+      }
+    });
+    
+    // Clear the array
+    this.combatLogEntries = [];
+    
+    // Reset scroll offset
+    this.logScrollOffset = 0;
+    this.maxLogScrollOffset = 0;
+    
+    // Refresh display
+    if (this.combatLogContainer) {
+      this.refreshLogEntries();
+    }
+    
+    console.log('Combat log cleared for new stage');
   }
 
   private getActorName(actorId: ActorId): string {

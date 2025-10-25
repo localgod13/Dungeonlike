@@ -174,6 +174,44 @@ export class Preload extends Phaser.Scene {
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/button2.png'
     );
     
+    // Load lobby button images
+    this.load.image(
+      'createlobby_btn',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/createlobby.png'
+    );
+    this.load.image(
+      'joinlobby_btn',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/join.png'
+    );
+    this.load.image(
+      'ready_btn',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/ready.png'
+    );
+    this.load.image(
+      'leave_btn',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/leave.png'
+    );
+    this.load.image(
+      'chooseclass_btn',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/chooseclass.png'
+    );
+    this.load.image(
+      'waiting_btn',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/waiting.png'
+    );
+    this.load.image(
+      'lobbyplate',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/lobbyplates.png'
+    );
+    this.load.image(
+      'startadventure_btn',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/startadventure.png'
+    );
+    this.load.image(
+      'copycode_btn',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/copycode.png'
+    );
+    
     // Load card back image for draw/discard piles
     this.load.image(
       'cardback',

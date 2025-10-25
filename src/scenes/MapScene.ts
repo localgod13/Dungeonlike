@@ -17,6 +17,7 @@ export class MapScene extends Phaser.Scene {
   private playerMarker: Phaser.GameObjects.Container | null = null; // Visual marker for current position
   private traveledConnections = new Set<string>(); // Track which connections have been traveled
   private connectionGraphics: Phaser.GameObjects.Graphics | null = null; // Store connection graphics for updates
+  private hasTransitioned = false; // Prevent duplicate scene transitions
   
   // Scene data
   private lobbyId: string | null = null;
@@ -28,6 +29,7 @@ export class MapScene extends Phaser.Scene {
   // Voting system
   private mapVotes = new Map<string, string>(); // userId -> nodeId (includes own vote!)
   private votingUI: Phaser.GameObjects.Container | null = null;
+  private voteIndicators = new Map<string, Phaser.GameObjects.Container[]>(); // nodeId -> indicator containers
   private unsubscribe: (() => void) | null = null;
   
   // Cursor tracking
@@ -56,6 +58,7 @@ export class MapScene extends Phaser.Scene {
     this.players = data.players || [];
     this.currentNodeId = data.currentNodeId || null;
     this.currentStage = data.stage || 1; // Receive stage number from previous battle
+    this.hasTransitioned = false; // Reset transition flag for new scene instance
     
     console.log('=== MAP SCENE INITIALIZED ===');
     console.log('LobbyId:', this.lobbyId);
@@ -157,6 +160,19 @@ export class MapScene extends Phaser.Scene {
       if (sound.key.startsWith('music_')) {
         console.log(`Stopping previous scene music: ${sound.key}`);
         sound.stop();
+      }
+      // Fade out victory sound if playing
+      if (sound.key === 'sfx_victory') {
+        console.log('Fading out victory sound');
+        this.tweens.add({
+          targets: sound,
+          volume: 0,
+          duration: 1000,
+          ease: 'Linear',
+          onComplete: () => {
+            sound.stop();
+          }
+        });
       }
     });
     
@@ -353,6 +369,9 @@ export class MapScene extends Phaser.Scene {
     console.log(`Current vote map:`, Array.from(this.mapVotes.entries()));
     this.updateVotingUI();
     
+    // Show visual indicator above the voted node
+    this.showVoteIndicator(userId, nodeId);
+    
     // If host, check if all players voted
     if (this.isHost) {
       console.log('Host checking if all votes are in...');
@@ -362,6 +381,9 @@ export class MapScene extends Phaser.Scene {
 
   private handleVoteResult(selectedNodeId: string, votes: { [nodeId: string]: string[] }): void {
     console.log('Received vote result:', selectedNodeId, votes);
+    
+    // Clear all vote indicators
+    this.clearVoteIndicators();
     
     // Transition to the selected node
     const node = this.gameMap.nodes.get(selectedNodeId);
@@ -436,6 +458,9 @@ export class MapScene extends Phaser.Scene {
         console.error('Failed to send vote result:', err);
       });
     }
+    
+    // Clear vote indicators before transition
+    this.clearVoteIndicators();
     
     // Host also transitions to the selected node
     const node = this.gameMap.nodes.get(selectedNodeId);
@@ -929,10 +954,13 @@ export class MapScene extends Phaser.Scene {
 
     console.log(`Selected node: ${node.id} (${node.type})`);
     
-    if (this.players.length > 1) {
+    // ALWAYS use voting in multiplayer (check both players AND lobbyId)
+    if (this.players.length > 1 && this.lobbyId) {
+      console.log('🗳️ Multiplayer detected - using voting system');
       // Multiplayer: Vote for this node
       this.voteForNode(node.id);
     } else {
+      console.log('👤 Single player detected - direct transition');
       // Single player: Direct transition
       this.transitionDirectly(node);
     }
@@ -948,10 +976,9 @@ export class MapScene extends Phaser.Scene {
     }
     this.updateVotingUI();
     
-    // Visual feedback
-    const visual = this.nodeVisuals.get(nodeId);
-    if (visual) {
-      visual.showVoted();
+    // Show visual indicator for my vote immediately
+    if (this.userId) {
+      this.showVoteIndicator(this.userId, nodeId);
     }
     
     // Send vote to network (will echo back and be processed by handleRemoteVote)
@@ -1066,6 +1093,14 @@ export class MapScene extends Phaser.Scene {
   }
 
   private transitionToNode(node: MapNode): void {
+    // Prevent duplicate transitions
+    if (this.hasTransitioned) {
+      console.log('[MapScene] Already transitioning, skipping...');
+      return;
+    }
+    this.hasTransitioned = true;
+    console.log(`[MapScene] Starting transition to ${node.type} node...`);
+    
     // Mark connection as traveled
     if (this.currentNodeId) {
       const connectionKey = this.getConnectionKey(this.currentNodeId, node.id);
@@ -1195,9 +1230,112 @@ export class MapScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Show a vote indicator above a node
+   */
+  private showVoteIndicator(userId: string, nodeId: string): void {
+    // Find the player who voted
+    const player = this.players.find(p => p.userId === userId);
+    const playerName = player ? player.name : 'Unknown';
+    const isMyVote = userId === this.userId;
+    
+    // Get node visual
+    const visual = this.nodeVisuals.get(nodeId);
+    if (!visual) return;
+    
+    // Get node position
+    const node = this.gameMap.nodes.get(nodeId);
+    if (!node) return;
+    const nodePos = this.getNodePosition(node);
+    
+    // Create or get indicators array for this node
+    if (!this.voteIndicators.has(nodeId)) {
+      this.voteIndicators.set(nodeId, []);
+    }
+    const indicators = this.voteIndicators.get(nodeId)!;
+    
+    // Check if this user already voted for this node
+    const existingIndex = indicators.findIndex(ind => 
+      (ind.getData('userId') as string) === userId
+    );
+    if (existingIndex !== -1) {
+      console.log(`Vote indicator already exists for ${playerName} on node ${nodeId}`);
+      return;
+    }
+    
+    // Create vote indicator
+    const yOffset = -50 - (indicators.length * 25); // Stack indicators above node
+    const indicator = this.add.container(nodePos.x, nodePos.y + yOffset);
+    indicator.setDepth(100);
+    indicator.setData('userId', userId);
+    
+    // Background for indicator
+    const bg = this.add.rectangle(0, 0, 80, 20, 0x1a0f2e, 0.9);
+    bg.setStrokeStyle(2, isMyVote ? 0x44ff88 : 0xd4af37, 1);
+    indicator.add(bg);
+    
+    // Player name text
+    const nameText = this.add.text(0, 0, playerName.substring(0, 8), {
+      fontSize: '12px',
+      color: isMyVote ? '#44ff88' : '#d4af37',
+      fontFamily: 'Arial Black',
+    });
+    nameText.setOrigin(0.5);
+    indicator.add(nameText);
+    
+    // Add checkmark
+    const checkmark = this.add.text(-35, 0, '✓', {
+      fontSize: '14px',
+      color: isMyVote ? '#44ff88' : '#ffffff',
+      fontFamily: 'Arial',
+    });
+    checkmark.setOrigin(0.5);
+    indicator.add(checkmark);
+    
+    // Fade in animation
+    indicator.setAlpha(0);
+    this.tweens.add({
+      targets: indicator,
+      alpha: 1,
+      duration: 300,
+      ease: 'Power2',
+    });
+    
+    // Store indicator
+    indicators.push(indicator);
+    
+    console.log(`✓ Vote indicator shown: ${playerName} voted for ${this.getNodeTypeName(nodeId)} (${indicators.length} votes on this node)`);
+  }
+  
+  /**
+   * Clear all vote indicators
+   */
+  private clearVoteIndicators(): void {
+    console.log('Clearing all vote indicators...');
+    for (const indicators of this.voteIndicators.values()) {
+      for (const indicator of indicators) {
+        if (indicator && indicator.scene === this) {
+          indicator.destroy();
+        }
+      }
+    }
+    this.voteIndicators.clear();
+    
+    // Also clear the votes map for the next voting round
+    this.mapVotes.clear();
+    
+    // Update UI to reflect cleared votes
+    if (this.votingUI) {
+      this.votingUI.destroy();
+      this.votingUI = null;
+    }
+  }
 
   shutdown(): void {
     console.log('[MapScene] Shutting down and cleaning up...');
+    
+    // Clear vote indicators
+    this.clearVoteIndicators();
     
     // Destroy all node visuals to prevent stacking
     for (const visual of this.nodeVisuals.values()) {

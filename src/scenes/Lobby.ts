@@ -202,26 +202,26 @@ export class Lobby extends Phaser.Scene {
     title.setOrigin(0.5);
     this.container.add(title);
 
-    // Create lobby button
-    this.createButton = this.createButtonObj(
+    // Create lobby button - using custom image (original: 950x500)
+    this.createButton = this.createImageButton(
       centerX,
       centerY - 50,
+      'createlobby_btn',
       250,
-      60,
-      'Create Lobby',
+      132, // Maintains aspect ratio of 950:500
       async () => {
         await this.handleCreateLobby();
       }
-      );
-      this.container.add(this.createButton);
+    );
+    this.container.add(this.createButton);
 
-      // Join lobby button
-      this.joinButton = this.createButtonObj(
-        centerX,
-        centerY + 30,
-        250,
-        60,
-      'Join Lobby',
+    // Join lobby button - using custom image (original: 975x575)
+    this.joinButton = this.createImageButton(
+      centerX,
+      centerY + 100,
+      'joinlobby_btn',
+      250,
+      148, // Maintains aspect ratio of 975:575
       async () => {
         await this.handleJoinLobby();
       }
@@ -511,24 +511,21 @@ export class Lobby extends Phaser.Scene {
     codeText.setOrigin(0.5);
     this.lobbyContainer.add(codeText);
 
-    // Copy code button
-    const copyBtn = this.createButtonObj(centerX + 150, 110, 100, 35, 'Copy', () => {
-      if (this.lobbyCode) {
-        navigator.clipboard.writeText(this.lobbyCode);
-        console.log('Copied code to clipboard');
+    // Copy code button - custom image (1200x575)
+    const copyBtn = this.createImageButton(
+      centerX + 180,
+      110,
+      'copycode_btn',
+      100,
+      48, // Scaled to maintain aspect ratio (1200:575)
+      () => {
+        if (this.lobbyCode) {
+          navigator.clipboard.writeText(this.lobbyCode);
+          console.log('Copied code to clipboard');
+        }
       }
-    });
+    );
     this.lobbyContainer.add(copyBtn);
-
-    // Class selection title (left side)
-    const classTitle = this.add.text(150, 160, 'Select Your Class:', {
-      fontSize: '20px',
-      color: '#ffffff',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-    });
-    classTitle.setOrigin(0.5);
-    this.lobbyContainer.add(classTitle);
 
     // Class selection buttons (vertical layout on left side)
     const classes = ['Warrior', 'Huntress', 'Mage'];
@@ -601,13 +598,13 @@ export class Lobby extends Phaser.Scene {
     const isHost = currentMember?.is_host || false;
     this.isReady = currentMember?.ready || false;
 
-    // Ready button
-    const readyBtn = this.createButtonObj(
+    // Ready button - using custom image (original: 500x275)
+    const readyBtn = this.createImageButton(
       centerX - 120,
       startY + 480,
-      200,
-      50,
-      this.isReady ? '✓ Ready' : 'Ready',
+      'ready_btn',
+      180,
+      99, // Maintains aspect ratio of 500:275
       async () => {
         if (!this.lobbyId) return;
         const newReady = !this.isReady;
@@ -619,16 +616,25 @@ export class Lobby extends Phaser.Scene {
         }
       }
     );
+    // Add gold border when ready
     if (this.isReady) {
-      const bg = readyBtn.getAt(0) as Phaser.GameObjects.Rectangle;
-      bg.setFillStyle(0x27ae60, 1);
+      const goldBorder = this.add.rectangle(0, 0, 180, 99, 0x000000, 0);
+      goldBorder.setStrokeStyle(4, 0xFFD700, 1); // Gold border (4px thick)
+      readyBtn.addAt(goldBorder, 0); // Add behind the image
     }
     this.lobbyContainer.add(readyBtn);
 
-    // Leave button
-    const leaveBtn = this.createButtonObj(centerX + 120, startY + 480, 200, 50, 'Leave', async () => {
-      await this.handleLeaveLobby();
-    });
+    // Leave button - using custom image (original: 500x275)
+    const leaveBtn = this.createImageButton(
+      centerX + 120,
+      startY + 480,
+      'leave_btn',
+      180,
+      99, // Maintains aspect ratio of 500:275
+      async () => {
+        await this.handleLeaveLobby();
+      }
+    );
     this.lobbyContainer.add(leaveBtn);
 
     // Start button (host only)
@@ -638,28 +644,60 @@ export class Lobby extends Phaser.Scene {
       const allHaveClass = this.members.every((m) => m.selected_class !== null);
       const canStart = allReady && enough && allHaveClass;
 
-      const startBtn = this.createButtonObj(
-        centerX,
-        startY + 550,
-        250,
-        60,
-        canStart ? 'Start Run' : !allHaveClass ? 'All must pick class' : `Need ${enough ? 'all ready' : '1+ players'}`,
-        async () => {
-          if (!canStart || !this.lobbyId) return;
-          try {
-            const seed = await startGame(this.lobbyId);
-            console.log(`Starting with seed: ${seed}`);
-            this.startRun(seed);
-          } catch (error) {
-            console.error('Failed to start game:', error);
-          }
-        }
-      );
+      let startBtn: Phaser.GameObjects.Container;
 
-      if (!canStart) {
-        const bg = startBtn.getAt(0) as Phaser.GameObjects.Rectangle;
-        bg.setFillStyle(0x555555, 1);
-        bg.disableInteractive();
+      // If classes aren't picked, show "Choose Class" button
+      if (!allHaveClass) {
+        startBtn = this.createImageButton(
+          168,  // Permanent x position
+          126,  // Permanent y position
+          'chooseclass_btn',
+          280,
+          105, // Scaled to maintain reasonable size
+          async () => {
+            // Button is disabled, so this won't do anything
+          }
+        );
+        // Make it look disabled (non-interactive since classes aren't picked)
+        const btnImage = startBtn.getAt(0) as Phaser.GameObjects.Image;
+        btnImage.setTint(0x888888);
+        btnImage.disableInteractive();
+      } else if (!canStart) {
+        // Classes picked but not all ready - show "Waiting" button at same position
+        startBtn = this.createImageButton(
+          168,  // Same position as Choose Class button
+          126,  // Same position as Choose Class button
+          'waiting_btn',
+          280,  // Same width as Choose Class button
+          105,  // Same height as Choose Class button
+          async () => {
+            // Button is disabled while waiting
+          }
+        );
+        // Make it look disabled (non-interactive while waiting)
+        const btnImage = startBtn.getAt(0) as Phaser.GameObjects.Image;
+        btnImage.setTint(0x888888);
+        btnImage.disableInteractive();
+      } else {
+        // All ready - show "Start Adventure" button at same position
+        startBtn = this.createImageButton(
+          168,  // Same position as other buttons
+          126,  // Same position as other buttons
+          'startadventure_btn', // Start Adventure image (1300x575)
+          280,  // Same width as Choose Class button
+          105,  // Same height as Choose Class button - maintains consistency
+          async () => {
+            if (!this.lobbyId) return;
+            try {
+              const seed = await startGame(this.lobbyId);
+              console.log(`Starting with seed: ${seed}`);
+              this.startRun(seed);
+            } catch (error) {
+              console.error('Failed to start game:', error);
+            }
+          }
+        );
+        // No tint - show full color to indicate it's clickable
       }
 
       this.lobbyContainer.add(startBtn);
@@ -674,9 +712,22 @@ export class Lobby extends Phaser.Scene {
   ): Phaser.GameObjects.Container {
     const container = this.add.container(x, y);
 
-    // Slot background
-    const bg = this.add.rectangle(0, 0, 500, 80, member ? COLORS.UI_BG : 0x1a1a1a, 0.8);
-    bg.setStrokeStyle(2, member ? COLORS.UI_ACCENT : 0x444444, 0.5);
+    // Slot background - custom image
+    const slotWidth = 600;  // Increased width
+    const slotHeight = 100;  // Increased height
+    const bg = this.add.image(0, 0, 'lobbyplate');
+    
+    // Scale image to fit slot dimensions (1200x450 -> 600x100)
+    const scaleX = slotWidth / bg.width;
+    const scaleY = slotHeight / bg.height;
+    bg.setScale(scaleX, scaleY);
+    
+    // Dim/tint if empty slot
+    if (!member) {
+      bg.setTint(0x666666);
+      bg.setAlpha(0.5);
+    }
+    
     container.add(bg);
 
     if (member) {
@@ -749,6 +800,41 @@ export class Lobby extends Phaser.Scene {
       container.add(emptyText);
     }
 
+    return container;
+  }
+
+  private createImageButton(
+    x: number,
+    y: number,
+    imageKey: string,
+    targetWidth: number,
+    targetHeight: number,
+    callback: () => void
+  ): Phaser.GameObjects.Container {
+    const container = this.add.container(x, y);
+
+    const buttonImage = this.add.image(0, 0, imageKey);
+    
+    // Scale to target dimensions
+    const scaleX = targetWidth / buttonImage.width;
+    const scaleY = targetHeight / buttonImage.height;
+    buttonImage.setScale(scaleX, scaleY);
+    
+    buttonImage.setInteractive({ useHandCursor: true });
+
+    buttonImage.on('pointerover', () => {
+      buttonImage.setScale(scaleX * 1.05, scaleY * 1.05); // Slight scale up on hover
+      buttonImage.setTint(0xcccccc); // Slight gray tint on hover
+    });
+
+    buttonImage.on('pointerout', () => {
+      buttonImage.setScale(scaleX, scaleY);
+      buttonImage.clearTint();
+    });
+
+    buttonImage.on('pointerdown', callback);
+
+    container.add(buttonImage);
     return container;
   }
 
@@ -895,17 +981,6 @@ export class Lobby extends Phaser.Scene {
       container.add([bg, icon, hoverText]);
     }
     return container;
-  }
-
-  private createButton(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    text: string,
-    callback: () => void
-  ): Phaser.GameObjects.Container {
-    return this.createButtonObj(x, y, width, height, text, callback);
   }
 
   private createBackButton(): void {
