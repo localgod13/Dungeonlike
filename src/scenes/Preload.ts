@@ -3,11 +3,13 @@ import { COLORS } from '../game/config';
 import { preloadSounds } from '../game/sound';
 import { preloadCharacterSprites } from '../game/characterSprites';
 import { preloadEnemySprites } from '../game/enemySprites';
+import { setupCustomCursor } from '../utils/cursor';
 
 /**
  * Preload scene - asset loading with progress bar
  */
 export class Preload extends Phaser.Scene {
+
   constructor() {
     super('Preload');
   }
@@ -15,6 +17,7 @@ export class Preload extends Phaser.Scene {
   preload(): void {
     const width = this.scale.width;
     const height = this.scale.height;
+
 
     // Create loading bar
     const progressBar = this.add.rectangle(
@@ -75,6 +78,14 @@ export class Preload extends Phaser.Scene {
     this.load.image(
       'lobbybg',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/lobby.png'
+    );
+    this.load.image(
+      'lobby_sign',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/lobby%20sign.png'
+    );
+    this.load.image(
+      'rpg_cursor',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/rpgcursor.png'
     );
     
     // Class selection icon images
@@ -234,13 +245,29 @@ export class Preload extends Phaser.Scene {
     console.log('[Preload] Loading enemy sprites...');
     preloadEnemySprites(this);
     console.log('[Preload] Enemy sprites queued for loading');
+
+    // Note: Intro video is loaded dynamically in IntroScene using HTML5 video element
+    // This is intentional to allow the video to preload while the intro is showing
   }
 
   create(): void {
     console.log('Preload scene complete');
+    
+    // Set up custom cursor
+    setupCustomCursor(this);
 
-    // Move to main menu
-    this.scene.start('MainMenu');
+    // Check if player has seen intro before
+    const hasSeenIntro = localStorage.getItem('hasSeenIntro') === 'true';
+    
+    if (!hasSeenIntro) {
+      // First time player - show intro video
+      console.log('First time player - showing intro video');
+      this.scene.start('IntroScene');
+    } else {
+      // Returning player - skip to main menu
+      console.log('Returning player - skipping intro video');
+      this.scene.start('MainMenu');
+    }
   }
 }
 

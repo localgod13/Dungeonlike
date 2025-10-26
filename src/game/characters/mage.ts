@@ -46,6 +46,18 @@ export const MAGE_SPRITES: Record<string, SpriteSheetConfig> = {
     frameWidth: 64,  // 320 / 5 columns
     frameHeight: 32, // 1 row
   },
+  inferno_flame: {
+    key: 'mage_inferno_flame',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/wizard2/flame.png',
+    frameWidth: 32,  // 256 / 8 columns
+    frameHeight: 48, // 1 row
+  },
+  fire_shield: {
+    key: 'mage_fire_shield',
+    url: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sprites/wizard2/shield%20of%20fire.png',
+    frameWidth: 64,  // 576 / 9 columns
+    frameHeight: 64, // 1 row
+  },
 };
 
 // Mage animations
@@ -77,6 +89,20 @@ export const MAGE_ANIMATIONS: Record<string, AnimationConfig> = {
     frameCount: 5,
     frameRate: 12,
     repeat: -1, // Loop for projectile
+  },
+  inferno_flame: {
+    key: 'mage_inferno_flame_anim',
+    spriteKey: 'mage_inferno_flame',
+    frameCount: 8,
+    frameRate: 12,
+    repeat: -1, // Loop
+  },
+  fire_shield: {
+    key: 'mage_fire_shield_anim',
+    spriteKey: 'mage_fire_shield',
+    frameCount: 9,
+    frameRate: 12,
+    repeat: -1, // Loop
   },
 };
 

@@ -5,6 +5,7 @@ import { subscribeMap, sendMapVote, sendMapVoteResult, sendMapCursor } from '../
 import { CursorPosition } from '../net/proto';
 import { getGold, initializeInventory } from '../game/inventory';
 import { createEnemyAnimations } from '../game/enemySprites';
+import { setupCustomCursor } from '../utils/cursor';
 
 /**
  * Map scene - Slay the Spire style node-based progression
@@ -113,6 +114,9 @@ export class MapScene extends Phaser.Scene {
   }
 
   async create(): Promise<void> {
+    // Set up custom cursor
+    setupCustomCursor(this);
+    
     const width = this.scale.width;
     const height = this.scale.height;
 

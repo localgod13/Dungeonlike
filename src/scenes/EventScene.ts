@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { COLORS } from '../game/config';
 import { SoundManager } from '../game/sound';
 import { subscribeMap, sendMapVote, sendMapVoteResult } from '../net/match';
+import { setupCustomCursor } from '../utils/cursor';
 
 /**
  * Event scene - Template for random events with choices
@@ -57,6 +58,8 @@ export class EventScene extends Phaser.Scene {
   }
 
   async create(): Promise<void> {
+    // Set up custom cursor
+    setupCustomCursor(this);
     const width = this.scale.width;
     const height = this.scale.height;
     

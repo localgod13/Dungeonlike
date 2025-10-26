@@ -41,6 +41,7 @@ import { preloadEnemySprites, createEnemyAnimations, createEnemySprite, hasEnemy
 import { createUltimatePowerManager, destroyUltimatePowerManager, UltimatePowerManager, hasPersistedPower } from '../game/ultimate';
 import { UltimatePowerBar, getClassColor } from '../ui/ultimateUi';
 import { getRandomWarriorAttackAnim } from '../game/characters/warrior';
+import { setupCustomCursor } from '../utils/cursor';
 
 /**
  * Side-view battle scene with deterministic combat pipeline
@@ -55,12 +56,14 @@ interface BattleActor extends Actor {
 
 interface ShieldAura {
   container: Phaser.GameObjects.Container;
-  hexagon: Phaser.GameObjects.Graphics;
-  glow: Phaser.GameObjects.Graphics;
-  particles: Phaser.GameObjects.Graphics[];
+  hexagon?: Phaser.GameObjects.Graphics;
+  glow?: Phaser.GameObjects.Graphics;
+  particles?: Phaser.GameObjects.Graphics[];
+  shieldSprite?: Phaser.GameObjects.Sprite;
   shieldText: Phaser.GameObjects.Text;
   pulseAnim?: Phaser.Tweens.Tween;
   rotateAnim?: Phaser.Tweens.Tween;
+  fireAura?: Phaser.GameObjects.Graphics; // Fire-colored aura for Fire Shield
 }
 
 export class BattleScene extends Phaser.Scene {
@@ -82,7 +85,8 @@ export class BattleScene extends Phaser.Scene {
     stunned: new Set(),
     dots: new Map(),
     buffs: new Map(),
-    blinded: new Set()
+    blinded: new Set(),
+    fireShield: new Set(),
   };
   private currentTurn = 1;
   private currentStage = 1; // Track which battle this is (Stage 1, 2, 3, etc.)
@@ -580,8 +584,9 @@ export class BattleScene extends Phaser.Scene {
       console.error('Failed to subscribe to match:', error);
     });
 
-    // Set up mouse tracking
-    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+    // Set up custom cursor with multiplayer cursor sync
+    setupCustomCursor(this, (pointer: Phaser.Input.Pointer) => {
+      // Handle local cursor move for multiplayer
       this.handleLocalCursorMove(pointer.x, pointer.y);
     });
 
@@ -1211,7 +1216,7 @@ export class BattleScene extends Phaser.Scene {
     // Button background
     const bg = this.add.rectangle(0, 0, 60, 60, color, 1);
     bg.setStrokeStyle(2, 0xffffff, 0.8);
-    bg.setInteractive({ useHandCursor: true });
+    bg.setInteractive({ useHandCursor: false });
     container.add(bg);
 
     // Icon
@@ -2538,6 +2543,22 @@ export class BattleScene extends Phaser.Scene {
     console.log(`User ID: ${this.userId}`);
     console.log(`=== END RESOLVE TURN DEBUG ===`);
     
+    // IMPORTANT: Deserialize shield values FIRST before building timeline!
+    console.log('📦 Received payload.shields:', payload.shields);
+    if (payload.shields && payload.shields.length > 0) {
+      const shieldsMap = new Map();
+      for (const entry of payload.shields) {
+        console.log(`🛡️ Deserializing shields for actor ${entry.actorId}: ${entry.shieldValue}`);
+        shieldsMap.set(entry.actorId, entry.shieldValue);
+      }
+      this.combatState.shields = shieldsMap;
+      console.log('✅ Shield values loaded BEFORE timeline:', Array.from(shieldsMap.entries()));
+    } else {
+      // Clear shield effects if none exist
+      console.log('🧹 No shield effects in payload, clearing combatState.shields');
+      this.combatState.shields = new Map();
+    }
+    
     // Build animation timeline
     this.buildAnimationTimeline(payload);
     
@@ -2562,6 +2583,19 @@ export class BattleScene extends Phaser.Scene {
       // Clear DOT effects if none exist
       console.log('🧹 No DOT effects in payload, clearing combatState.dots');
       this.combatState.dots = new Map();
+    }
+    
+    // Shields were already deserialized before building the timeline (line 2544-2558)
+    
+    // IMPORTANT: Deserialize fireShield values BEFORE building timeline!
+    console.log('📦 Received payload.fireShield:', payload.fireShield);
+    if (payload.fireShield && payload.fireShield.length > 0) {
+      const fireShieldSet = new Set(payload.fireShield);
+      this.combatState.fireShield = fireShieldSet;
+      console.log('✅ Fire Shield actors loaded BEFORE timeline:', Array.from(fireShieldSet));
+    } else {
+      console.log('🧹 No fire shield actors in payload, clearing combatState.fireShield');
+      this.combatState.fireShield = new Set();
     }
     
     // Update status indicators after DOT persistence
@@ -2742,15 +2776,25 @@ export class BattleScene extends Phaser.Scene {
           this.addCombatLogEntry(`${srcName} weakens ${dstName}! (+2 dmg taken)`, '#9b59b6');
         }
         
+        // Handle fire shield retaliate
+        if (note === 'fire_shield_retaliate' && dstId) {
+          const srcName = this.getActorName(srcId);
+          const dstName = this.getActorName(dstId);
+          this.addCombatLogEntry(`🔥 ${srcName}'s Fire Shield retaliates against ${dstName}!`, '#ff6347');
+        }
+        
         // Play sound effects for special VFX
         if (note && this.soundManager) {
           console.log(`VFX note detected: "${note}"`);
           if (note === 'vulnerable') {
-            console.log('✓ Matched "vulnerable" - Playing Weaken sound...');
+            console.log('✓ Matched "vulnerable嫦 - Playing Weaken sound...');
             this.soundManager.playCardSound('Weaken');
           } else if (note === 'stun') {
             console.log('✓ Matched "stun" - Playing Bash sound...');
             this.soundManager.playCardSound('Bash');
+          } else if (note === 'fire_shield_retaliate') {
+            console.log('✓ Matched "fire_shield_retaliate" - Playing fire sound...');
+            this.soundManager.playMageFireSpell();
           } else {
             console.log(`No sound mapping for VFX note: "${note}"`);
           }
@@ -2843,6 +2887,301 @@ export class BattleScene extends Phaser.Scene {
           onComplete: () => arrow.destroy(),
         });
       },
+    });
+  }
+
+  /**
+   * Fire a fireball projectile from Mage to target
+   */
+  private fireFireballProjectile(srcSlot: Phaser.GameObjects.Container, dstSlot: Phaser.GameObjects.Container): void {
+    // Create fireball sprite with animated frames
+    const fireball = this.add.sprite(srcSlot.x, srcSlot.y, 'mage_meteor');
+    fireball.setScale(2); // Scale up the fireball
+    fireball.setDepth(50); // Above characters but below UI
+    
+    // Play fireball animation (looping)
+    if (this.anims.exists('mage_meteor_anim')) {
+      fireball.play('mage_meteor_anim');
+    }
+    
+    // Calculate angle to target
+    const angle = Phaser.Math.Angle.Between(srcSlot.x, srcSlot.y, dstSlot.x, dstSlot.y);
+    fireball.setRotation(angle);
+    
+    console.log(`🔥 Firing fireball from (${srcSlot.x}, ${srcSlot.y}) to (${dstSlot.x}, ${dstSlot.y})`);
+    
+    // Tween fireball to target
+    this.tweens.add({
+      targets: fireball,
+      x: dstSlot.x,
+      y: dstSlot.y,
+      duration: 300, // Slightly slower than arrow for visibility
+      ease: 'Linear',
+      onComplete: () => {
+        // Explosion effect - scale up and fade out
+        this.tweens.add({
+          targets: fireball,
+          scaleX: 3,
+          scaleY: 3,
+          alpha: 0,
+          duration: 150,
+          onComplete: () => fireball.destroy(),
+        });
+      },
+    });
+  }
+
+  /**
+   * Fire a Flame Nova - large fireball that splits into smaller fireballs at mid-point
+   */
+  private fireFlameNova(srcSlot: Phaser.GameObjects.Container): void {
+    // Get all enemy slots for targets
+    const enemySlots = this.enemySlots;
+    if (enemySlots.length === 0) return;
+
+    // Create large fireball sprite with animated frames
+    const largeFireball = this.add.sprite(srcSlot.x, srcSlot.y, 'mage_meteor');
+    largeFireball.setScale(4); // Much larger than regular fireball
+    largeFireball.setDepth(50);
+    
+    // Play fireball animation (looping)
+    if (this.anims.exists('mage_meteor_anim')) {
+      largeFireball.play('mage_meteor_anim');
+    }
+    
+    // Calculate midpoint between mage and first enemy (arbitrary mid-point)
+    const targetEnemy = enemySlots[0];
+    const midX = (srcSlot.x + targetEnemy.x) / 2;
+    const midY = (srcSlot.y + targetEnemy.y) / 2;
+    
+    console.log(`🔥 Flame Nova: Firing large fireball from (${srcSlot.x}, ${srcSlot.y}) to midpoint (${midX}, ${midY})`);
+    
+    // Move large fireball to mid-point
+    this.tweens.add({
+      targets: largeFireball,
+      x: midX,
+      y: midY,
+      duration: 400, // Slower than regular fireball
+      ease: 'Linear',
+      onComplete: () => {
+        // DRAMATIC EXPLOSION EFFECT - Multiple layers for epicness
+        
+        // Layer 1: Core flash explosion (bright orange/yellow)
+        const coreFlash = this.add.circle(midX, midY, 30, 0xffaa00, 1);
+        coreFlash.setDepth(52);
+        this.tweens.add({
+          targets: coreFlash,
+          scaleX: 6,
+          scaleY: 6,
+          alpha: 0,
+          duration: 300,
+          ease: 'Power2',
+          onComplete: () => coreFlash.destroy(),
+        });
+        
+        // Layer 2: Large explosion ring (white with orange border)
+        const explosionRing = this.add.circle(midX, midY, 40, 0xffffff, 0.9);
+        explosionRing.setStrokeStyle(4, 0xff6600, 1);
+        explosionRing.setDepth(51);
+        this.tweens.add({
+          targets: explosionRing,
+          scale: 8,
+          alpha: 0,
+          duration: 400,
+          ease: 'Power3',
+          onComplete: () => explosionRing.destroy(),
+        });
+        
+        // Layer 3: Secondary explosion rings (smaller, for layering effect)
+        const explosionRing2 = this.add.circle(midX, midY, 25, 0xffffee, 0.8);
+        explosionRing2.setStrokeStyle(3, 0xff8844, 0.9);
+        explosionRing2.setDepth(50);
+        this.tweens.add({
+          targets: explosionRing2,
+          scale: 5,
+          alpha: 0,
+          duration: 350,
+          ease: 'Power2',
+          onComplete: () => explosionRing2.destroy(),
+        });
+        
+        // Layer 4: Debris particles flying outward in all directions
+        const debrisCount = 12;
+        for (let i = 0; i < debrisCount; i++) {
+          const angle = (Math.PI * 2 * i) / debrisCount;
+          const debris = this.add.circle(midX, midY, 6, 0xff6600, 1);
+          debris.setDepth(53);
+          
+          const distance = Phaser.Math.Between(80, 150);
+          this.tweens.add({
+            targets: debris,
+            x: midX + Math.cos(angle) * distance,
+            y: midY + Math.sin(angle) * distance,
+            alpha: 0,
+            duration: 400,
+            ease: 'Power2',
+            onComplete: () => debris.destroy(),
+          });
+        }
+        
+        // Layer 5: Shockwave effect (semi-transparent expanding circle)
+        const shockwave = this.add.circle(midX, midY, 10, 0xffffff, 0.4);
+        shockwave.setStrokeStyle(6, 0xffff00, 0.6);
+        shockwave.setDepth(49);
+        this.tweens.add({
+          targets: shockwave,
+          scale: 12,
+          alpha: 0,
+          duration: 500,
+          ease: 'Power3',
+          onComplete: () => shockwave.destroy(),
+        });
+        
+        // Finally, destroy the large fireball
+        this.tweens.add({
+          targets: largeFireball,
+          scaleX: 6,
+          scaleY: 6,
+          alpha: 0,
+          duration: 250,
+          onComplete: () => largeFireball.destroy(),
+        });
+        
+        // Delay then spawn smaller fireballs
+        this.time.delayedCall(200, () => {
+          console.log(`🔥 Flame Nova: Exploding into multiple heat-seeking fireballs!`);
+          
+          // Create 6 smaller fireballs for each enemy
+          const fireballsPerEnemy = 6;
+          let fireballIndex = 0;
+          
+          enemySlots.forEach((enemySlot, enemyIdx) => {
+            // Create fireballs in a spread pattern around each enemy
+            for (let i = 0; i < fireballsPerEnemy; i++) {
+              this.time.delayedCall(fireballIndex * 15, () => {
+                // Calculate initial spread angle (evenly distributed around circle)
+                const spreadAngle = (Math.PI * 2 * i) / fireballsPerEnemy;
+                
+                // Start position for heat-seek behavior (orbit around midpoint)
+                const orbitRadius = 80;
+                const startX = midX + Math.cos(spreadAngle) * orbitRadius;
+                const startY = midY + Math.sin(spreadAngle) * orbitRadius;
+                
+                const smallFireball = this.add.sprite(midX, midY, 'mage_meteor');
+                smallFireball.setScale(1.5);
+                smallFireball.setDepth(50);
+                
+                // Play fireball animation
+                if (this.anims.exists('mage_meteor_anim')) {
+                  smallFireball.play('mage_meteor_anim');
+                }
+                
+                // Phase 1: Heat-seek orbit - move in a circle before homing in
+                this.tweens.add({
+                  targets: smallFireball,
+                  x: startX,
+                  y: startY,
+                  duration: 200,
+                  ease: 'Power1',
+                  onComplete: () => {
+                    // Phase 2: Homing behavior - curve towards enemy
+                    const targetX = enemySlot.x + Phaser.Math.Between(-15, 15); // Add slight variation
+                    const targetY = enemySlot.y + Phaser.Math.Between(-15, 15);
+                    
+                    // Update rotation to face target
+                    const angle = Phaser.Math.Angle.Between(smallFireball.x, smallFireball.y, targetX, targetY);
+                    smallFireball.setRotation(angle);
+                    
+                    this.tweens.add({
+                      targets: smallFireball,
+                      x: targetX,
+                      y: targetY,
+                      duration: 400,
+                      ease: 'Power2',
+                      onComplete: () => {
+                        // Explosion flash effect
+                        const explosionFlash = this.add.circle(targetX, targetY, 15, 0xff6600, 1);
+                        explosionFlash.setDepth(50);
+                        
+                        // Explosion ring
+                        const explosionRing = this.add.circle(targetX, targetY, 20, 0xffffff, 0.8);
+                        explosionRing.setStrokeStyle(3, 0xff6600, 1);
+                        explosionRing.setDepth(49);
+                        
+                        // Animate explosion flash
+                        this.tweens.add({
+                          targets: explosionFlash,
+                          scaleX: 5,
+                          scaleY: 5,
+                          alpha: 0,
+                          duration: 200,
+                          ease: 'Power2',
+                          onComplete: () => explosionFlash.destroy(),
+                        });
+                        
+                        // Animate explosion ring
+                        this.tweens.add({
+                          targets: explosionRing,
+                          scale: 3,
+                          alpha: 0,
+                          duration: 250,
+                          ease: 'Power2',
+                          onComplete: () => explosionRing.destroy(),
+                        });
+                        
+                        // Destroy fireball immediately on impact
+                        smallFireball.destroy();
+                      },
+                    });
+                  },
+                });
+              });
+              
+              fireballIndex++;
+            }
+          });
+        });
+      },
+    });
+  }
+
+  /**
+   * Fire Inferno spell - large flame appears at enemy location and lasts for 3 seconds
+   */
+  private fireInfernoFlame(srcSlot: Phaser.GameObjects.Container, dstSlot: Phaser.GameObjects.Container): void {
+    console.log(`🔥 Inferno: Creating flame at enemy location (${dstSlot.x}, ${dstSlot.y})`);
+    
+    // Create flame sprite
+    const flame = this.add.sprite(dstSlot.x, dstSlot.y, 'mage_inferno_flame');
+    flame.setScale(3); // Scale up the flame (32*3 = 96px, 48*3 = 144px)
+    flame.setDepth(50); // Above characters
+    
+    // Play flame animation
+    if (this.anims.exists('mage_inferno_flame_anim')) {
+      flame.play('mage_inferno_flame_anim');
+    }
+    
+    // Fade in the flame
+    flame.setAlpha(0);
+    this.tweens.add({
+      targets: flame,
+      alpha: 1,
+      duration: 200,
+      ease: 'Linear',
+    });
+    
+    // Keep flame active for 1.5 seconds
+    this.time.delayedCall(1500, () => {
+      // Fade out
+      this.tweens.add({
+        targets: flame,
+        alpha: 0,
+        duration: 300,
+        ease: 'Linear',
+        onComplete: () => {
+          flame.destroy();
+        },
+      });
     });
   }
 
@@ -3121,6 +3460,24 @@ export class BattleScene extends Phaser.Scene {
             // Play mage fire spell sound
             if (this.soundManager) {
               this.soundManager.playMageFireSpell();
+            }
+            
+            // Check for special Mage cards
+            if (note === 'Flame Nova') {
+              // Fire Flame Nova special effect
+              this.time.delayedCall(200, () => {
+                this.fireFlameNova(srcSlot);
+              });
+            } else if (note === 'Inferno' && dstSlot) {
+              // Fire Inferno flame effect at enemy location
+              this.time.delayedCall(200, () => {
+                this.fireInfernoFlame(srcSlot, dstSlot);
+              });
+            } else if (dstSlot) {
+              // Fire regular fireball projectile for Mage
+              this.time.delayedCall(200, () => {
+                this.fireFireballProjectile(srcSlot, dstSlot);
+              });
             }
           } else if (characterClass === 'Warrior') {
             // Randomly select from 3 warrior attack animations (no repeats)
@@ -3427,24 +3784,131 @@ export class BattleScene extends Phaser.Scene {
     const srcSlot = this.getActorSlot(srcId);
     if (!srcSlot) return;
 
-    // Remove existing shield aura if any
-    this.removeShieldAura(srcId);
+    // Get the actor to determine their class
+    const actor = [...this.players, ...this.enemies].find(a => a.id === srcId);
+    const battleActor = actor as BattleActor;
+    const characterClass = battleActor?.selectedClass;
 
-    // Create persistent shield aura
-    const aura = this.createShieldAura(srcSlot.x, srcSlot.y, value);
-    this.shieldAuras.set(srcId, aura);
+    // Value is the total shield amount (passed from combat.ts)
+    const currentShield = value;
+    console.log(`[Shield] playGuard called for ${srcId}, total shield: ${currentShield}`);
 
-    // Initial spawn animation (burst effect)
-    this.playShieldSpawnEffect(srcSlot.x, srcSlot.y);
+    // Check if shield aura already exists
+    const existingAura = this.shieldAuras.get(srcId);
+    
+    if (existingAura) {
+      // Update existing shield aura with current shield from combat state
+      this.updateShieldAura(srcId, currentShield);
+      this.updateFireShieldAura(srcId); // Update fire aura if needed
+      
+      // Don't play shield absorb effect when adding shield, only when taking damage
+    } else if (currentShield > 0) {
+      // Create new shield aura with current shield from combat state
+      const aura = this.createShieldAura(srcSlot.x, srcSlot.y, currentShield, characterClass, srcId);
+      this.shieldAuras.set(srcId, aura);
+
+      // Initial spawn animation (burst effect)
+      this.playShieldSpawnEffect(srcSlot.x, srcSlot.y);
+    }
   }
 
   /**
    * Create a beautiful persistent shield aura
    */
-  private createShieldAura(x: number, y: number, shieldValue: number): ShieldAura {
+  private createShieldAura(x: number, y: number, shieldValue: number, characterClass?: string, actorId?: ActorId): ShieldAura {
     const container = this.add.container(x, y);
     container.setDepth(49); // Just behind damage text
 
+    // Check if this actor has Fire Shield active
+    const hasFireShield = actorId && this.combatState.fireShield?.has(actorId);
+    
+    // Create fire-colored aura if Fire Shield is active
+    let fireAura: Phaser.GameObjects.Graphics | undefined;
+    if (hasFireShield) {
+      fireAura = this.add.graphics();
+      
+      // Outer layer - bright red-orange glow
+      fireAura.fillStyle(0xff6347, 0.35); // Visible but not too bright
+      fireAura.fillCircle(0, 0, 85);
+      
+      // Middle layer - bright orange
+      fireAura.fillStyle(0xff7700, 0.25); // More transparent orange
+      fireAura.fillCircle(0, 0, 70);
+      
+      // Inner layer - soft orange-yellow (keep it subtle in center)
+      fireAura.fillStyle(0xffaa00, 0.15); // Very transparent center so player is visible
+      fireAura.fillCircle(0, 0, 55);
+      
+      fireAura.setDepth(48);
+      container.add(fireAura);
+      
+      // Animate the fire aura (more pronounced flickering effect)
+      this.tweens.add({
+        targets: fireAura,
+        alpha: { from: 0.5, to: 0.9 }, // More dramatic flicker
+        duration: 400,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+      
+      // Add pulsing scale animation for extra visibility
+      this.tweens.add({
+        targets: fireAura,
+        scaleX: 1.1,
+        scaleY: 1.1,
+        duration: 600,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
+
+    // Check if this is a Mage using Fire Shield
+    const isMageFireShield = characterClass === 'Mage';
+    
+    if (isMageFireShield) {
+      // Mage fire shield sprite
+      const shieldSprite = this.add.sprite(0, 0, 'mage_fire_shield');
+      shieldSprite.play('mage_fire_shield_anim');
+      shieldSprite.setScale(3.5); // Scale appropriately
+      shieldSprite.setDepth(48); // Behind the container
+      container.add(shieldSprite);
+      
+      // Shield value text (positioned below character)
+      const shieldText = this.add.text(0, 35, `🛡️${shieldValue}`, {
+        fontSize: '16px',
+        color: '#ffffff',
+        fontFamily: 'Arial Black',
+        fontStyle: 'bold',
+        stroke: '#ff6347',
+        strokeThickness: 3,
+      });
+      shieldText.setOrigin(0.5);
+      container.add(shieldText);
+      
+      // Gentle pulse animation
+      const pulseAnim = this.tweens.add({
+        targets: container,
+        scaleX: 1.02,
+        scaleY: 1.02,
+        duration: 2000,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+      
+      return {
+        container,
+        shieldSprite,
+        shieldText,
+        pulseAnim,
+        fireAura,
+      };
+    }
+
+    // Standard shield visuals for non-mages
+    
     // Outer glow (much more subtle)
     const glow = this.add.graphics();
     glow.fillStyle(0x4da6ff, 0.08); // Much more transparent
@@ -3551,6 +4015,7 @@ export class BattleScene extends Phaser.Scene {
       shieldText,
       pulseAnim,
       rotateAnim,
+      fireAura,
     };
   }
 
@@ -3685,6 +4150,10 @@ export class BattleScene extends Phaser.Scene {
         duration: 300,
         ease: 'Power2',
         onComplete: () => {
+          // Clean up fire aura if it exists
+          if (aura.fireAura) {
+            aura.fireAura.destroy();
+          }
           aura.container.destroy();
         },
       });
@@ -3714,17 +4183,79 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
+   * Update fire shield aura based on combat state
+   */
+  private updateFireShieldAura(actorId: ActorId): void {
+    const aura = this.shieldAuras.get(actorId);
+    if (!aura) return;
+    
+    const hasFireShield = this.combatState.fireShield?.has(actorId);
+    
+    // If Fire Shield is active and aura doesn't exist, create it
+    if (hasFireShield && !aura.fireAura) {
+      const fireAura = this.add.graphics();
+      
+      // Outer layer - bright red-orange glow
+      fireAura.fillStyle(0xff6347, 0.35); // Visible but not too bright
+      fireAura.fillCircle(0, 0, 85);
+      
+      // Middle layer - bright orange
+      fireAura.fillStyle(0xff7700, 0.25); // More transparent orange
+      fireAura.fillCircle(0, 0, 70);
+      
+      // Inner layer - soft orange-yellow (keep it subtle in center)
+      fireAura.fillStyle(0xffaa00, 0.15); // Very transparent center so player is visible
+      fireAura.fillCircle(0, 0, 55);
+      
+      fireAura.setDepth(48);
+      aura.container.add(fireAura);
+      
+      // Animate the fire aura (more pronounced flickering effect)
+      this.tweens.add({
+        targets: fireAura,
+        alpha: { from: 0.5, to: 0.9 }, // More dramatic flicker
+        duration: 400,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+      
+      // Add pulsing scale animation for extra visibility
+      this.tweens.add({
+        targets: fireAura,
+        scaleX: 1.1,
+        scaleY: 1.1,
+        duration: 600,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+      
+      aura.fireAura = fireAura;
+    }
+    // If Fire Shield is not active but aura exists, remove it
+    else if (!hasFireShield && aura.fireAura) {
+      aura.fireAura.destroy();
+      aura.fireAura = undefined;
+    }
+  }
+
+  /**
    * Update shield aura from combat state (when damage is applied)
    */
   private updateShieldAuraFromCombatState(actorId: ActorId): void {
     // Get current shield value from combat state
     const shieldValue = this.combatState.shields?.get(actorId) || 0;
     
+    console.log(`[Shield Update] Actor ${actorId}: shieldValue = ${shieldValue}`);
+    
     if (shieldValue > 0) {
       // Update existing shield aura or create new one
       const aura = this.shieldAuras.get(actorId);
       if (aura) {
+        console.log(`[Shield Update] Updating existing shield aura from ${aura.shieldText.text} to ${shieldValue}`);
         this.updateShieldAura(actorId, shieldValue);
+        this.updateFireShieldAura(actorId); // Update fire aura
         
         // Show shield absorption effect
         this.playShieldAbsorbEffect(actorId);
@@ -3732,16 +4263,26 @@ export class BattleScene extends Phaser.Scene {
         // Create new shield aura if it doesn't exist
         const slot = this.getActorSlot(actorId);
         if (slot) {
-          const newAura = this.createShieldAura(slot.x, slot.y, shieldValue);
+          // Get the actor to determine their class
+          const actor = [...this.players, ...this.enemies].find(a => a.id === actorId);
+          const battleActor = actor as BattleActor;
+          const characterClass = battleActor?.selectedClass;
+          
+          console.log(`[Shield Update] Creating new shield aura for actor ${actorId}`);
+          const newAura = this.createShieldAura(slot.x, slot.y, shieldValue, characterClass, actorId);
           this.shieldAuras.set(actorId, newAura);
         }
       }
     } else {
-      // Remove shield aura if shield is depleted
-      this.removeShieldAura(actorId);
-      
-      // Show shield break effect
-      this.playShieldBreakEffect(actorId);
+      // Only remove shield aura if it exists
+      const aura = this.shieldAuras.get(actorId);
+      if (aura) {
+        console.log(`[Shield Update] Removing shield for actor ${actorId}`);
+        this.removeShieldAura(actorId);
+        
+        // Show shield break effect
+        this.playShieldBreakEffect(actorId);
+      }
     }
   }
 
@@ -3877,6 +4418,16 @@ export class BattleScene extends Phaser.Scene {
     console.log(`VFX: ${note} from ${srcId} to ${dstId}`);
     
     // Add visual effects for specific VFX types
+    if (note === 'fire_shield_retaliate' && dstId) {
+      const srcSlot = this.getActorSlot(srcId);
+      const dstSlot = this.getActorSlot(dstId);
+      if (srcSlot && dstSlot) {
+        // Fire simple fireball from player to enemy (no attack animation)
+        this.fireSimpleFireball(srcSlot, dstSlot);
+      }
+      return;
+    }
+    
     if (note === 'vulnerable' && dstId) {
       const dstSlot = this.getActorSlot(dstId);
       if (dstSlot) {
@@ -3931,6 +4482,47 @@ export class BattleScene extends Phaser.Scene {
         });
       }
     }
+  }
+
+  /**
+   * Fire a simple fireball for Fire Shield retaliation (no character animation)
+   */
+  private fireSimpleFireball(srcSlot: Phaser.GameObjects.Container, dstSlot: Phaser.GameObjects.Container): void {
+    // Create fireball sprite with animated frames
+    const fireball = this.add.sprite(srcSlot.x, srcSlot.y, 'mage_meteor');
+    fireball.setScale(2); // Scale up the fireball
+    fireball.setDepth(50); // Above characters but below UI
+    
+    // Play fireball animation (looping)
+    if (this.anims.exists('mage_meteor_anim')) {
+      fireball.play('mage_meteor_anim');
+    }
+    
+    // Calculate angle to target
+    const angle = Phaser.Math.Angle.Between(srcSlot.x, srcSlot.y, dstSlot.x, dstSlot.y);
+    fireball.setRotation(angle);
+    
+    console.log(`🔥 Fire Shield retaliating: Firing fireball from (${srcSlot.x}, ${srcSlot.y}) to (${dstSlot.x}, ${dstSlot.y})`);
+    
+    // Tween fireball to target
+    this.tweens.add({
+      targets: fireball,
+      x: dstSlot.x,
+      y: dstSlot.y,
+      duration: 300, // 300ms to travel
+      ease: 'Linear',
+      onComplete: () => {
+        // Explosion effect - scale up and fade out
+        this.tweens.add({
+          targets: fireball,
+          scaleX: 3,
+          scaleY: 3,
+          alpha: 0,
+          duration: 150,
+          onComplete: () => fireball.destroy(),
+        });
+      },
+    });
   }
 
   private getActorSlot(actorId: ActorId): Phaser.GameObjects.Container | null {
@@ -4240,6 +4832,8 @@ export class BattleScene extends Phaser.Scene {
     // Find and update the actor in combat state
     const combatPlayer = this.combatState.party.find(p => p.id === targetId);
     if (combatPlayer) {
+      // NOTE: The damage value has ALREADY been reduced by shield absorption in combat.ts
+      // We just apply the remaining damage directly to HP
       const oldHp = combatPlayer.hp;
       combatPlayer.hp = Math.max(0, combatPlayer.hp - damage);
       console.log(`Applied ${damage} damage to player ${combatPlayer.name}: ${oldHp} -> ${combatPlayer.hp}`);
@@ -4264,6 +4858,8 @@ export class BattleScene extends Phaser.Scene {
 
     const combatEnemy = this.combatState.enemies.find(e => e.id === targetId);
     if (combatEnemy) {
+      // NOTE: The damage value has ALREADY been reduced by shield absorption in combat.ts
+      // We just apply the remaining damage directly to HP
       const oldHp = combatEnemy.hp;
       combatEnemy.hp = Math.max(0, combatEnemy.hp - damage);
       console.log(`Applied ${damage} damage to enemy ${combatEnemy.name}: ${oldHp} -> ${combatEnemy.hp}`);
@@ -4607,7 +5203,7 @@ export class BattleScene extends Phaser.Scene {
     skipButton.add(text);
 
     // Make the container interactive for clicking - tight hit area to prevent overlap with cards
-    bg.setInteractive({ useHandCursor: true });
+    bg.setInteractive({ useHandCursor: false });
     skipButton.setSize(140, 36);
 
     bg.on('pointerover', () => {
@@ -5081,7 +5677,7 @@ export class BattleScene extends Phaser.Scene {
 
     const bg = this.add.rectangle(0, 0, 120, 40, 0xe74c3c, 1);
     bg.setStrokeStyle(2, 0xffffff, 0.8);
-    bg.setInteractive({ useHandCursor: true });
+    bg.setInteractive({ useHandCursor: false });
     retryButton.add(bg);
 
     const text = this.add.text(0, 0, '🔄 RETRY', {
@@ -5119,7 +5715,7 @@ export class BattleScene extends Phaser.Scene {
     // Background
     const bg = this.add.rectangle(0, 0, 100, 40, 0xff00ff, 0.8);
     bg.setStrokeStyle(2, 0xffffff, 1);
-    bg.setInteractive({ useHandCursor: true });
+    bg.setInteractive({ useHandCursor: false });
     container.add(bg);
     
     // Text
@@ -5188,7 +5784,7 @@ export class BattleScene extends Phaser.Scene {
     // Background
     const bg = this.add.rectangle(0, 0, 100, 40, 0x00ff00, 0.8);
     bg.setStrokeStyle(2, 0xffffff, 1);
-    bg.setInteractive({ useHandCursor: true });
+    bg.setInteractive({ useHandCursor: false });
     container.add(bg);
     
     // Text
@@ -5254,7 +5850,7 @@ export class BattleScene extends Phaser.Scene {
     // Background
     const bg = this.add.rectangle(0, 0, 100, 40, 0xff9900, 0.8);
     bg.setStrokeStyle(2, 0xffffff, 1);
-    bg.setInteractive({ useHandCursor: true });
+    bg.setInteractive({ useHandCursor: false });
     container.add(bg);
     
     // Text
@@ -5490,11 +6086,15 @@ export class BattleScene extends Phaser.Scene {
       this.remoteCursors.set(cursor.userId, cursorContainer);
     }
 
-    // Update position with smooth interpolation
+    // Apply same offset as local cursor (match setupCustomCursor offset)
+    const cursorOffsetX = 10;
+    const cursorOffsetY = 15;
+
+    // Update position with smooth interpolation and apply offset
     this.tweens.add({
       targets: cursorContainer,
-      x: cursor.x,
-      y: cursor.y,
+      x: cursor.x + cursorOffsetX,
+      y: cursor.y + cursorOffsetY,
       duration: this.CURSOR_THROTTLE_MS,
       ease: 'Linear',
     });
@@ -5519,31 +6119,20 @@ export class BattleScene extends Phaser.Scene {
     const container = this.add.container(0, 0);
     container.setDepth(1000); // Always on top
 
-    // Cursor arrow (SVG-style)
+    // RPG cursor image - match local cursor size and offset
+    const cursorImage = this.add.image(0, 0, 'rpg_cursor');
+    cursorImage.setScale(0.08); // Scale down from 500x500 to 40x40 (match local cursor)
+    cursorImage.setOrigin(0.5); // Center the cursor on the pointer position
+    
+    // Apply color tint to cursor
     const cursorColor = color ? parseInt(color.replace('#', ''), 16) : this.getPlayerColorHex(userId);
+    cursorImage.setTint(cursorColor);
     
-    const cursor = this.add.graphics();
-    cursor.fillStyle(cursorColor, 1);
-    cursor.beginPath();
-    cursor.moveTo(0, 0);
-    cursor.lineTo(0, 20);
-    cursor.lineTo(6, 15);
-    cursor.lineTo(10, 24);
-    cursor.lineTo(13, 22);
-    cursor.lineTo(9, 13);
-    cursor.lineTo(16, 13);
-    cursor.closePath();
-    cursor.fillPath();
-    
-    // Add subtle outline
-    cursor.lineStyle(1, 0xffffff, 0.8);
-    cursor.strokePath();
-    
-    container.add(cursor);
+    container.add(cursorImage);
 
-    // Username label
+    // Username label - adjust position for smaller cursor
     if (userName) {
-      const nameText = this.add.text(20, 0, userName, {
+      const nameText = this.add.text(25, 0, userName, {
         fontSize: '12px',
         color: '#ffffff',
         fontFamily: 'Arial, sans-serif',
@@ -5678,7 +6267,7 @@ export class BattleScene extends Phaser.Scene {
     // Button background with relative positioning (0, 0 within container)
     const bg = this.add.rectangle(0, 0, buttonSize, buttonSize, 0x4a90e2, 0.8);
     bg.setStrokeStyle(1, 0xffffff, 0.5);
-    bg.setInteractive({ useHandCursor: true });
+    bg.setInteractive({ useHandCursor: false });
     bg.setName('bg');
 
     // Arrow icon (down/up) with relative positioning

@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
+import { setupCustomCursor } from '../utils/cursor';
 
 /**
  * Intro video scene - plays before the main menu
- * Skippable by clicking anywhere on the screen
+ * Skippable only if player has seen it before (first time is mandatory)
  */
 export class IntroScene extends Phaser.Scene {
   private videoElement: HTMLVideoElement | null = null;
@@ -22,6 +23,9 @@ export class IntroScene extends Phaser.Scene {
     const width = this.scale.width;
     const height = this.scale.height;
 
+    // Set up custom cursor
+    setupCustomCursor(this);
+
     // Set black background
     this.cameras.main.setBackgroundColor('#000000');
 
@@ -37,36 +41,41 @@ export class IntroScene extends Phaser.Scene {
     this.videoElement.style.objectFit = 'contain';
     this.videoElement.style.backgroundColor = '#000000';
     this.videoElement.style.zIndex = '1000';
-    this.videoElement.style.cursor = 'pointer'; // Show it's clickable
     this.videoElement.autoplay = true;
     this.videoElement.muted = false;
 
     // Add video to DOM
     document.body.appendChild(this.videoElement);
 
-    // When video ends, go to preload
+    // When video ends, mark as seen and go to main menu
     this.videoElement.addEventListener('ended', () => {
       this.goToPreload();
     });
 
-    // Add click listener to video element itself to skip
-    this.videoElement.addEventListener('click', () => {
-      this.skipIntro();
-    });
-
-    // Add keyboard listeners to document for skip (since video blocks Phaser input)
-    const handleKeyPress = (e: KeyboardEvent) => {
-      if (e.code === 'Space' || e.code === 'Enter') {
-        this.skipIntro();
-      }
-    };
-    document.addEventListener('keydown', handleKeyPress);
-
-    // Store handler for cleanup
-    (this.videoElement as any).keyHandler = handleKeyPress;
-
-    // If player has seen it before, show skip text immediately
+    // Only allow skipping if player has seen intro before
     if (this.hasSeenIntro) {
+      console.log('Returning player - skip controls enabled');
+      
+      // Make video cursor indicate it's clickable
+      this.videoElement.style.cursor = 'pointer';
+      
+      // Add click listener to video element to skip
+      this.videoElement.addEventListener('click', () => {
+        this.skipIntro();
+      });
+
+      // Add keyboard listeners to document for skip
+      const handleKeyPress = (e: KeyboardEvent) => {
+        if (e.code === 'Space' || e.code === 'Enter') {
+          this.skipIntro();
+        }
+      };
+      document.addEventListener('keydown', handleKeyPress);
+
+      // Store handler for cleanup
+      (this.videoElement as any).keyHandler = handleKeyPress;
+
+      // Show skip text immediately for returning players
       this.skipText = this.add.text(width / 2, height - 50, 'Click anywhere to skip', {
         fontSize: '18px',
         color: '#ffffff',
@@ -77,44 +86,23 @@ export class IntroScene extends Phaser.Scene {
       this.skipText.setOrigin(0.5);
       this.skipText.setAlpha(0.7);
       this.skipText.setDepth(2000);
+
+      // Make the entire screen clickable to skip
+      this.input.on('pointerdown', () => {
+        this.skipIntro();
+      });
+
+      // Also allow space or enter key to skip
+      this.input.keyboard?.on('keydown-SPACE', () => {
+        this.skipIntro();
+      });
+      this.input.keyboard?.on('keydown-ENTER', () => {
+        this.skipIntro();
+      });
+    } else {
+      // First time player - no skip controls
+      console.log('First time player - skipping disabled, watching full intro');
     }
-
-    // Show skip text after 2 seconds
-    this.time.delayedCall(2000, () => {
-      if (!this.skipText) {
-        this.skipText = this.add.text(width / 2, height - 50, 'Click anywhere to skip', {
-          fontSize: '18px',
-          color: '#ffffff',
-          fontFamily: 'Arial, sans-serif',
-          backgroundColor: '#000000',
-          padding: { x: 10, y: 5 },
-        });
-        this.skipText.setOrigin(0.5);
-        this.skipText.setAlpha(0);
-        this.skipText.setDepth(2000);
-
-        // Fade in skip text
-        this.tweens.add({
-          targets: this.skipText,
-          alpha: 0.7,
-          duration: 500,
-          ease: 'Power2',
-        });
-      }
-    });
-
-    // Make the entire screen clickable to skip
-    this.input.on('pointerdown', () => {
-      this.skipIntro();
-    });
-
-    // Also allow space or enter key to skip
-    this.input.keyboard?.on('keydown-SPACE', () => {
-      this.skipIntro();
-    });
-    this.input.keyboard?.on('keydown-ENTER', () => {
-      this.skipIntro();
-    });
   }
 
   private skipIntro(): void {
@@ -141,8 +129,8 @@ export class IntroScene extends Phaser.Scene {
       this.videoElement = null;
     }
 
-    // Transition to preload scene (which will then go to main menu)
-    this.scene.start('Preload');
+    // Transition directly to main menu (assets already loaded in Preload)
+    this.scene.start('MainMenu');
   }
 
   shutdown(): void {
@@ -164,4 +152,3 @@ export class IntroScene extends Phaser.Scene {
     this.input.keyboard?.off('keydown-ENTER');
   }
 }
-

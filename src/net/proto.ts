@@ -77,6 +77,7 @@ export const ResolvePayloadSchema = z.object({
   shields: z.array(ShieldEntrySchema).optional(), // Serialized shield values
   buffs: z.array(BuffEntrySchema).optional(), // Serialized buff effects
   blinded: z.array(ActorIdSchema).optional(), // Serialized blinded actors
+  fireShield: z.array(ActorIdSchema).optional(), // Serialized fire shield actors
 });
 
 // Cursor position schema

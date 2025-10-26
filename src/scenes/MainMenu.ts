@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { COLORS } from '../game/config';
 import { SoundManager } from '../game/sound';
+import { setupCustomCursor } from '../utils/cursor';
 
 /**
  * Main menu - entry point, play button routes to lobby
@@ -15,6 +16,9 @@ export class MainMenu extends Phaser.Scene {
   create(): void {
     const width = this.scale.width;
     const height = this.scale.height;
+    
+    // Set up custom cursor
+    setupCustomCursor(this);
 
     // Set background color (fallback if image fails to load)
     this.cameras.main.setBackgroundColor('#0d0d0d');
@@ -72,6 +76,14 @@ export class MainMenu extends Phaser.Scene {
       this.scene.start('Lobby');
     });
 
+    // Watch Intro button (only show if player has seen intro before)
+    const hasSeenIntro = localStorage.getItem('hasSeenIntro') === 'true';
+    
+    if (hasSeenIntro) {
+      // Create "Watch Intro" button
+      this.createWatchIntroButton(width / 2, height - 120);
+    }
+
     // Version info
     const version = this.add.text(width - 10, height - 10, 'v0.0.1', {
       fontSize: '14px',
@@ -81,6 +93,53 @@ export class MainMenu extends Phaser.Scene {
     version.setOrigin(1, 1);
 
     console.log('Main menu ready');
+  }
+
+  private createWatchIntroButton(x: number, y: number): void {
+    const width = 180;
+    const height = 50;
+
+    const bg = this.add.rectangle(x, y, width, height, 0x333333, 0.8);
+    bg.setStrokeStyle(2, 0xffffff, 0.6);
+    bg.setInteractive({ useHandCursor: true });
+
+    const label = this.add.text(x, y, 'Watch Intro', {
+      fontSize: '20px',
+      color: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    label.setOrigin(0.5);
+
+    bg.on('pointerover', () => {
+      bg.setFillStyle(0x444444, 0.9);
+      this.tweens.add({
+        targets: [bg, label],
+        scale: 1.1,
+        duration: 100,
+        ease: 'Power2',
+      });
+    });
+
+    bg.on('pointerout', () => {
+      bg.setFillStyle(0x333333, 0.8);
+      this.tweens.add({
+        targets: [bg, label],
+        scale: 1,
+        duration: 100,
+        ease: 'Power2',
+      });
+    });
+
+    bg.on('pointerdown', () => {
+      // Play video sound effect if available
+      if (this.soundManager) {
+        this.soundManager.playSfx('sfx_card_click', { volume: 0.5 });
+      }
+      
+      // Transition to intro scene
+      this.scene.start('IntroScene');
+    });
   }
 
   private createButton(x: number, y: number, text: string, callback: () => void): void {

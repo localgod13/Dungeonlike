@@ -4,6 +4,7 @@ import { SoundManager } from '../game/sound';
 import { subscribeMap, sendMapVote, sendMapVoteResult } from '../net/match';
 import { getGold, spendGold, initializeInventory, addCardToDeck } from '../game/inventory';
 import { getCurrentUserId } from '../net/supa';
+import { setupCustomCursor } from '../utils/cursor';
 
 /**
  * Shop scene - Purchase cards with goldc
@@ -65,6 +66,8 @@ export class ShopScene extends Phaser.Scene {
   }
 
   async create(): Promise<void> {
+    // Set up custom cursor
+    setupCustomCursor(this);
     const width = this.scale.width;
     const height = this.scale.height;
 

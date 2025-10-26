@@ -490,6 +490,9 @@ export class SoundManager {
       'Slash': 'sfx_warrior_slash',
       'Heavy Strike': 'sfx_warrior_heavy_strike',
       'Cleave': 'sfx_warrior_cleave',
+      'Fireball': 'sfx_mage_fire1', // Mage fireball spell
+      'Flame Nova': 'sfx_mage_fire1', // Flame Nova spell
+      'Burn': 'sfx_mage_fire1', // Burn spell uses fire sound
     };
 
     return soundMap[cardName] || null;

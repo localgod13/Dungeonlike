@@ -30,6 +30,7 @@ export interface CombatState {
   dots?: Map<ActorId, DotEffect[]>; // DOT effects per actor
   buffs?: Map<ActorId, BuffEffect[]>; // Buff effects per actor
   blinded?: Set<ActorId>; // Blinded actors (miss next attack)
+  fireShield?: Set<ActorId>; // Actors with Fire Shield (retaliate on hit)
 }
 
 export type Initiative = ActorId[];
@@ -84,6 +85,7 @@ export function resolveTurn(
     shields: state.shields ? new Map(state.shields) : new Map(),
     buffs: state.buffs ? new Map(state.buffs) : new Map(),
     blinded: state.blinded ? new Set(state.blinded) : new Set(),
+    fireShield: state.fireShield ? new Set(state.fireShield) : new Set(),
   };
   
   const order = rollInitiative(simState, rng);
@@ -175,6 +177,28 @@ export function resolveTurn(
     effects.push({ at: t0 + 700, kind: 'heal', src: src.id, dst: dst.id, value: val }); // Was 250ms
   };
 
+  // Check for Fire Shield retaliate after damage is applied
+  const checkFireShieldRetaliate = (attacker: Actor, target: Actor, t0: number, shieldBeforeDamage: number) => {
+    if (simState.fireShield?.has(target.id) && attacker.side === 'enemy') {
+      // Use shield value BEFORE damage - if shield existed at moment of attack, retaliate!
+      if (shieldBeforeDamage > 0) {
+        console.log(`🔥 Fire Shield retaliates! ${target.name} reflects 5 damage back at ${attacker.name}!`);
+        // Add VFX for fireball, then hit effect after delay
+        effects.push({ at: t0 + 800, kind: 'vfx', src: target.id, dst: attacker.id, note: 'fire_shield_retaliate' });
+        effects.push({ at: t0 + 1100, kind: 'hit', src: target.id, dst: attacker.id, value: 5 });
+        attacker.hp = Math.max(0, attacker.hp - 5);
+        console.log(`[Combat] ${attacker.name} takes 5 retaliate damage from Fire Shield. HP: ${attacker.hp}/${attacker.maxHp}`);
+      }
+      
+      // Check if shield is now depleted to remove the fire shield effect
+      const currentShield = simState.shields?.get(target.id) || 0;
+      if (currentShield <= 0) {
+        console.log(`🔥 Fire Shield depleted for ${target.name}! Removing retaliate effect.`);
+        simState.fireShield.delete(target.id);
+      }
+    }
+  };
+
   // Simulate turn - tCursor continues from DOT phase
   const GUARD_REDUCTION = 2;
   const guarded = new Set<ActorId>();
@@ -209,25 +233,43 @@ export function resolveTurn(
       
       if (dst) {
         // Base damage 4–7
-        let base = 4 + Math.floor(rng() * 4); // 4..7
+        let damage = 4 + Math.floor(rng() * 4); // 4..7
         
         // Apply vulnerability (increases damage)
         if (vulnerable.has(dst.id)) {
-          base += 2; // Vulnerable increases damage taken by 2
-          console.log(`[Combat] ${dst.name} is vulnerable! Damage increased by 2 (${base - 2} -> ${base})`);
+          damage += 2; // Vulnerable increases damage taken by 2
+          console.log(`[Combat] ${dst.name} is vulnerable! Damage increased by 2 (${damage - 2} -> ${damage})`);
         }
         
-        // Apply guard reduction
-        const guardValue = guardValues.get(dst.id) || 0;
-        const reduced = Math.max(0, base - guardValue);
+        // Apply shield absorption: shields absorb damage before health
+        const currentShield = simState.shields?.get(dst.id) || 0;
         
-        if (guardValue > 0) {
-          console.log(`[Combat] ${dst.name} is guarded! Damage reduced by ${guardValue} (${base} -> ${reduced})`);
+        if (currentShield > 0) {
+          const newShieldValue = Math.max(0, currentShield - damage);
+          const remainingDamage = Math.max(0, damage - currentShield);
+          
+          simState.shields!.set(dst.id, newShieldValue);
+          
+          console.log(`[Shield] ${dst.name} has ${currentShield} shield. Taking ${damage} damage. Shield: ${currentShield} -> ${newShieldValue}, HP damage: ${remainingDamage}`);
+          
+          // Apply any remaining damage to HP
+          if (remainingDamage > 0) {
+            strike(actor, dst, remainingDamage, tCursor);
+            dst.hp = Math.max(0, dst.hp - remainingDamage);
+          } else {
+            // All damage absorbed by shield - still show strike effect
+            strike(actor, dst, 0, tCursor);
+          }
+        } else {
+          // No shield - apply full damage
+          strike(actor, dst, damage, tCursor);
+          dst.hp = Math.max(0, dst.hp - damage);
         }
         
-        strike(actor, dst, reduced, tCursor);
-        // Apply damage to simulation state for post-state snapshot
-        dst.hp = Math.max(0, dst.hp - reduced);
+        // Check for Fire Shield retaliate (enemy attacking party member)
+        if (isEnemy) {
+          checkFireShieldRetaliate(actor, dst, tCursor, currentShield);
+        }
       }
       } else if (plan.type === 'Skill') {
         // Starter Skill = small heal to lowest-HP ally (party) or self for enemies
@@ -281,39 +323,37 @@ export function resolveTurn(
                   console.log(`[Combat] ${dst.name} is vulnerable! ${card.name} damage increased by 2 (${card.power} -> ${damage})`);
                 }
                 
-                // Apply shield absorption
+                // Simple shield absorption: shields absorb damage before health
                 const currentShield = simState.shields?.get(dst.id) || 0;
-                let remainingDamage = damage;
-                let newShieldValue = currentShield;
                 
                 if (currentShield > 0) {
-                  if (damage >= currentShield) {
-                    // Shield is completely destroyed
-                    remainingDamage = damage - currentShield;
-                    newShieldValue = 0;
-                    console.log(`[Combat] ${dst.name}'s shield (${currentShield}) is destroyed! ${damage} damage reduced to ${remainingDamage}`);
-                  } else {
-                    // Shield absorbs all damage
-                    newShieldValue = currentShield - damage;
-                    remainingDamage = 0;
-                    console.log(`[Combat] ${dst.name}'s shield absorbs ${damage} damage! Shield reduced from ${currentShield} to ${newShieldValue}`);
-                  }
+                  const newShieldValue = Math.max(0, currentShield - damage);
+                  const remainingDamage = Math.max(0, damage - currentShield);
                   
-                  // Update shield value
                   simState.shields!.set(dst.id, newShieldValue);
-                }
-                
-                // Apply damage to HP
-                const finalDamage = Math.max(0, remainingDamage);
-                if (finalDamage > 0) {
-                  strike(actor, dst, finalDamage, tCursor, card.name); // Pass card name for sound
-                  dst.hp = Math.max(0, dst.hp - finalDamage);
-                } else if (currentShield > 0) {
-                  // Shield absorbed all damage - still show the strike effect but no HP damage
+                  
+                  console.log(`[Shield] ${dst.name} has ${currentShield} shield. Taking ${damage} damage. Shield: ${currentShield} -> ${newShieldValue}, HP damage: ${remainingDamage}`);
+                  
+                // Apply any remaining damage to HP
+                if (remainingDamage > 0) {
+                  strike(actor, dst, remainingDamage, tCursor, card.name);
+                  dst.hp = Math.max(0, dst.hp - remainingDamage);
+                } else {
+                  // All damage absorbed by shield - still show strike effect
                   strike(actor, dst, 0, tCursor, card.name);
                 }
+              } else {
+                // No shield - apply full damage
+                strike(actor, dst, damage, tCursor, card.name);
+                dst.hp = Math.max(0, dst.hp - damage);
               }
-              break;
+              
+              // Check for Fire Shield retaliate (enemy attacking party member with cards)
+              if (isEnemy) {
+                checkFireShieldRetaliate(actor, dst, tCursor, currentShield);
+              }
+            }
+            break;
           
             case 'HEAL':
               if (dst) {
@@ -328,7 +368,8 @@ export function resolveTurn(
                 const currentShield = simState.shields?.get(dst.id) || 0;
                 const newShieldTotal = currentShield + shieldValue;
                 
-                guard(dst, shieldValue, tCursor);
+                // Pass the TOTAL shield value, not just the increment
+                guard(dst, newShieldTotal, tCursor);
                 guarded.add(dst.id);
                 guardValues.set(dst.id, shieldValue); // Keep for compatibility
                 simState.shields!.set(dst.id, newShieldTotal);
@@ -398,17 +439,36 @@ export function resolveTurn(
                   console.log(`[Combat] ${target.name} is vulnerable! ${card.name} damage increased by 2 (${baseDamage} -> ${damage})`);
                 }
                 
-                // Apply guard reduction
-                const guardValue = guardValues.get(target.id) || 0;
-                const finalDamage = Math.max(0, damage - guardValue);
+                // Apply shield absorption: shields absorb damage before health
+                const currentShield = simState.shields?.get(target.id) || 0;
                 
-                if (guardValue > 0) {
-                  console.log(`[Combat] ${target.name} is guarded! ${card.name} damage reduced by ${guardValue} (${damage} -> ${finalDamage})`);
+                if (currentShield > 0) {
+                  const newShieldValue = Math.max(0, currentShield - damage);
+                  const remainingDamage = Math.max(0, damage - currentShield);
+                  
+                  simState.shields!.set(target.id, newShieldValue);
+                  
+                  console.log(`[Shield] ${target.name} has ${currentShield} shield. Taking ${damage} damage. Shield: ${currentShield} -> ${newShieldValue}, HP damage: ${remainingDamage}`);
+                  
+                  const offsetTime = tCursor + (index * 200);
+                  
+                  if (remainingDamage > 0) {
+                    strike(actor, target, remainingDamage, offsetTime, card.name);
+                    target.hp = Math.max(0, target.hp - remainingDamage);
+                  } else {
+                    strike(actor, target, 0, offsetTime, card.name);
+                  }
+                } else {
+                  // No shield - apply full damage
+                  const offsetTime = tCursor + (index * 200);
+                  strike(actor, target, damage, offsetTime, card.name);
+                  target.hp = Math.max(0, target.hp - damage);
                 }
                 
-                const offsetTime = tCursor + (index * 200); // Stagger AOE hits
-                strike(actor, target, finalDamage, offsetTime, card.name);
-                target.hp = Math.max(0, target.hp - finalDamage);
+                // Check for Fire Shield retaliate (enemy attacking party member with AOE)
+                if (isEnemy) {
+                  checkFireShieldRetaliate(actor, target, tCursor + (index * 200), currentShield);
+                }
               });
               break;
             
@@ -418,10 +478,18 @@ export function resolveTurn(
               const currentShield = simState.shields?.get(actor.id) || 0;
               const newShieldTotal = currentShield + shieldValue;
               
-              guard(actor, shieldValue, tCursor);
+              // Pass the TOTAL shield value, not just the increment
+              guard(actor, newShieldTotal, tCursor);
               guarded.add(actor.id);
               guardValues.set(actor.id, shieldValue); // Keep for compatibility
               simState.shields!.set(actor.id, newShieldTotal);
+              
+              // Special: Fire Shield grants retaliate damage
+              if (card.id === 'FireShield') {
+                simState.fireShield!.add(actor.id);
+                console.log(`[Combat] 🔥 ${actor.name} gains Fire Shield! Will retaliate for 5 damage when hit!`);
+              }
+              
               console.log(`[Combat] ${actor.name} gains ${shieldValue} shield from ${card.name}. Total shield: ${newShieldTotal}`);
               break;
             
@@ -434,7 +502,8 @@ export function resolveTurn(
                 const currentShield = simState.shields?.get(actor.id) || 0;
                 const newShieldTotal = currentShield + shieldValue;
                 
-                guard(actor, shieldValue, tCursor);
+                // Pass the TOTAL shield value, not just the increment
+                guard(actor, newShieldTotal, tCursor);
                 guarded.add(actor.id);
                 guardValues.set(actor.id, shieldValue);
                 simState.shields!.set(actor.id, newShieldTotal);
@@ -588,28 +657,31 @@ export function resolveTurn(
                     damage += 2;
                   }
                   
-                  // Apply shield reduction
+                  // Simple shield absorption: shields absorb damage before health
                   const currentShield = simState.shields?.get(target.id) || 0;
-                  let remainingDamage = damage;
-                  let newShieldValue = currentShield;
+                  
+                  let finalDamage = damage;
                   
                   if (currentShield > 0) {
-                    if (damage >= currentShield) {
-                      remainingDamage = damage - currentShield;
-                      newShieldValue = 0;
-                    } else {
-                      newShieldValue = currentShield - damage;
-                      remainingDamage = 0;
-                    }
+                    const newShieldValue = Math.max(0, currentShield - damage);
+                    const remainingDamage = Math.max(0, damage - currentShield);
                     simState.shields!.set(target.id, newShieldValue);
+                    finalDamage = remainingDamage;
                   }
                   
-                  const finalDamage = Math.max(0, remainingDamage);
                   const offsetTime = tCursor + (index * 200);
                   
                   if (finalDamage > 0) {
                     strike(actor, target, finalDamage, offsetTime, card.name);
                     target.hp = Math.max(0, target.hp - finalDamage);
+                  } else {
+                    // No damage to HP, but still show strike effect
+                    strike(actor, target, 0, offsetTime, card.name);
+                  }
+                  
+                  // Check for Fire Shield retaliate (enemy attacking party member with BLIND)
+                  if (isEnemy) {
+                    checkFireShieldRetaliate(actor, target, offsetTime, currentShield);
                   }
                   
                   // Apply blind effect
@@ -683,6 +755,9 @@ export function resolveTurn(
   // Serialize blinded Set to array format for network transmission
   const serializedBlinded = Array.from(simState.blinded || new Set());
   
+  // Serialize fireShield Set to array format for network transmission
+  const serializedFireShield = Array.from(simState.fireShield || new Set());
+  
   return { 
     turn: state.turn, 
     seed, 
@@ -693,6 +768,7 @@ export function resolveTurn(
     shields: serializedShields, // Include shields in payload for persistence
     buffs: serializedBuffs, // Include buffs in payload for persistence
     blinded: serializedBlinded, // Include blinded actors in payload for persistence
+    fireShield: serializedFireShield, // Include fire shield actors in payload for persistence
   };
 }
 
@@ -724,6 +800,7 @@ export function createCombatState(
     vulnerable: new Map(),
     stunned: new Set(),
     dots: new Map(),
+    fireShield: new Set(),
   };
 }
 

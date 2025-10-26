@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Card, NEUTRAL_CONSUMABLE_ITEMS, NEUTRAL_REUSABLE_ITEMS, getCardsForClass } from '../game/cards';
 import { addGold, addCardToDeck, getGold } from '../game/inventory';
 import { getCurrentUserId } from '../net/supa';
+import { setupCustomCursor } from '../utils/cursor';
 
 interface Player {
   userId: string;
@@ -63,6 +64,8 @@ export class LootScene extends Phaser.Scene {
   }
 
   async create(): Promise<void> {
+    // Set up custom cursor
+    setupCustomCursor(this);
     const { width, height } = this.cameras.main;
     
     // Get user ID

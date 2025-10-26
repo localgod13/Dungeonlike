@@ -12,6 +12,7 @@ import { CardSelectUI } from '../ui/cardSelectUi';
 import { SoundManager } from '../game/sound';
 import { getAllAvailableCardsForClass } from '../game/cards';
 import { clearPersistedUltimatePower } from '../game/ultimate';
+import { setupCustomCursor } from '../utils/cursor';
 import { clearAllInventories, initializeInventory, getPermanentDeck, getConsumables, getGold } from '../game/inventory';
 import { getCardById } from '../game/cards';
 
@@ -89,6 +90,9 @@ export class CardSelectScene extends Phaser.Scene {
 
   async create(): Promise<void> {
     console.log('Card selection scene started');
+    
+    // Set up custom cursor
+    setupCustomCursor(this);
 
     // Get current user
     this.userId = await getCurrentUserId();

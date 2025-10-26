@@ -6,6 +6,7 @@ import { HUD } from '../ui/hud';
 import { VoteUI } from '../ui/voteUi';
 import { initRNG, generateRunSeed } from '../game/rng';
 import { GAME_CONFIG } from '../game/config';
+import { setupCustomCursor } from '../utils/cursor';
 
 /**
  * Main gameplay scene - the dungeon run
@@ -47,6 +48,9 @@ export class Run extends Phaser.Scene {
 
   create(): void {
     console.log('Run scene started');
+
+    // Set up custom cursor
+    setupCustomCursor(this);
 
     // Create grid
     this.grid = new Grid(this);

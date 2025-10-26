@@ -16,6 +16,7 @@ import { useClientStore } from '../store/clientStore';
 import { COLORS } from '../game/config';
 import { SoundManager } from '../game/sound';
 import { createCharacterAnimations, createCharacterSprite, CharacterClass } from '../game/characterSprites';
+import { setupCustomCursor } from '../utils/cursor';
 
 /**
  * Lobby scene - authentication, create/join, 3-player slots, ready system
@@ -48,6 +49,9 @@ export class Lobby extends Phaser.Scene {
 
   async create(): Promise<void> {
     console.log('Lobby scene started');
+    
+    // Set up custom cursor
+    setupCustomCursor(this);
 
     const width = this.scale.width;
     const height = this.scale.height;
@@ -189,18 +193,6 @@ export class Lobby extends Phaser.Scene {
     const centerY = this.scale.height / 2;
 
     this.container = this.add.container(0, 0);
-
-    // Title (with shadow for visibility over background)
-    const title = this.add.text(centerX, 100, 'Lobby', {
-      fontSize: '48px',
-      color: '#ffffff',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 6,
-    });
-    title.setOrigin(0.5);
-    this.container.add(title);
 
     // Create lobby button - using custom image (original: 950x500)
     this.createButton = this.createImageButton(
@@ -491,18 +483,15 @@ export class Lobby extends Phaser.Scene {
     const centerX = this.scale.width / 2;
     const startY = 120;
 
-    // Title
-    const title = this.add.text(centerX, 60, 'Lobby', {
-      fontSize: '42px',
-      color: '#ffffff',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-    });
-    title.setOrigin(0.5);
-    this.lobbyContainer.add(title);
+    // Title image
+    const titleImage = this.add.image(centerX, 60, 'lobby_sign');
+    titleImage.setOrigin(0.5);
+    // Scale down from 500x500 to larger size
+    titleImage.setScale(0.45); // 500 * 0.45 = 225px
+    this.lobbyContainer.add(titleImage);
 
     // Lobby code
-    const codeText = this.add.text(centerX, 110, `Code: ${this.lobbyCode}`, {
+    const codeText = this.add.text(centerX, 160, `Code: ${this.lobbyCode}`, {
       fontSize: '28px',
       color: `#${COLORS.UI_ACCENT.toString(16)}`,
       fontFamily: 'monospace',
@@ -514,7 +503,7 @@ export class Lobby extends Phaser.Scene {
     // Copy code button - custom image (1200x575)
     const copyBtn = this.createImageButton(
       centerX + 180,
-      110,
+      160,
       'copycode_btn',
       100,
       48, // Scaled to maintain aspect ratio (1200:575)

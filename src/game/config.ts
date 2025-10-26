@@ -51,6 +51,8 @@ export function createPhaserConfig(parent: string): Phaser.Types.Core.GameConfig
         debug: false,
       },
     },
+    // Set default cursor for entire game
+    cursorStyle: 'none',
   };
 }
 
