@@ -1495,17 +1495,24 @@ export class BattleScene extends Phaser.Scene {
       if (!player) return;
       
       const userId = player.userId || player.id;
+      
+      // ONLY process deck changes for the current player
+      // Other players' card plays are already handled by the combat resolution
+      if (userId !== this.userId) {
+        console.log(`[BattleScene] Skipping deck processing for remote player: ${player.name}`);
+        return;
+      }
+      
       const deck = this.playerDecks.get(userId);
       if (!deck) return;
       
       // Create animation callback for discarding cards (only for current player)
       const DISCARD_ANIMATION_STAGGER_MS = 200; // Delay between each card discard
-      const onDiscardAnimation = userId === this.userId ? 
-        (cardId: string, position: number, delay: number) => {
-          if (this.handUI) {
-            this.handUI.animateDiscardCard(cardId, position, delay);
-          }
-        } : undefined;
+      const onDiscardAnimation = (cardId: string, position: number, delay: number) => {
+        if (this.handUI) {
+          this.handUI.animateDiscardCard(cardId, position, delay);
+        }
+      };
       
       let cardIndex = 0;
       plans.forEach(plan => {
@@ -1518,7 +1525,7 @@ export class BattleScene extends Phaser.Scene {
       });
       
       // Update pile indicators for current player
-      if (userId === this.userId && this.handUI) {
+      if (this.handUI) {
         this.handUI.updatePileIndicators(deck.drawPile.length, deck.discardPile.length);
       }
     });
@@ -2598,6 +2605,44 @@ export class BattleScene extends Phaser.Scene {
       this.combatState.fireShield = new Set();
     }
     
+    // Deserialize blinded actors (should be empty as it's cleared each turn)
+    console.log('📦 Received payload.blinded:', payload.blinded);
+    if (payload.blinded && payload.blinded.length > 0) {
+      const blindedSet = new Set(payload.blinded);
+      this.combatState.blinded = blindedSet;
+      console.log('✅ Blinded actors loaded:', Array.from(blindedSet));
+    } else {
+      this.combatState.blinded = new Set();
+    }
+    
+    // Deserialize taunted actors (should be empty as it's cleared each turn)
+    console.log('📦 Received payload.taunted:', payload.taunted);
+    if (payload.taunted && payload.taunted.length > 0) {
+      const tauntedMap = new Map();
+      for (const entry of payload.taunted) {
+        console.log(`🎯 Deserializing taunt: ${entry.actorId} must attack ${entry.taunter}`);
+        tauntedMap.set(entry.actorId, entry.taunter);
+      }
+      this.combatState.taunted = tauntedMap;
+      console.log('✅ Taunt effects loaded:', Array.from(tauntedMap.entries()));
+    } else {
+      this.combatState.taunted = new Map();
+    }
+    
+    // Deserialize buff effects
+    console.log('📦 Received payload.buffs:', payload.buffs);
+    if (payload.buffs && payload.buffs.length > 0) {
+      const buffsMap = new Map();
+      for (const entry of payload.buffs) {
+        console.log(`💪 Deserializing buffs for actor ${entry.actorId}:`, entry.buffs);
+        buffsMap.set(entry.actorId, entry.buffs);
+      }
+      this.combatState.buffs = buffsMap;
+      console.log('✅ Buff effects loaded:', Array.from(buffsMap.entries()));
+    } else {
+      this.combatState.buffs = new Map();
+    }
+    
     // Update status indicators after DOT persistence
     this.updateAllStatusIndicators();
     
@@ -2765,15 +2810,37 @@ export class BattleScene extends Phaser.Scene {
         this.applyHealingToActor(dstId, value);
       },
       onVfx: (srcId, dstId, note) => {
-        console.log(`=== VFX CALLBACK ===`);
-        console.log(`Animation: VFX from ${srcId} to ${dstId} (${note})`);
-        console.log(`Sound manager exists: ${!!this.soundManager}`);
+        console.log(`[Animation] VFX from ${srcId} to ${dstId} (${note})`);
         
         // Add combat log entries for status effects
         if (note === 'vulnerable' && dstId) {
           const srcName = this.getActorName(srcId);
           const dstName = this.getActorName(dstId);
           this.addCombatLogEntry(`${srcName} weakens ${dstName}! (+2 dmg taken)`, '#9b59b6');
+        }
+        
+        if (note === 'poison' && dstId) {
+          const srcName = this.getActorName(srcId);
+          const dstName = this.getActorName(dstId);
+          this.addCombatLogEntry(`☠️ ${srcName} poisons ${dstName}!`, '#00ff00');
+        }
+        
+        if (note === 'burn' && dstId) {
+          const srcName = this.getActorName(srcId);
+          const dstName = this.getActorName(dstId);
+          this.addCombatLogEntry(`🔥 ${srcName} burns ${dstName}!`, '#ff4500');
+        }
+        
+        if (note === 'taunt' && dstId) {
+          const srcName = this.getActorName(srcId);
+          const dstName = this.getActorName(dstId);
+          this.addCombatLogEntry(`❗ ${srcName} taunts ${dstName}!`, '#ff0000');
+        }
+        
+        if (note === 'blind' && dstId) {
+          const srcName = this.getActorName(srcId);
+          const dstName = this.getActorName(dstId);
+          this.addCombatLogEntry(`💨 ${srcName} blinds ${dstName}!`, '#888888');
         }
         
         // Handle fire shield retaliate
@@ -2829,6 +2896,54 @@ export class BattleScene extends Phaser.Scene {
             alpha: { from: 1, to: 0.5 },
             scale: { from: 1, to: 1.2 },
             duration: 300,
+            yoyo: true,
+            repeat: 2,
+            ease: 'Sine.easeInOut',
+          });
+        }
+      },
+      onMiss: (srcId, dstId) => {
+        console.log(`Animation: Miss from ${srcId} to ${dstId}`);
+        const srcName = this.getActorName(srcId);
+        const dstName = this.getActorName(dstId);
+        
+        // Add combat log for miss
+        this.addCombatLogEntry(`${srcName}'s attack misses ${dstName}!`, '#888888');
+        
+        // Visual effect - show "MISS" text above target
+        const dstSlot = this.getActorSlot(dstId);
+        if (dstSlot) {
+          const missText = this.add.text(
+            dstSlot.x,
+            dstSlot.y - 80,
+            'MISS!',
+            {
+              fontSize: '28px',
+              color: '#888888',
+              fontFamily: 'Arial, sans-serif',
+              fontStyle: 'bold',
+              stroke: '#000000',
+              strokeThickness: 4,
+            }
+          );
+          missText.setOrigin(0.5);
+          missText.setDepth(100);
+          
+          // Animate the miss text
+          this.tweens.add({
+            targets: missText,
+            y: missText.y - 40,
+            alpha: 0,
+            duration: 800,
+            ease: 'Power2.easeOut',
+            onComplete: () => missText.destroy(),
+          });
+          
+          // Wobble the target to show they dodged
+          this.tweens.add({
+            targets: dstSlot,
+            x: dstSlot.x + 10,
+            duration: 100,
             yoyo: true,
             repeat: 2,
             ease: 'Sine.easeInOut',
@@ -4479,6 +4594,311 @@ export class BattleScene extends Phaser.Scene {
             debuff.destroy();
             vulnText.destroy();
           },
+        });
+      }
+    }
+    
+    // Poison DOT effect
+    if (note === 'poison' && dstId) {
+      const dstSlot = this.getActorSlot(dstId);
+      if (dstSlot) {
+        // Create poison bubbles/particles
+        const poisonGraphics = this.add.graphics();
+        poisonGraphics.fillStyle(0x00ff00, 0.7);
+        
+        // Create multiple poison bubbles
+        for (let i = 0; i < 8; i++) {
+          const angle = (i / 8) * Math.PI * 2;
+          const radius = 30 + Math.random() * 10;
+          const x = dstSlot.x + Math.cos(angle) * radius;
+          const y = dstSlot.y + Math.sin(angle) * radius;
+          const size = 5 + Math.random() * 5;
+          
+          poisonGraphics.fillCircle(x - dstSlot.x, y - dstSlot.y, size);
+        }
+        
+        poisonGraphics.setPosition(dstSlot.x, dstSlot.y);
+        poisonGraphics.setDepth(90);
+        
+        // Poison text indicator
+        const poisonText = this.add.text(
+          dstSlot.x,
+          dstSlot.y - 60,
+          '☠️ POISONED',
+          {
+            fontSize: '18px',
+            color: '#00ff00',
+            fontFamily: 'Arial, sans-serif',
+            fontStyle: 'bold',
+            backgroundColor: '#000000',
+            padding: { x: 6, y: 4 },
+            stroke: '#003300',
+            strokeThickness: 2,
+          }
+        );
+        poisonText.setOrigin(0.5);
+        poisonText.setDepth(100);
+        
+        // Animate bubbles rising and fading
+        this.tweens.add({
+          targets: poisonGraphics,
+          y: dstSlot.y - 50,
+          alpha: 0,
+          duration: 1200,
+          ease: 'Sine.easeOut',
+          onComplete: () => poisonGraphics.destroy(),
+        });
+        
+        // Pulse text
+        this.tweens.add({
+          targets: poisonText,
+          scaleX: 1.2,
+          scaleY: 1.2,
+          duration: 200,
+          yoyo: true,
+          repeat: 2,
+          ease: 'Sine.easeInOut',
+        });
+        
+        // Fade out text
+        this.tweens.add({
+          targets: poisonText,
+          alpha: 0,
+          duration: 800,
+          delay: 600,
+          ease: 'Power2',
+          onComplete: () => poisonText.destroy(),
+        });
+      }
+    }
+    
+    // Burn DOT effect
+    if (note === 'burn' && dstId) {
+      const dstSlot = this.getActorSlot(dstId);
+      if (dstSlot) {
+        console.log(`[VFX] Burn effect on ${dstId}`);
+        // Create fire particles
+        const fireGraphics = this.add.graphics();
+        fireGraphics.setDepth(90);
+        
+        // Create flame effect with multiple circles
+        for (let i = 0; i < 12; i++) {
+          const angle = (i / 12) * Math.PI * 2;
+          const radius = 25 + Math.random() * 15;
+          const x = Math.cos(angle) * radius;
+          const y = Math.sin(angle) * radius;
+          const size = 6 + Math.random() * 6;
+          
+          // Gradient from red to orange to yellow
+          const colors = [0xff0000, 0xff4500, 0xff8800, 0xffaa00];
+          const color = colors[Math.floor(Math.random() * colors.length)];
+          fireGraphics.fillStyle(color, 0.8);
+          fireGraphics.fillCircle(x, y, size);
+        }
+        
+        fireGraphics.setPosition(dstSlot.x, dstSlot.y);
+        
+        // Burn text indicator
+        const burnText = this.add.text(
+          dstSlot.x,
+          dstSlot.y - 60,
+          '🔥 BURNING',
+          {
+            fontSize: '18px',
+            color: '#ff4500',
+            fontFamily: 'Arial, sans-serif',
+            fontStyle: 'bold',
+            backgroundColor: '#000000',
+            padding: { x: 6, y: 4 },
+            stroke: '#330000',
+            strokeThickness: 2,
+          }
+        );
+        burnText.setOrigin(0.5);
+        burnText.setDepth(100);
+        
+        // Animate flames rising and flickering
+        this.tweens.add({
+          targets: fireGraphics,
+          y: dstSlot.y - 60,
+          alpha: 0,
+          duration: 1000,
+          ease: 'Sine.easeOut',
+          onComplete: () => fireGraphics.destroy(),
+        });
+        
+        // Add flicker effect
+        this.tweens.add({
+          targets: fireGraphics,
+          scaleX: { from: 1, to: 1.3 },
+          scaleY: { from: 1, to: 1.3 },
+          duration: 150,
+          yoyo: true,
+          repeat: 3,
+          ease: 'Sine.easeInOut',
+        });
+        
+        // Pulse text
+        this.tweens.add({
+          targets: burnText,
+          scaleX: 1.2,
+          scaleY: 1.2,
+          duration: 200,
+          yoyo: true,
+          repeat: 2,
+          ease: 'Sine.easeInOut',
+        });
+        
+        // Fade out text
+        this.tweens.add({
+          targets: burnText,
+          alpha: 0,
+          duration: 800,
+          delay: 500,
+          ease: 'Power2',
+          onComplete: () => burnText.destroy(),
+        });
+      }
+    }
+    
+    // Taunt effect
+    if (note === 'taunt' && dstId) {
+      const dstSlot = this.getActorSlot(dstId);
+      const srcSlot = this.getActorSlot(srcId);
+      if (dstSlot && srcSlot) {
+        // Draw a line/arrow from taunted enemy to taunter
+        const line = this.add.graphics();
+        line.lineStyle(4, 0xff0000, 0.8);
+        line.beginPath();
+        line.moveTo(dstSlot.x, dstSlot.y);
+        line.lineTo(srcSlot.x, srcSlot.y);
+        line.strokePath();
+        line.setDepth(85);
+        
+        // Add exclamation mark above enemy
+        const tauntText = this.add.text(
+          dstSlot.x,
+          dstSlot.y - 70,
+          '❗ TAUNTED',
+          {
+            fontSize: '18px',
+            color: '#ff0000',
+            fontFamily: 'Arial, sans-serif',
+            fontStyle: 'bold',
+            backgroundColor: '#000000',
+            padding: { x: 6, y: 4 },
+            stroke: '#660000',
+            strokeThickness: 2,
+          }
+        );
+        tauntText.setOrigin(0.5);
+        tauntText.setDepth(100);
+        
+        // Pulse line
+        this.tweens.add({
+          targets: line,
+          alpha: 0.3,
+          duration: 300,
+          yoyo: true,
+          repeat: 2,
+          ease: 'Sine.easeInOut',
+        });
+        
+        // Shake text
+        this.tweens.add({
+          targets: tauntText,
+          y: tauntText.y - 10,
+          duration: 150,
+          yoyo: true,
+          repeat: 3,
+          ease: 'Sine.easeInOut',
+        });
+        
+        // Fade out
+        this.tweens.add({
+          targets: [line, tauntText],
+          alpha: 0,
+          duration: 800,
+          delay: 800,
+          ease: 'Power2',
+          onComplete: () => {
+            line.destroy();
+            tauntText.destroy();
+          },
+        });
+      }
+    }
+    
+    // Blind effect (smoke grenade)
+    if (note === 'blind' && dstId) {
+      const dstSlot = this.getActorSlot(dstId);
+      if (dstSlot) {
+        // Create smoke cloud
+        const smokeGraphics = this.add.graphics();
+        smokeGraphics.setDepth(90);
+        
+        // Draw multiple smoke puffs
+        for (let i = 0; i < 10; i++) {
+          const angle = (i / 10) * Math.PI * 2;
+          const radius = 20 + Math.random() * 25;
+          const x = Math.cos(angle) * radius;
+          const y = Math.sin(angle) * radius;
+          const size = 10 + Math.random() * 15;
+          
+          smokeGraphics.fillStyle(0x888888, 0.6);
+          smokeGraphics.fillCircle(x, y, size);
+        }
+        
+        smokeGraphics.setPosition(dstSlot.x, dstSlot.y);
+        
+        // Blind text indicator
+        const blindText = this.add.text(
+          dstSlot.x,
+          dstSlot.y - 60,
+          '💨 BLINDED',
+          {
+            fontSize: '18px',
+            color: '#888888',
+            fontFamily: 'Arial, sans-serif',
+            fontStyle: 'bold',
+            backgroundColor: '#000000',
+            padding: { x: 6, y: 4 },
+            stroke: '#222222',
+            strokeThickness: 2,
+          }
+        );
+        blindText.setOrigin(0.5);
+        blindText.setDepth(100);
+        
+        // Animate smoke dispersing
+        this.tweens.add({
+          targets: smokeGraphics,
+          scaleX: 2,
+          scaleY: 2,
+          alpha: 0,
+          duration: 1500,
+          ease: 'Sine.easeOut',
+          onComplete: () => smokeGraphics.destroy(),
+        });
+        
+        // Wobble text
+        this.tweens.add({
+          targets: blindText,
+          x: blindText.x + 5,
+          duration: 100,
+          yoyo: true,
+          repeat: 4,
+          ease: 'Sine.easeInOut',
+        });
+        
+        // Fade out text
+        this.tweens.add({
+          targets: blindText,
+          alpha: 0,
+          duration: 1000,
+          delay: 600,
+          ease: 'Power2',
+          onComplete: () => blindText.destroy(),
         });
       }
     }

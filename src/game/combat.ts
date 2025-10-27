@@ -31,6 +31,7 @@ export interface CombatState {
   buffs?: Map<ActorId, BuffEffect[]>; // Buff effects per actor
   blinded?: Set<ActorId>; // Blinded actors (miss next attack)
   fireShield?: Set<ActorId>; // Actors with Fire Shield (retaliate on hit)
+  taunted?: Map<ActorId, ActorId>; // Maps taunted actor ID to the taunter ID they must attack
 }
 
 export type Initiative = ActorId[];
@@ -53,13 +54,31 @@ export function rollInitiative(state: CombatState, rng: () => number): Initiativ
 /**
  * Simple enemy AI
  * Low HP (<30%) → Guard; else Attack lowest-HP party member
+ * If taunted, must attack the taunter instead
  */
 export function enemyAI(state: CombatState, enemy: Actor, rng: () => number): ActionPlan {
   if (enemy.hp / enemy.maxHp < 0.3) {
     return { by: enemy.id, type: 'Guard' };
   }
   
+  // Check if this enemy is taunted
+  const tauntedMap = state.taunted || new Map();
+  const taunter = tauntedMap.get(enemy.id);
+  
+  if (taunter) {
+    // Must attack the taunter
+    const taunterActor = state.party.find(p => p.id === taunter);
+    if (taunterActor && taunterActor.hp > 0) {
+      console.log(`[AI] ${enemy.name} is taunted! Must attack ${taunterActor.name}`);
+      return { by: enemy.id, type: 'Attack', target: taunter };
+    }
+    // If taunter is dead, remove taunt and fall through to normal targeting
+    tauntedMap.delete(enemy.id);
+  }
+  
+  // Normal AI: Attack lowest-HP party member
   const target = [...state.party]
+    .filter(p => p.hp > 0) // Only target alive party members
     .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0];
   
   return { by: enemy.id, type: 'Attack', target: target?.id };
@@ -86,6 +105,7 @@ export function resolveTurn(
     buffs: state.buffs ? new Map(state.buffs) : new Map(),
     blinded: state.blinded ? new Set(state.blinded) : new Set(),
     fireShield: state.fireShield ? new Set(state.fireShield) : new Set(),
+    taunted: state.taunted ? new Map(state.taunted) : new Map(),
   };
   
   const order = rollInitiative(simState, rng);
@@ -132,8 +152,10 @@ export function resolveTurn(
         console.log(`[Combat] 💚 ${actor.name} HP before DOT: ${actor.hp}/${actor.maxHp}`);
         
         // Create poison/burn visual effect
+        console.log(`[Combat] 🎨 Creating DOT VFX: type="${dot.type}", src=${source.id}, dst=${actor.id}`);
         effects.push({ at: tCursor, kind: 'vfx', src: source.id, dst: actor.id, note: dot.type });
         effects.push({ at: tCursor + 400, kind: 'hit', src: source.id, dst: actor.id, value: dot.damage });
+        console.log(`[Combat] 🎨 VFX effect added to timeline at t=${tCursor}`);
         
         // Apply damage
         actor.hp = Math.max(0, actor.hp - dot.damage);
@@ -509,47 +531,58 @@ export function resolveTurn(
                 simState.shields!.set(actor.id, newShieldTotal);
                 console.log(`[Combat] ⚡ ${actor.name} uses Lightning Rod! Gains ${shieldValue} shield. Total: ${newShieldTotal}`);
                 
-                // Taunt all enemies
+                // Taunt all enemies - they must attack the caster
                 const enemies = actor.side === 'party' ? simState.enemies : simState.party;
                 enemies.forEach((enemy, index) => {
                   const offsetTime = tCursor + (index * 150);
                   effects.push({ at: offsetTime, kind: 'vfx', src: actor.id, dst: enemy.id, note: 'taunt' });
+                  
+                  // Set the taunted state: enemy must target the actor
+                  simState.taunted!.set(enemy.id, actor.id);
                 });
-                console.log(`[Combat] ⚡ All enemies are drawn to attack ${actor.name}!`);
+                console.log(`[Combat] ⚡ All ${enemies.length} enemies are taunted to attack ${actor.name}!`);
               } else if (dst) {
-                // Regular taunt card (like Warrior's Taunt)
+                // Regular taunt card (like Warrior's Taunt) - single target
                 console.log(`[Combat] ${actor.name} taunts ${dst.name}!`);
                 effects.push({ at: tCursor, kind: 'vfx', src: actor.id, dst: dst.id, note: 'taunt' });
+                
+                // Set the taunted state: dst must target the actor
+                simState.taunted!.set(dst.id, actor.id);
+                console.log(`[Combat] ${dst.name} is taunted to attack ${actor.name}!`);
               }
               break;
             
             case 'DOT':
               // Damage over time: add status effect for multiple turns
-              if (dst) {
-                // Special handling for Firebomb - affects all enemies
-                if (card.id === 'Firebomb') {
-                  const targets = actor.side === 'party' ? simState.enemies : simState.party;
-                  targets.forEach((target, index) => {
-                    // Firebomb: 8 initial damage + 2 burn per turn for 3 turns
-                    const initialDamage = card.power; // 8 initial damage
-                    const burnDamagePerTurn = 2; // 2 burn damage per turn
-                    
-                    const targetDots = dotEffects.get(target.id) || [];
-                    targetDots.push({
-                      damage: burnDamagePerTurn, // 2 burn damage per turn
-                      duration: 3, // 3 turns of burn
-                      source: actor.id,
-                      type: 'burn',
-                    });
-                    dotEffects.set(target.id, targetDots);
-                    
-                    const offsetTime = tCursor + (index * 200);
-                    strike(actor, target, initialDamage, offsetTime, card.name);
-                    target.hp = Math.max(0, target.hp - initialDamage);
-                    effects.push({ at: offsetTime, kind: 'vfx', src: actor.id, dst: target.id, note: 'burn' });
+              console.log(`[Combat] 🔥 DOT CASE TRIGGERED! Card: ${card.name} (${card.id}), Actor: ${actor.name}, has target: ${!!dst}`);
+              
+              // Special handling for Firebomb - affects all enemies (no target needed)
+              if (card.id === 'Firebomb') {
+                console.log(`[Combat] 💣 FIREBOMB DETECTED! Processing AOE burn...`);
+                const targets = actor.side === 'party' ? simState.enemies : simState.party;
+                console.log(`[Combat] 💣 Firebomb will hit ${targets.length} targets`);
+                targets.forEach((target, index) => {
+                  // Firebomb: 8 initial damage + 2 burn per turn for 3 turns
+                  const initialDamage = card.power; // 8 initial damage
+                  const burnDamagePerTurn = 2; // 2 burn damage per turn
+                  
+                  const targetDots = dotEffects.get(target.id) || [];
+                  targetDots.push({
+                    damage: burnDamagePerTurn, // 2 burn damage per turn
+                    duration: 3, // 3 turns of burn
+                    source: actor.id,
+                    type: 'burn',
                   });
-                  console.log(`[Combat] 💣 ${actor.name} uses Firebomb! All enemies take 8 damage + burn for 3 turns!`);
-                } else {
+                  dotEffects.set(target.id, targetDots);
+                  
+                  const offsetTime = tCursor + (index * 200);
+                  strike(actor, target, initialDamage, offsetTime, card.name);
+                  target.hp = Math.max(0, target.hp - initialDamage);
+                  console.log(`[Combat] 🔥 Adding burn VFX for ${target.id} at t=${offsetTime}, note="burn"`);
+                  effects.push({ at: offsetTime, kind: 'vfx', src: actor.id, dst: target.id, note: 'burn' });
+                });
+                console.log(`[Combat] 💣 ${actor.name} uses Firebomb! All enemies take 8 damage + burn for 3 turns!`);
+              } else if (dst) {
                   // Single-target DOT (Poison Dart, etc.)
                   const effectType: 'poison' | 'burn' = card.name.toLowerCase().includes('poison') ? 'poison' : 'burn';
                   
@@ -574,6 +607,7 @@ export function resolveTurn(
                     
                     console.log(`[Combat] 🐍 ${actor.name} uses Poison Dart! ${dst.name} takes 5 damage + poison for 2 turns!`);
                     console.log(`[Combat] 🔮 DOT Effect: ${poisonDamagePerTurn} poison damage per turn for 2 turns`);
+                    console.log(`[Combat] 🔮 Poison VFX added at t=${tCursor}, note="poison"`);
                   } else {
                     // Generic DOT handling for other cards
                     const damagePerTurn = card.power;
@@ -599,7 +633,6 @@ export function resolveTurn(
                   
                   effects.push({ at: tCursor, kind: 'vfx', src: actor.id, dst: dst.id, note: effectType });
                 }
-              }
               break;
             
             case 'CLEANSE':
@@ -734,6 +767,18 @@ export function resolveTurn(
   // Update the simulation state's DOT effects for persistence
   simState.dots = dotEffects;
   
+  // Clear taunt effects at end of turn (taunts only last for 1 turn)
+  if (simState.taunted && simState.taunted.size > 0) {
+    console.log(`[Combat] Clearing ${simState.taunted.size} taunt effects at end of turn`);
+    simState.taunted.clear();
+  }
+  
+  // Clear blind effects at end of turn (blind only lasts for 1 turn/attack)
+  if (simState.blinded && simState.blinded.size > 0) {
+    console.log(`[Combat] Clearing ${simState.blinded.size} blind effects at end of turn`);
+    simState.blinded.clear();
+  }
+  
   // Serialize DOT effects Map to array format for network transmission
   const serializedDots = Array.from(dotEffects.entries()).map(([actorId, effects]) => ({
     actorId,
@@ -752,11 +797,17 @@ export function resolveTurn(
     buffs: buffs.map(b => ({ ...b })),
   }));
   
-  // Serialize blinded Set to array format for network transmission
+  // Serialize blinded Set to array format for network transmission (should be empty after clear)
   const serializedBlinded = Array.from(simState.blinded || new Set());
   
   // Serialize fireShield Set to array format for network transmission
   const serializedFireShield = Array.from(simState.fireShield || new Set());
+  
+  // Serialize taunted Map to array format for network transmission (should be empty after clear)
+  const serializedTaunted = Array.from((simState.taunted || new Map()).entries()).map(([actorId, taunter]) => ({
+    actorId,
+    taunter,
+  }));
   
   return { 
     turn: state.turn, 
@@ -767,8 +818,9 @@ export function resolveTurn(
     dots: serializedDots, // Include DOT effects in payload for persistence
     shields: serializedShields, // Include shields in payload for persistence
     buffs: serializedBuffs, // Include buffs in payload for persistence
-    blinded: serializedBlinded, // Include blinded actors in payload for persistence
+    blinded: serializedBlinded, // Include blinded actors in payload for persistence (cleared each turn)
     fireShield: serializedFireShield, // Include fire shield actors in payload for persistence
+    taunted: serializedTaunted, // Include taunted actors in payload (cleared each turn)
   };
 }
 
@@ -801,6 +853,9 @@ export function createCombatState(
     stunned: new Set(),
     dots: new Map(),
     fireShield: new Set(),
+    taunted: new Map(),
+    blinded: new Set(),
+    buffs: new Map(),
   };
 }
 

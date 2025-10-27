@@ -19,6 +19,8 @@ export class EventScene extends Phaser.Scene {
   private hasAppliedChoice = false; // Prevent duplicate choice application
   private userId: string | null = null;
   private isHost = false;
+  private readyPlayers: Set<string> = new Set(); // Track ready players for multiplayer
+  private autoTransitionTimer: Phaser.Time.TimerEvent | null = null; // Auto-proceed timer
   
   // Event data
   private currentEvent: EventData | null = null;
@@ -29,6 +31,9 @@ export class EventScene extends Phaser.Scene {
   private descriptionText: Phaser.GameObjects.Text | null = null;
   private choiceContainer: Phaser.GameObjects.Container | null = null;
   private continueButton: Phaser.GameObjects.Text | null = null;
+  private votingUI: Phaser.GameObjects.Container | null = null;
+  private readyIndicators: Phaser.GameObjects.Container | null = null;
+  private unsubscribe: (() => void) | null = null;
 
   constructor() {
     super({ key: 'EventScene' });
@@ -52,6 +57,13 @@ export class EventScene extends Phaser.Scene {
     this.eventSeed = this.mapSeed || (Date.now() % 2147483647); // Keep within PostgreSQL integer range
     this.hasTransitioned = false; // Reset transition flag for new scene instance
     this.hasAppliedChoice = false; // Reset choice application flag for new scene instance
+    this.readyPlayers.clear(); // Clear ready players for fresh start
+    
+    // Clean up any existing timers
+    if (this.autoTransitionTimer) {
+      this.autoTransitionTimer.destroy();
+      this.autoTransitionTimer = null;
+    }
     
     console.log('EventScene initialized with node:', data.nodeId);
     console.log('Current stage:', this.currentStage);
@@ -638,9 +650,17 @@ export class EventScene extends Phaser.Scene {
       alpha: 1,
       duration: 500,
       onComplete: () => {
-        // Show continue button after delay
-        this.time.delayedCall(2000, () => {
-          this.continueButton?.setVisible(true);
+        // Auto-proceed after delay
+        const AUTO_PROCEED_DELAY = 2500; // 2.5 seconds to read the result
+        
+        this.autoTransitionTimer = this.time.delayedCall(AUTO_PROCEED_DELAY, () => {
+          if (this.hasTransitioned) {
+            console.log('[EventScene] Already transitioned, skipping auto-proceed');
+            return;
+          }
+          
+          console.log('[EventScene] Auto-proceeding after event result...');
+          this.handleContinueButton();
         });
       },
     });
@@ -827,6 +847,15 @@ export class EventScene extends Phaser.Scene {
       this.unsubscribe();
       this.unsubscribe = null;
     }
+    
+    // Clean up auto-transition timer
+    if (this.autoTransitionTimer) {
+      this.autoTransitionTimer.destroy();
+      this.autoTransitionTimer = null;
+    }
+    
+    // Clear ready players
+    this.readyPlayers.clear();
   }
 
   destroy(): void {

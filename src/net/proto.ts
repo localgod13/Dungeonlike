@@ -67,6 +67,11 @@ export const BuffEntrySchema = z.object({
   buffs: z.array(BuffEffectSchema),
 });
 
+export const TauntEntrySchema = z.object({
+  actorId: ActorIdSchema, // The actor that is taunted
+  taunter: ActorIdSchema, // The actor they must attack
+});
+
 export const ResolvePayloadSchema = z.object({
   turn: z.number(),
   seed: z.number(),
@@ -78,6 +83,7 @@ export const ResolvePayloadSchema = z.object({
   buffs: z.array(BuffEntrySchema).optional(), // Serialized buff effects
   blinded: z.array(ActorIdSchema).optional(), // Serialized blinded actors
   fireShield: z.array(ActorIdSchema).optional(), // Serialized fire shield actors
+  taunted: z.array(TauntEntrySchema).optional(), // Serialized taunt effects
 });
 
 // Cursor position schema
