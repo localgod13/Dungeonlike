@@ -148,8 +148,29 @@ export function drawCard(
 }
 
 /**
- * Draw cards at the start of each turn to maintain hand size
- * Only draws if hand is below target size
+ * Discard all cards from hand to discard pile
+ * Used at the end of each turn to clear unused cards
+ */
+export function discardAllCardsFromHand(state: DeckState): void {
+  console.log(`[Deck] === DISCARDING ALL CARDS FROM HAND ===`);
+  console.log(`[Deck] Current hand size: ${state.hand.length}`);
+  console.log(`[Deck] Cards in hand:`, state.hand);
+  
+  // Move all cards from hand to discard pile
+  state.hand.forEach(cardId => {
+    state.discardPile.push(cardId);
+  });
+  
+  // Clear hand
+  state.hand = [];
+  
+  console.log(`[Deck] All cards discarded. Hand size: ${state.hand.length}, Discard pile: ${state.discardPile.length}`);
+  console.log(`[Deck] === DISCARD COMPLETE ===`);
+}
+
+/**
+ * Draw cards at the start of each turn
+ * Always draws a fresh hand of 4 cards (or as many as available)
  */
 export function drawCardsAtTurnStart(
   state: DeckState, 
@@ -160,14 +181,9 @@ export function drawCardsAtTurnStart(
   console.log(`[Deck] Current hand size: ${state.hand.length}`);
   
   const TARGET_HAND_SIZE = 4;
-  const cardsNeeded = Math.max(0, TARGET_HAND_SIZE - state.hand.length);
+  const cardsNeeded = TARGET_HAND_SIZE; // Always draw 4 cards (hand should be empty)
   
-  if (cardsNeeded === 0) {
-    console.log(`[Deck] Hand is already full (${state.hand.length} cards)`);
-    return;
-  }
-  
-  console.log(`[Deck] Need to draw ${cardsNeeded} cards`);
+  console.log(`[Deck] Drawing ${cardsNeeded} cards for new hand`);
   
   const ANIMATION_STAGGER_MS = 200; // Delay between each card animation
   

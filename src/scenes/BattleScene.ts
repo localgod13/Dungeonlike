@@ -34,7 +34,7 @@ import { HandUI } from '../ui/handUi';
 import { getCardById, requiresTarget } from '../game/cards';
 import { startBattleAP, refreshAP, canAfford, spendAP } from '../game/economy';
 import { SoundManager } from '../game/sound';
-import { DeckState, createDeck, drawCardsAtTurnStart, playCard as deckPlayCard, canPlayCard as deckCanPlayCard, resetReusableCharges } from '../game/deck';
+import { DeckState, createDeck, drawCardsAtTurnStart, playCard as deckPlayCard, canPlayCard as deckCanPlayCard, resetReusableCharges, discardAllCardsFromHand } from '../game/deck';
 import { getConsumables } from '../game/inventory';
 import { createCharacterAnimations, createCharacterSprite, hasSprite, CharacterClass } from '../game/characterSprites';
 import { preloadEnemySprites, createEnemyAnimations, createEnemySprite, hasEnemySprite, EnemyType } from '../game/enemySprites';
@@ -5072,39 +5072,43 @@ export class BattleScene extends Phaser.Scene {
       if (deck) {
         // Only draw new cards if this isn't the very first turn
         // (Turn 1 uses the initial hand from createDeck)
-        if (this.currentTurn > 1 && player.userId === this.userId) {
-          // Track hand size before drawing
-          const handSizeBefore = deck.hand.length;
+        if (this.currentTurn > 1) {
+          // DISCARD ALL CARDS FROM HAND FIRST (unused cards from previous turn)
+          discardAllCardsFromHand(deck);
+          console.log(`[Deck] ${player.name} discarded all cards from previous turn`);
           
-          // Create animation callback for drawing cards (only for current player)
-          const onDrawAnimation = (cardId: string, position: number, delay: number) => {
-            console.log(`[Deck] Animation callback triggered for ${cardId} at position ${position} with delay ${delay}ms`);
-            if (this.handUI) {
-              this.handUI.animateDrawCard(cardId, position, delay);
-            } else {
-              console.warn(`[Deck] HandUI not available for animation callback`);
-            }
-          };
-          
-          // Create reshuffle callback to update pile indicators when discard pile is reshuffled
-          const onReshuffleCallback = (drawPileSize: number, discardPileSize: number) => {
-            console.log(`[Deck] Reshuffle callback: DrawPile=${drawPileSize}, Discard=${discardPileSize}`);
-            if (this.handUI) {
-              this.handUI.updatePileIndicators(drawPileSize, discardPileSize);
-            }
-          };
-          
-          drawCardsAtTurnStart(deck, onDrawAnimation, onReshuffleCallback);
-          
-          // Track which cards were just drawn
-          newlyDrawnCards = deck.hand.slice(handSizeBefore);
-          
-          console.log(`[Deck] ${player.name} drew cards - Hand: ${deck.hand.length}, DrawPile: ${deck.drawPile.length}, Discard: ${deck.discardPile.length}`);
-          console.log(`[Deck] Newly drawn cards:`, newlyDrawnCards);
-        } else if (this.currentTurn > 1) {
-          // Other players - no animation
-          drawCardsAtTurnStart(deck);
-          console.log(`[Deck] ${player.name} drew cards - Hand: ${deck.hand.length}, DrawPile: ${deck.drawPile.length}, Discard: ${deck.discardPile.length}`);
+          if (player.userId === this.userId) {
+            // Current player - with animation
+            // Create animation callback for drawing cards (only for current player)
+            const onDrawAnimation = (cardId: string, position: number, delay: number) => {
+              console.log(`[Deck] Animation callback triggered for ${cardId} at position ${position} with delay ${delay}ms`);
+              if (this.handUI) {
+                this.handUI.animateDrawCard(cardId, position, delay);
+              } else {
+                console.warn(`[Deck] HandUI not available for animation callback`);
+              }
+            };
+            
+            // Create reshuffle callback to update pile indicators when discard pile is reshuffled
+            const onReshuffleCallback = (drawPileSize: number, discardPileSize: number) => {
+              console.log(`[Deck] Reshuffle callback: DrawPile=${drawPileSize}, Discard=${discardPileSize}`);
+              if (this.handUI) {
+                this.handUI.updatePileIndicators(drawPileSize, discardPileSize);
+              }
+            };
+            
+            drawCardsAtTurnStart(deck, onDrawAnimation, onReshuffleCallback);
+            
+            // Track which cards were just drawn (all 4 cards since hand was empty)
+            newlyDrawnCards = deck.hand.slice();
+            
+            console.log(`[Deck] ${player.name} drew cards - Hand: ${deck.hand.length}, DrawPile: ${deck.drawPile.length}, Discard: ${deck.discardPile.length}`);
+            console.log(`[Deck] Newly drawn cards:`, newlyDrawnCards);
+          } else {
+            // Other players - no animation
+            drawCardsAtTurnStart(deck);
+            console.log(`[Deck] ${player.name} drew cards - Hand: ${deck.hand.length}, DrawPile: ${deck.drawPile.length}, Discard: ${deck.discardPile.length}`);
+          }
         }
         
         // Reset reusable item charges for new turn (including turn 1)
