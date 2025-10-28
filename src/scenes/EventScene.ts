@@ -566,7 +566,7 @@ export class EventScene extends Phaser.Scene {
     buttonBg.on('pointerover', () => {
       buttonBg.setFillStyle(0x2a1f3d, 0.9);
       choiceText.setColor('#f4e4bc');
-      this.soundManager?.playSfx('ui_hover');
+      this.soundManager?.playSfx('sfx_card_click');
     });
     
     buttonBg.on('pointerout', () => {
@@ -689,7 +689,7 @@ export class EventScene extends Phaser.Scene {
     });
     this.continueButton.on('pointerover', () => {
       this.continueButton?.setColor('#f4e4bc');
-      this.soundManager?.playSfx('ui_hover');
+      this.soundManager?.playSfx('sfx_card_click');
     });
     this.continueButton.on('pointerout', () => {
       this.continueButton?.setColor('#d4af37');

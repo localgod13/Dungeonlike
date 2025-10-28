@@ -94,6 +94,9 @@ export class BattleScene extends Phaser.Scene {
   private phase: 'planning' | 'resolving' | 'idle' = 'planning';
   private playerPlans = new Map<ActorId, ActionPlan[]>(); // Multiple actions per player
   private isLocked = false;
+  
+  // Track attack animation alternation for Minotaur
+  private minotaurAttackCounter = 0;
 
   // UI elements
   private partySlots: Phaser.GameObjects.Container[] = [];
@@ -391,13 +394,13 @@ export class BattleScene extends Phaser.Scene {
         ];
       
       case 6:
-        // Stage 6: DEMON BOSS FIGHT (First World Final Boss)
-        console.log('🔥 BOSS BATTLE: DEMON BOSS 🔥');
+        // Stage 6: MINOTAUR BOSS FIGHT (First World Final Boss)
+        console.log('🔥 BOSS BATTLE: MINOTAUR 🔥');
         return [
           {
             id: 'boss_1',
             side: 'enemy',
-            name: 'Demon Boss',
+            name: 'Minotaur',
             hp: 150,
             maxHp: 150,
             ap: 5,
@@ -602,7 +605,12 @@ export class BattleScene extends Phaser.Scene {
   private createBattleLayout(): void {
     const centerX = this.scale.width / 2;
     const centerY = this.scale.height / 2;
-    const verticalOffset = 60; // Move everything down to better center in viewport
+    let verticalOffset = 60; // Move everything down to better center in viewport
+    
+    // Move up for boss stage (Minotaur)
+    if (this.currentStage === 6) {
+      verticalOffset = 35; // Move up 25px for boss
+    }
 
     // Create party slots (left side) - dynamic positioning based on player count
     const playerCount = this.players.length;
@@ -801,8 +809,8 @@ export class BattleScene extends Phaser.Scene {
    * Map enemy name to enemy type for sprite lookup
    */
   private getEnemyType(enemyName: string): EnemyType | null {
-    if (enemyName.includes('Demon Boss')) {
-      return 'DemonBoss';
+    if (enemyName.includes('Minotaur')) {
+      return 'Minotaur';
     }
     if (enemyName.includes('Flying Demon')) {
       return 'FlyingDemon';
@@ -835,8 +843,8 @@ export class BattleScene extends Phaser.Scene {
     if (enemyType && hasEnemySprite(enemyType)) {
       try {
         // Use larger scale and higher position for bosses
-        const spriteScale = enemyType === 'DemonBoss' ? 3.5 : 1.5;
-        const spriteY = enemyType === 'DemonBoss' ? -150 : -10; // Bosses positioned much higher
+        const spriteScale = enemyType === 'Minotaur' ? 3.5 : 1.5;
+        const spriteY = enemyType === 'Minotaur' ? -150 : -10; // Bosses positioned much higher
         const sprite = createEnemySprite(this, 0, spriteY, enemyType, spriteScale);
         if (sprite) {
           container.add(sprite);
@@ -2263,7 +2271,24 @@ export class BattleScene extends Phaser.Scene {
       }
       
       if (slot) {
-        const highlight = this.add.rectangle(slot.x, slot.y, 100, 150, 0xffff00, 0.3);
+        // Adjust highlight size based on enemy type
+        let width = 100;
+        let height = 150;
+        let offsetX = 0;
+        let offsetY = 0;
+        
+        if (isEnemy) {
+          const enemyType = this.getEnemyType(target.name);
+          if (enemyType === 'Minotaur') {
+            // Minotaur is much larger and positioned higher
+            width = 200;   // Wider clickable area
+            height = 300;  // Taller clickable area
+            offsetX = 45;  // Move the center right to match sprite center
+            offsetY = -80; // Move the center up to match sprite center
+          }
+        }
+        
+        const highlight = this.add.rectangle(slot.x + offsetX, slot.y + offsetY, width, height, 0xffff00, 0.3);
         highlight.setStrokeStyle(3, 0xffff00, 0.8);
         highlight.setInteractive({ useHandCursor: true });
         this.targetSelector!.add(highlight);
@@ -2693,7 +2718,7 @@ export class BattleScene extends Phaser.Scene {
         const srcActor = [...this.players, ...this.enemies].find(a => a.id === srcId);
         if (srcActor && srcActor.side === 'enemy') {
           const enemyType = this.getEnemyType(srcActor.name);
-          if (enemyType === 'DemonBoss' && this.soundManager) {
+          if (enemyType === 'Minotaur' && this.soundManager) {
             this.soundManager.playBossTurn();
           }
         }
@@ -3643,9 +3668,11 @@ export class BattleScene extends Phaser.Scene {
           } else if (enemyType === 'SkeleMage') {
             attackAnimKey = 'skele_mage_attack_anim';
             idleAnimKey = 'skele_mage_idle_anim';
-          } else if (enemyType === 'DemonBoss') {
-            attackAnimKey = 'demon_boss_attack_anim';
-            idleAnimKey = 'demon_boss_idle_anim';
+          } else if (enemyType === 'Minotaur') {
+            // Alternate between attack1 and attack2 for Minotaur
+            this.minotaurAttackCounter++;
+            attackAnimKey = this.minotaurAttackCounter % 2 === 1 ? 'minotaur_attack1_anim' : 'minotaur_attack2_anim';
+            idleAnimKey = 'minotaur_idle_anim';
           }
           
           if (attackAnimKey && this.anims.exists(attackAnimKey)) {
@@ -3653,7 +3680,7 @@ export class BattleScene extends Phaser.Scene {
             sprite.play(attackAnimKey);
             
             // Play boss attack sound if this is a boss
-            if (enemyType === 'DemonBoss' && this.soundManager) {
+            if (enemyType === 'Minotaur' && this.soundManager) {
               this.soundManager.playBossAttack();
             }
             
@@ -3753,9 +3780,9 @@ export class BattleScene extends Phaser.Scene {
           } else if (enemyType === 'SkeleMage') {
             hurtAnimKey = 'skele_mage_hurt_anim';
             idleAnimKey = 'skele_mage_idle_anim';
-          } else if (enemyType === 'DemonBoss') {
-            hurtAnimKey = 'demon_boss_hurt_anim';
-            idleAnimKey = 'demon_boss_idle_anim';
+          } else if (enemyType === 'Minotaur') {
+            hurtAnimKey = 'minotaur_hurt_anim';
+            idleAnimKey = 'minotaur_idle_anim';
           }
           
           if (hurtAnimKey && this.anims.exists(hurtAnimKey)) {
@@ -3763,7 +3790,7 @@ export class BattleScene extends Phaser.Scene {
             sprite.play(hurtAnimKey);
             
             // Play boss hurt sound if this is a boss
-            if (enemyType === 'DemonBoss' && this.soundManager) {
+            if (enemyType === 'Minotaur' && this.soundManager) {
               this.soundManager.playBossHurt();
             }
             
@@ -3833,8 +3860,8 @@ export class BattleScene extends Phaser.Scene {
           deathAnimKey = 'flying_demon_death_anim';
         } else if (enemyType === 'SkeleMage') {
           deathAnimKey = 'skele_mage_death_anim';
-        } else if (enemyType === 'DemonBoss') {
-          deathAnimKey = 'demon_boss_death_anim';
+        } else if (enemyType === 'Minotaur') {
+          deathAnimKey = 'minotaur_death_anim';
         }
         
         if (deathAnimKey && this.anims.exists(deathAnimKey)) {
@@ -6299,7 +6326,7 @@ export class BattleScene extends Phaser.Scene {
       container.setScale(1);
     });
     
-    // Click handler - skip directly to stage 6 (Demon Boss)
+    // Click handler - skip directly to stage 6 (Minotaur Boss)
     bg.on('pointerdown', () => {
       if (!this.isHost) {
         console.log('⚠️ Only host can skip to boss');

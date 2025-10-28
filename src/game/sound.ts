@@ -23,6 +23,9 @@ export class SoundManager {
   // Sound effect references
   private sfxCache: Map<string, Phaser.Sound.BaseSound> = new Map();
   private currentMusic: Phaser.Sound.BaseSound | null = null;
+  
+  // Track active tweens to prevent crashes
+  private activeTweens: Set<Phaser.Tweens.Tween> = new Set();
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -243,15 +246,19 @@ export class SoundManager {
         if (this.currentMusic === music) {
           this.currentMusic = null;
         }
+        this.activeTweens.delete(fadeTween);
       },
       onUpdate: () => {
         // Check if music is still valid during tween
         if (!music || (music as any).destroyed) {
           console.log('[SoundManager] Music was destroyed during fade, stopping tween');
           fadeTween.stop();
+          this.activeTweens.delete(fadeTween);
         }
       }
     });
+    
+    this.activeTweens.add(fadeTween);
   }
 
   /**
@@ -329,15 +336,19 @@ export class SoundManager {
         ease: 'Linear',
         onComplete: () => {
           console.log('[SoundManager] Music fade in complete');
+          this.activeTweens.delete(fadeTween);
         },
         onUpdate: () => {
           // Check if music is still valid during tween
           if (!this.currentMusic || (this.currentMusic as any).destroyed) {
             console.log('[SoundManager] Music was destroyed during fade in, stopping tween');
             fadeTween.stop();
+            this.activeTweens.delete(fadeTween);
           }
         }
       });
+      
+      this.activeTweens.add(fadeTween);
     } catch (error) {
       console.warn(`Failed to play music with fade in: ${key}`, error);
     }
@@ -502,6 +513,14 @@ export class SoundManager {
    * Clean up all sounds when scene is destroyed
    */
   destroy(): void {
+    // Kill all active tweens first to prevent volume set errors
+    this.activeTweens.forEach(tween => {
+      if (tween && tween.isPlaying()) {
+        tween.stop();
+      }
+    });
+    this.activeTweens.clear();
+    
     this.stopAll();
   }
 }

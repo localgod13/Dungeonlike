@@ -1489,8 +1489,8 @@ class NodeVisual extends Phaser.GameObjects.Container {
       
       // Match EXACT enemy from BattleScene.generateEnemiesForStage()
       if (isBoss) {
-        // Stage 6 boss (Demon Boss)
-        spriteKey = 'demon_boss_idle';
+        // Stage 6 boss (Minotaur)
+        spriteKey = 'minotaur_idle';
       } else {
         switch (stage) {
           case 1:
