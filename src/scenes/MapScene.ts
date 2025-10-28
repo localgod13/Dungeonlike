@@ -921,29 +921,49 @@ export class MapScene extends Phaser.Scene {
     if (this.currentNodeId) {
       const currentNode = this.gameMap.nodes.get(this.currentNodeId);
       if (currentNode) {
+        console.log(`[updateAvailableNodes] Current node: ${this.currentNodeId} at layer ${currentNode.layer}`);
+        console.log(`[updateAvailableNodes] Current node visited: ${currentNode.visited}`);
+        console.log(`[updateAvailableNodes] Current node connections:`, currentNode.connections);
+        
         // Only nodes connected to current node are available
         currentNode.connections.forEach(connectedId => {
           const connectedNode = this.gameMap.nodes.get(connectedId);
-          // Only allow forward progression (higher layer = further up the map)
-          if (connectedNode && !connectedNode.visited && connectedNode.layer > currentNode.layer) {
-            availableIds.add(connectedId);
+          if (connectedNode) {
+            const isForward = connectedNode.layer > currentNode.layer;
+            const isUnvisited = !connectedNode.visited;
+            console.log(`[updateAvailableNodes] Checking ${connectedId}: layer=${connectedNode.layer}, visited=${connectedNode.visited}, forward=${isForward}, unvisited=${isUnvisited}`);
+            
+            // Only allow forward progression (higher layer = further up the map)
+            if (isUnvisited && isForward) {
+              availableIds.add(connectedId);
+              console.log(`[updateAvailableNodes] ✓ Node ${connectedId} is available!`);
+            }
           }
         });
         
-        console.log(`Available nodes from ${this.currentNodeId}:`, Array.from(availableIds));
+        console.log(`[updateAvailableNodes] Total available nodes from ${this.currentNodeId}:`, Array.from(availableIds));
+      } else {
+        console.error(`[updateAvailableNodes] Current node ${this.currentNodeId} not found in map!`);
       }
     } else {
+      console.log(`[updateAvailableNodes] No current node, using fallback`);
       // Fallback to old behavior if no current node
       const available = getAvailableNodes(this.gameMap);
       availableIds = new Set(available.map(n => n.id));
+      console.log(`[updateAvailableNodes] Fallback available nodes:`, Array.from(availableIds));
     }
     
     for (const [id, visual] of this.nodeVisuals.entries()) {
       const node = this.gameMap.nodes.get(id)!;
       const isCurrent = id === this.currentNodeId;
-      visual.setAvailable(availableIds.has(id));
+      const isAvailable = availableIds.has(id);
+      visual.setAvailable(isAvailable);
       visual.setVisited(node.visited);
       visual.setCurrent(isCurrent);
+      
+      if (node.layer > 0 && node.layer < 6) { // Only log middle layers to avoid spam
+        console.log(`[updateAvailableNodes] Visual ${id}: available=${isAvailable}, visited=${node.visited}, current=${isCurrent}`);
+      }
     }
   }
 
@@ -1826,7 +1846,14 @@ class NodeVisual extends Phaser.GameObjects.Container {
   }
 
   private onClick(): void {
-    if (!this.isAvailable || this.isVisited) return;
+    console.log(`[NodeVisual] Clicked node ${this.node.id}: isAvailable=${this.isAvailable}, isVisited=${this.isVisited}`);
+    
+    if (!this.isAvailable || this.isVisited) {
+      console.log(`[NodeVisual] Click blocked for node ${this.node.id}`);
+      return;
+    }
+    
+    console.log(`[NodeVisual] Click accepted for node ${this.node.id}, emitting click event`);
     
     // Click animation
     this.scene.tweens.add({
