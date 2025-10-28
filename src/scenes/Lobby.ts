@@ -996,29 +996,84 @@ export class Lobby extends Phaser.Scene {
 
     // Test Map button (for development)
     if (import.meta.env.DEV) {
-      const testMapText = this.add.text(20, 50, '🗺️ Test Map', {
+      const testMapContainer = this.add.container(20, 50);
+      testMapContainer.setScrollFactor(0);
+      
+      // Test Map label
+      const testMapText = this.add.text(0, 0, '🗺️ Test Map: ', {
         fontSize: '16px',
         color: '#aaaaaa',
         fontFamily: 'Arial, sans-serif',
       });
-      testMapText.setScrollFactor(0);
-      testMapText.setInteractive({ useHandCursor: true });
-
-      testMapText.on('pointerover', () => {
-        testMapText.setColor('#4a90e2');
+      testMapContainer.add(testMapText);
+      
+      // World selection buttons
+      let selectedWorld: 'world1' | 'world2' = 'world1';
+      
+      const world1Btn = this.add.text(testMapText.width + 5, 0, 'World 1', {
+        fontSize: '16px',
+        color: '#ffd700',
+        fontFamily: 'Arial, sans-serif',
+        backgroundColor: '#333333',
+        padding: { x: 10, y: 5 },
       });
-
-      testMapText.on('pointerout', () => {
-        testMapText.setColor('#aaaaaa');
+      world1Btn.setInteractive({ useHandCursor: true });
+      world1Btn.on('pointerdown', () => {
+        selectedWorld = 'world1';
+        world1Btn.setBackgroundColor('#666666');
+        world2Btn.setBackgroundColor('#333333');
       });
-
-      testMapText.on('pointerdown', () => {
+      testMapContainer.add(world1Btn);
+      
+      const world2Btn = this.add.text(world1Btn.x + world1Btn.width + 5, 0, 'World 2', {
+        fontSize: '16px',
+        color: '#aaaaaa',
+        fontFamily: 'Arial, sans-serif',
+        backgroundColor: '#333333',
+        padding: { x: 10, y: 5 },
+      });
+      world2Btn.setInteractive({ useHandCursor: true });
+      world2Btn.on('pointerdown', () => {
+        selectedWorld = 'world2';
+        world2Btn.setBackgroundColor('#666666');
+        world1Btn.setBackgroundColor('#333333');
+      });
+      testMapContainer.add(world2Btn);
+      
+      // Start button
+      const startBtn = this.add.text(world2Btn.x + world2Btn.width + 10, 0, 'START', {
+        fontSize: '16px',
+        color: '#44ff44',
+        fontFamily: 'Arial, sans-serif',
+        backgroundColor: '#005500',
+        padding: { x: 10, y: 5 },
+      });
+      startBtn.setInteractive({ useHandCursor: true });
+      startBtn.on('pointerover', () => {
+        startBtn.setBackgroundColor('#007700');
+      });
+      startBtn.on('pointerout', () => {
+        startBtn.setBackgroundColor('#005500');
+      });
+      startBtn.on('pointerdown', async () => {
+        // Use the actual logged-in user's ID for test map
+        const currentUserId = await getCurrentUserId();
+        if (!currentUserId) {
+          console.error('No user ID found for test map');
+          return;
+        }
+        
         this.scene.start('MapScene', {
           lobbyId: 'test-lobby',
-          players: [{ userId: 'test-user', name: 'Test Player', isHost: true }],
+          players: [{ userId: currentUserId, name: 'Test Player', isHost: true, selectedClass: 'Warrior' }],
           mapSeed: Date.now() % 2147483647, // Keep within PostgreSQL integer range
+          world: selectedWorld,
         });
       });
+      testMapContainer.add(startBtn);
+      
+      // Set initial button state
+      world1Btn.setBackgroundColor('#666666');
     }
   }
 

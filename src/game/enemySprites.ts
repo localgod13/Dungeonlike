@@ -25,9 +25,14 @@ import {
   createMinotaurAnimations,
   createMinotaurSprite
 } from './enemies/minotaur';
+import {
+  preloadDemonBossSprites,
+  createDemonBossAnimations,
+  createDemonBossSprite,
+} from './enemies/demonBoss';
 
 // Enemy types
-export type EnemyType = 'FlyingDemon' | 'Goblin' | 'SkeleMage' | 'Minotaur' | 'Skeleton' | 'Slime';
+export type EnemyType = 'FlyingDemon' | 'Goblin' | 'SkeleMage' | 'Minotaur' | 'DemonBoss' | 'Skeleton' | 'Slime';
 
 /**
  * Preload all enemy sprites
@@ -40,6 +45,7 @@ export function preloadEnemySprites(scene: Phaser.Scene): void {
   preloadGoblinSprites(scene);
   preloadSkeleMageSprites(scene);
   preloadMinotaurSprites(scene);
+  preloadDemonBossSprites(scene);
   // Future: preloadSkeletonSprites(scene);
   // Future: preloadSlimeSprites(scene);
 }
@@ -55,6 +61,7 @@ export function createEnemyAnimations(scene: Phaser.Scene): void {
   createGoblinAnimations(scene);
   createSkeleMageAnimations(scene);
   createMinotaurAnimations(scene);
+  createDemonBossAnimations(scene);
   // Future: createSkeletonAnimations(scene);
   // Future: createSlimeAnimations(scene);
 }
@@ -78,6 +85,8 @@ export function createEnemySprite(
       return createSkeleMageSprite(scene, x, y, scale);
     case 'Minotaur':
       return createMinotaurSprite(scene, x, y, scale);
+    case 'DemonBoss':
+      return createDemonBossSprite(scene, x, y, scale);
     // Future cases:
     // case 'Skeleton': return createSkeletonSprite(scene, x, y, scale);
     // case 'Slime': return createSlimeSprite(scene, x, y, scale);
@@ -91,7 +100,7 @@ export function createEnemySprite(
  * Check if an enemy type has sprite support
  */
 export function hasEnemySprite(enemyType: string): boolean {
-  const supportedTypes: EnemyType[] = ['FlyingDemon', 'Goblin', 'SkeleMage', 'Minotaur'];
+  const supportedTypes: EnemyType[] = ['FlyingDemon', 'Goblin', 'SkeleMage', 'Minotaur', 'DemonBoss'];
   return supportedTypes.includes(enemyType as EnemyType);
 }
 

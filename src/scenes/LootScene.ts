@@ -19,6 +19,8 @@ interface LootSceneData {
   stage: number;
   goldReward: number;
   battleBackground?: string; // Key of the background image used in battle
+  world?: 'world1' | 'world2';
+  resetProgress?: boolean;
 }
 
 /**
@@ -34,6 +36,8 @@ export class LootScene extends Phaser.Scene {
   private stage: number = 1;
   private goldReward: number = 0;
   private battleBackground: string = 'battleground1';
+  private worldKey: 'world1' | 'world2' = 'world1';
+  private resetProgress: boolean = false;
   private hasTransitioned = false; // Prevent duplicate scene transitions
   
   private selectedCard: Card | null = null;
@@ -54,6 +58,8 @@ export class LootScene extends Phaser.Scene {
     this.stage = data.stage || 1;
     this.goldReward = data.goldReward || 0;
     this.battleBackground = data.battleBackground || 'battleground1';
+    this.worldKey = data.world || 'world1';
+    this.resetProgress = data.resetProgress || false;
     this.hasTransitioned = false; // Reset transition flag for new scene instance
     
     this.selectedCard = null;
@@ -418,13 +424,19 @@ export class LootScene extends Phaser.Scene {
       ease: 'Power2',
       onComplete: () => {
         // Transition back to map (map will fade in)
+        // Prepare next map parameters
+        const nextVisited = this.resetProgress ? [] : this.visitedNodes;
+        const nextCurrentNodeId = this.resetProgress ? undefined : this.currentNodeId;
+        const nextStage = this.resetProgress ? 0 : this.stage;
+
         this.scene.start('MapScene', {
           lobbyId: this.lobbyId,
           players: this.players,
           mapSeed: this.mapSeed,
-          visitedNodes: this.visitedNodes,
-          currentNodeId: this.currentNodeId,
-          stage: this.stage,
+          visitedNodes: nextVisited,
+          currentNodeId: nextCurrentNodeId,
+          stage: nextStage,
+          world: this.worldKey,
           selectedCard: this.selectedCard, // Pass selected card to be added to deck
         });
       }

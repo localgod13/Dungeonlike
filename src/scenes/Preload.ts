@@ -118,6 +118,15 @@ export class Preload extends Phaser.Scene {
       'cardselectbg',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/cardselectbg.png'
     );
+    // World 2 backgrounds
+    this.load.image(
+      'world2bg',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/world2.png'
+    );
+    this.load.image(
+      'bossbg2',
+      'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/bosslevel2.png'
+    );
     this.load.image(
       'map_bg',
       'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/images/background/map1bg.png'

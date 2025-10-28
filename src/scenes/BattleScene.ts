@@ -948,34 +948,25 @@ export class BattleScene extends Phaser.Scene {
     this.combatLogContainer = this.add.container(logX, logY);
     this.combatLogContainer.setDepth(1000);
 
+    // Combat log title ABOVE the box
+    const logTitle = this.add.text(logX, logY - 25, 'Combat Log', {
+      fontSize: '18px',
+      color: '#000000',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+    });
+    logTitle.setOrigin(0, 0);
+    logTitle.setDepth(1000);
+    logTitle.setName('logTitle');
+
     // Combat log background with relative positioning (centered in container)
     const logBg = this.add.rectangle(logWidth / 2, logHeight / 2, logWidth, logHeight, 0x1a1a1a, 0.9);
     logBg.setStrokeStyle(1, 0x4a90e2, 0.6);
     logBg.setName('logBg');
 
-    // Combat log title with relative positioning
-    const logTitle = this.add.text(10, 10, 'Combat Log', {
-      fontSize: '14px',
-      color: '#4a90e2',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-    });
-    logTitle.setOrigin(0, 0);
-    logTitle.setName('logTitle');
+    // Add background to container
+    this.combatLogContainer.add(logBg);
 
-    // Add background and title to container
-    this.combatLogContainer.add([logBg, logTitle]);
-
-    // Scroll indicator (shows when there are more entries above)
-    this.logScrollIndicator = this.add.text(logWidth / 2, logHeight - 10, '▲ Scroll for more', {
-      fontSize: '9px',
-      color: '#888888',
-      fontFamily: 'Arial, sans-serif',
-      align: 'center',
-    });
-    this.logScrollIndicator.setOrigin(0.5);
-    this.logScrollIndicator.setVisible(false);
-    this.combatLogContainer.add(this.logScrollIndicator);
 
     // Enable mouse wheel scrolling on the log background
     logBg.setInteractive();
@@ -6658,6 +6649,12 @@ export class BattleScene extends Phaser.Scene {
       const logX = this.scale.width - logWidth - 10;
       const logY = this.scale.height - logHeight - 10;
       this.combatLogContainer.setPosition(logX, logY);
+      
+      // Update title position above the box
+      const logTitle = this.children.getByName('logTitle') as Phaser.GameObjects.Text;
+      if (logTitle) {
+        logTitle.setPosition(logX, logY - 25);
+      }
     }
 
     // Reposition action buttons
@@ -6769,6 +6766,12 @@ export class BattleScene extends Phaser.Scene {
 
     // Update container position
     this.combatLogContainer.setPosition(logX, logY);
+    
+    // Update title position above the box
+    const logTitle = this.children.getByName('logTitle') as Phaser.GameObjects.Text;
+    if (logTitle) {
+      logTitle.setPosition(logX, logY - 25);
+    }
 
     // Update button position to stay at top-right corner
     if (this.logExpandButton) {
@@ -6796,23 +6799,18 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    const startY = 28;
-    const entrySpacing = this.isLogExpanded ? 4 : 3; // Spacing between entries
+    const startY = 5; // Lower start since title is now outside the box
+    const entrySpacing = this.isLogExpanded ? 5 : 6; // More spacing to avoid overlap when collapsed
     const logHeight = this.isLogExpanded ? 300 : 80;
-    const visibleHeight = logHeight - 40; // Height available for entries (minus title and scroll indicator)
+    const visibleHeight = logHeight - 10; // Height available for entries (title is outside, only need space for scroll indicator)
 
-    // Remove all entries from container
-    this.combatLogEntries.forEach(entry => {
-      // Safety check: ensure entry is valid and from this scene
-      if (entry && entry.scene === this && this.combatLogContainer!.list.includes(entry)) {
-        this.combatLogContainer!.remove(entry, false);
-      }
-    });
-
+    // DON'T remove entries from container - just reposition and toggle visibility
     // Calculate total height of all entries
     let totalContentHeight = 0;
     this.combatLogEntries.forEach(entry => {
-      totalContentHeight += entry.height + entrySpacing;
+      if (entry && entry.scene === this) {
+        totalContentHeight += entry.height + entrySpacing;
+      }
     });
 
     // Calculate max scroll offset
@@ -6823,7 +6821,6 @@ export class BattleScene extends Phaser.Scene {
 
     // Position entries with scroll offset applied
     let currentY = startY - this.logScrollOffset;
-    const entriesToShow: Phaser.GameObjects.Text[] = [];
     
     this.combatLogEntries.forEach((entry, index) => {
       // Safety check: ensure entry is valid and from this scene
@@ -6834,24 +6831,28 @@ export class BattleScene extends Phaser.Scene {
       
       const entryHeight = entry.height;
       
-      // Only add entries that are visible in the viewport
-      if (currentY + entryHeight >= startY - 10 && currentY <= startY + visibleHeight + 10) {
-        entry.setPosition(10, currentY);
+      // Add to container if not already there (only for new entries)
+      if (!this.combatLogContainer!.list.includes(entry)) {
         this.combatLogContainer!.add(entry);
-        entriesToShow.push(entry);
+      }
+      
+      // Only show entries that are visible in the viewport
+      // Clamp to stay within the box bounds (startY to visibleHeight)
+      if (currentY >= startY && currentY <= visibleHeight) {
+        entry.setVisible(true);
+        entry.setPosition(10, currentY);
         
         // Fade based on position (newer = more opaque)
         const alpha = 0.4 + (index / this.combatLogEntries.length) * 0.6;
         entry.setAlpha(Math.max(0.4, Math.min(1, alpha)));
+      } else {
+        // Hide entries outside viewport
+        entry.setVisible(false);
       }
       
       currentY += entryHeight + entrySpacing;
     });
 
-    // Update scroll indicator visibility
-    if (this.logScrollIndicator) {
-      this.logScrollIndicator.setVisible(this.maxLogScrollOffset > 0);
-    }
   }
 
   private handleLogScroll(deltaY: number): void {
@@ -6868,46 +6869,30 @@ export class BattleScene extends Phaser.Scene {
 
   private addCombatLogEntry(message: string, color: string = '#ffffff'): void {
     if (!this.combatLogContainer) return;
-    
-    // Clean up any orphaned text elements before adding new ones
-    this.cleanupOrphanedTextElements();
-    
-    // Safety check: ensure scene is active and ready
-    if (!this.scene.isActive() || !this.add) {
-      console.warn('Cannot add combat log entry: scene not ready');
-      return;
-    }
 
-    // Create new log entry with relative positioning and word wrap
-    const entry = this.add.text(10, 30, `• ${message}`, {
-      fontSize: '11px',
-      color,
-      fontFamily: 'Arial, sans-serif',
-      wordWrap: { width: 195 }, // Fit within 220px box with margins
-      align: 'left',
-      lineSpacing: 2, // Add extra line spacing for multi-line entries
+    // Create entry WITHOUT adding to world; add to container only in refresh
+    const entry = this.make.text({
+      x: 0,
+      y: 0,
+      text: `• ${message}`,
+      style: {
+        fontSize: '11px',
+        color,
+        fontFamily: 'Arial, sans-serif',
+        wordWrap: { width: 195 },
+        align: 'left',
+        lineSpacing: 4,
+      },
+      add: false,
     });
     entry.setOrigin(0, 0);
 
-    // Add to entries array (no limit - keep all entries for scrolling)
     this.combatLogEntries.push(entry);
-
-    // Auto-scroll to bottom to show newest entry
-    this.logScrollOffset = 999999; // Will be clamped in refreshLogEntries
-
-    // Refresh display with new entry
+    this.logScrollOffset = 999999; // scroll to bottom
     this.refreshLogEntries();
 
-    // Highlight newest entry (smaller pulse)
     entry.setAlpha(1);
-    this.tweens.add({
-      targets: entry,
-      scaleX: 1.05,
-      scaleY: 1.05,
-      duration: 100,
-      yoyo: true,
-      ease: 'Back.easeOut',
-    });
+    this.tweens.add({ targets: entry, scaleX: 1.02, scaleY: 1.02, duration: 100, yoyo: true, ease: 'Back.easeOut' });
   }
 
   private clearCombatLog(): void {

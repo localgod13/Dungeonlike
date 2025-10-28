@@ -58,7 +58,7 @@ export class CardSelectScene extends Phaser.Scene {
     super('CardSelectScene');
   }
 
-  init(data: { lobbyId: string; players: Player[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number }): void {
+  init(data: { lobbyId: string; players: Player[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number; world?: 'world1' | 'world2' }): void {
     this.lobbyId = data.lobbyId;
     this.players = data.players || [];
     this.mapSeed = data.mapSeed; // Store map seed for continuity
@@ -79,6 +79,7 @@ export class CardSelectScene extends Phaser.Scene {
     }
     this.currentNodeId = data.currentNodeId || null; // Store current position
     this.currentStage = data.stage || 1; // Store battle stage number
+    (this as any).worldKey = data.world || 'world1';
     
     console.log(`Card selection initialized for lobby: ${this.lobbyId}`);
     console.log(`Map seed:`, this.mapSeed);
@@ -585,6 +586,7 @@ export class CardSelectScene extends Phaser.Scene {
         visitedNodes: this.visitedNodes, // Pass visited nodes for map progression
         currentNodeId: this.currentNodeId, // Pass current position
         stage: this.currentStage, // Pass battle stage number
+        world: (this as any).worldKey,
       });
     });
   }

@@ -54,7 +54,7 @@ export class MapScene extends Phaser.Scene {
     super('MapScene');
   }
 
-  init(data: { lobbyId?: string; players?: any[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number }): void {
+  init(data: { lobbyId?: string; players?: any[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number; world?: 'world1' | 'world2' }): void {
     this.lobbyId = data.lobbyId || null;
     this.players = data.players || [];
     this.currentNodeId = data.currentNodeId || null;
@@ -69,6 +69,9 @@ export class MapScene extends Phaser.Scene {
     console.log('Visited nodes:', data.visitedNodes);
     console.log('Current node:', this.currentNodeId);
     console.log('Current stage:', this.currentStage);
+    console.log('World received:', data.world);
+    (this as any).worldKey = data.world || 'world1';
+    console.log('World key set to:', (this as any).worldKey);
     console.log('============================');
     
     // Generate map with same seed to get same structure
@@ -186,6 +189,17 @@ export class MapScene extends Phaser.Scene {
       loop: true 
     }, 1500); // 1.5 second fade in
     console.log('Map music started with fade in');
+    
+    // Display world indicator in upper left corner
+    const worldKey = (this as any).worldKey || 'world1';
+    const worldNumber = worldKey === 'world2' ? '2' : '1';
+    this.add.text(20, 20, `🌍 World ${worldNumber}`, {
+      fontSize: '28px',
+      fontFamily: 'Arial Black',
+      color: '#ffd700',
+      stroke: '#000000',
+      strokeThickness: 4,
+    }).setOrigin(0, 0).setDepth(1000);
     
     // Display gold in top-right corner
     if (this.userId) {
@@ -542,8 +556,13 @@ export class MapScene extends Phaser.Scene {
     const width = this.scale.width;
     const height = this.scale.height;
     
+    // Use world-specific background
+    const worldKey = (this as any).worldKey || 'world1';
+    const bgKey = worldKey === 'world2' ? 'world2bg' : 'map_bg';
+    console.log(`🗺️ Map scene loading background for ${worldKey}: ${bgKey}`);
+    
     // Create background image
-    const backgroundImage = this.add.image(width / 2, height / 2, 'map_bg');
+    const backgroundImage = this.add.image(width / 2, height / 2, bgKey);
     
     // Scale image to fit screen while maintaining aspect ratio
     const imageScale = Math.max(width / 1536, height / 1024);
@@ -1148,6 +1167,7 @@ export class MapScene extends Phaser.Scene {
           visitedNodes: visitedNodes, // Pass visited nodes to maintain progress
           currentNodeId: node.id, // Pass the TARGET node as current position (player is moving to this node)
           stage: nextStage, // Increment stage for next battle
+          world: (this as any).worldKey,
         });
         break;
         
@@ -1178,6 +1198,7 @@ export class MapScene extends Phaser.Scene {
           visitedNodes: visitedNodes, // Pass visited nodes to maintain progress
           currentNodeId: node.id, // Pass the TARGET node as current position (player is moving to this node)
           stage: bossStage, // Boss battles are always Stage 6
+          world: (this as any).worldKey,
         });
         break;
         
