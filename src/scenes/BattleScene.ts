@@ -192,6 +192,11 @@ export class BattleScene extends Phaser.Scene {
     this.combatEndedEarly = false;
     this.combatEnded = false;
     
+    // CRITICAL: Remove all pending timers from previous battles
+    // This prevents wizard spells from firing multiple times (1x on stage 1, 2x on stage 2, etc.)
+    this.time.removeAllEvents();
+    console.log('⏰ Cleaned up all pending timers from previous battles');
+    
     // Clear combat log for new stage
     this.logScrollOffset = 0;
     this.maxLogScrollOffset = 0;
