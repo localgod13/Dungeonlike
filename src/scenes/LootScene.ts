@@ -39,6 +39,7 @@ export class LootScene extends Phaser.Scene {
   private worldKey: 'world1' | 'world2' = 'world1';
   private resetProgress: boolean = false;
   private hasTransitioned = false; // Prevent duplicate scene transitions
+  private shouldTransitionToWorld2 = false; // Transition to World 2 after boss victory
   
   private selectedCard: Card | null = null;
   private isReady: boolean = false;
@@ -62,11 +63,18 @@ export class LootScene extends Phaser.Scene {
     this.resetProgress = data.resetProgress || false;
     this.hasTransitioned = false; // Reset transition flag for new scene instance
     
+    // Check if this was a boss victory in World 1 - if so, transition to World 2
+    this.shouldTransitionToWorld2 = (this.stage === 6 && this.worldKey === 'world1');
+    
     this.selectedCard = null;
     this.isReady = false;
     
     console.log('[LootScene] Initialized with gold:', this.goldReward);
     console.log('[LootScene] Using background:', this.battleBackground);
+    console.log('[LootScene] World:', this.worldKey, 'Stage:', this.stage);
+    if (this.shouldTransitionToWorld2) {
+      console.log('[LootScene] 🎉 BOSS DEFEATED! Will transition to World 2');
+    }
   }
 
   async create(): Promise<void> {
@@ -399,6 +407,13 @@ export class LootScene extends Phaser.Scene {
     }
     this.hasTransitioned = true;
     
+    // Check if we should transition to World 2
+    if (this.shouldTransitionToWorld2) {
+      console.log('[LootScene] 🎊 TRANSITIONING TO WORLD 2!');
+      this.showWorldTransition();
+      return;
+    }
+    
     console.log('[LootScene] Transitioning to map...');
     console.log('[LootScene] Current node:', this.currentNodeId);
     console.log('[LootScene] Visited nodes before:', this.visitedNodes);
@@ -438,6 +453,96 @@ export class LootScene extends Phaser.Scene {
           stage: nextStage,
           world: this.worldKey,
           selectedCard: this.selectedCard, // Pass selected card to be added to deck
+        });
+      }
+    });
+  }
+  
+  private showWorldTransition(): void {
+    const { width, height } = this.cameras.main;
+    
+    // Create transition overlay
+    const transitionOverlay = this.add.rectangle(0, 0, width, height, 0x000000, 0);
+    transitionOverlay.setOrigin(0);
+    transitionOverlay.setDepth(25000);
+    
+    // Fade to black
+    this.tweens.add({
+      targets: transitionOverlay,
+      alpha: 1,
+      duration: 800,
+      ease: 'Power2',
+      onComplete: () => {
+        // Clear the scene
+        this.children.removeAll();
+        
+        // Re-add the overlay
+        this.add.existing(transitionOverlay);
+        
+        // Create World Complete message
+        const titleText = this.add.text(width / 2, height / 2 - 60, 'WORLD 1 COMPLETE!', {
+          fontSize: '64px',
+          fontFamily: 'Arial Black',
+          color: '#ffd700',
+          stroke: '#000000',
+          strokeThickness: 8,
+        });
+        titleText.setOrigin(0.5);
+        titleText.setDepth(26000);
+        titleText.setAlpha(0);
+        
+        const subtitleText = this.add.text(width / 2, height / 2 + 20, 'Entering World 2...', {
+          fontSize: '32px',
+          fontFamily: 'Arial',
+          color: '#ffffff',
+          stroke: '#000000',
+          strokeThickness: 6,
+        });
+        subtitleText.setOrigin(0.5);
+        subtitleText.setDepth(26000);
+        subtitleText.setAlpha(0);
+        
+        // Fade in the text
+        this.tweens.add({
+          targets: [titleText, subtitleText],
+          alpha: 1,
+          duration: 1000,
+          ease: 'Power2',
+          delay: 200,
+        });
+        
+        // Pulsing animation on title
+        this.tweens.add({
+          targets: titleText,
+          scale: { from: 1, to: 1.1 },
+          duration: 1500,
+          yoyo: true,
+          repeat: 1,
+          ease: 'Sine.easeInOut',
+        });
+        
+        // Wait then transition to World 2
+        this.time.delayedCall(4000, () => {
+          // Fade to black again
+          this.tweens.add({
+            targets: [titleText, subtitleText],
+            alpha: 0,
+            duration: 800,
+            ease: 'Power2',
+            onComplete: () => {
+              // Start World 2 with fresh map, reset progress but keep inventory
+              console.log('[LootScene] Starting World 2 map...');
+              this.scene.start('MapScene', {
+                lobbyId: this.lobbyId,
+                players: this.players,
+                mapSeed: Date.now() % 2147483647, // New map seed for World 2
+                visitedNodes: [], // Fresh map progress
+                currentNodeId: undefined, // Start at beginning
+                stage: 0, // Reset stage counter
+                world: 'world2', // World 2!
+              });
+            }
+          });
         });
       }
     });

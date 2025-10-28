@@ -91,6 +91,7 @@ export class BattleScene extends Phaser.Scene {
   private currentTurn = 1;
   private currentStage = 1; // Track which battle this is (Stage 1, 2, 3, etc.)
   private battleBackgroundKey: string = 'battleground1'; // Track which background is used
+  private worldKey: 'world1' | 'world2' = 'world1'; // Track which world we're in
   private phase: 'planning' | 'resolving' | 'idle' = 'planning';
   private playerPlans = new Map<ActorId, ActionPlan[]>(); // Multiple actions per player
   private isLocked = false;
@@ -170,13 +171,14 @@ export class BattleScene extends Phaser.Scene {
     super('BattleScene');
   }
 
-  init(data: { lobbyId: string; players: any[]; loadouts?: Loadout[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number }): void {
+  init(data: { lobbyId: string; players: any[]; loadouts?: Loadout[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number; world?: 'world1' | 'world2' }): void {
     this.lobbyId = data.lobbyId;
     this.players = data.players || [];
     this.mapSeed = data.mapSeed; // Store map seed for continuity
     this.visitedNodes = data.visitedNodes || []; // Store visited nodes
     this.currentNodeId = data.currentNodeId || null; // Store current position
     this.currentStage = data.stage || 1; // Track battle stage number
+    this.worldKey = data.world || 'world1'; // Track which world we're in
     
     // 🔄 RESET ALL BATTLE STATE FOR FRESH BATTLE
     console.log('🔄 Resetting battle state for new battle...');
@@ -472,15 +474,17 @@ export class BattleScene extends Phaser.Scene {
     const battleHeight = this.scale.height;
     const bottomMargin = 120; // Space for action buttons (but bg covers it)
     
-    // Add background image based on stage
+    // Add background image based on stage and world
     let bgKey = 'battleground1';
     if (this.currentStage === 6) {
-      bgKey = 'bossbg'; // Special background for boss fight
+      // Boss backgrounds based on world
+      bgKey = this.worldKey === 'world2' ? 'bossbg2' : 'bossbg';
     } else if (this.currentStage === 2) {
       bgKey = 'battleground2';
     }
+    // Note: Could add more world2-specific backgrounds here for other stages
     this.battleBackgroundKey = bgKey; // Store for passing to LootScene
-    console.log(`Loading background for stage ${this.currentStage}: ${bgKey}`);
+    console.log(`Loading background for stage ${this.currentStage} in ${this.worldKey}: ${bgKey}`);
     const bg = this.add.image(0, 0, bgKey);
     bg.setOrigin(0, 0);
     bg.setDepth(-1); // Behind everything
@@ -5830,6 +5834,7 @@ export class BattleScene extends Phaser.Scene {
           stage: this.currentStage, // Pass current stage
           goldReward: goldReward, // Pass calculated gold reward
           battleBackground: this.battleBackgroundKey, // Pass background for continuity
+          world: this.worldKey, // Pass world for transition detection
         });
       } else {
         // Return to lobby on defeat - DON'T save ultimate power (fresh start)
