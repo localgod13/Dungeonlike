@@ -32,10 +32,7 @@ export class ShopScene extends Phaser.Scene {
   private continueButton: Phaser.GameObjects.Container | null = null;
   private fadeOverlay: Phaser.GameObjects.Rectangle | null = null;
   
-  // Voting system
-  private myVote: string | null = null;
-  private shopVotes: Map<string, string> | null = null;
-  private votingUI: Phaser.GameObjects.Container | null = null;
+  // Ready system (no more voting on purchases)
   private readyPlayers = new Set<string>(); // Track which players are ready to continue
   private readyIndicators: Phaser.GameObjects.Container | null = null;
   private unsubscribe: (() => void) | null = null;
@@ -118,181 +115,78 @@ export class ShopScene extends Phaser.Scene {
     this.createCardGrid();
     this.createContinueButton();
 
-    // Setup voting if multiple players
+    // Setup ready system if multiple players
     if (this.players.length > 1 && this.lobbyId) {
-      this.setupVoting();
+      this.setupReadySystem();
+      this.updateReadyIndicators();
     }
 
     // Play merchant music
     this.soundManager?.playMusic('music_merchant', { loop: true, volume: 0.3 });
   }
 
-  private setupVoting(): void {
+  private setupReadySystem(): void {
     if (!this.lobbyId) return;
 
     subscribeMap(this.lobbyId, {
-      onMapVote: this.handleRemoteVote.bind(this),
-      onMapVoteResult: this.handleVoteResult.bind(this),
+      onMapVote: this.handleRemoteReady.bind(this),
+      onMapVoteResult: this.handleAllReady.bind(this),
     }).then((unsubscribe) => {
       this.unsubscribe = unsubscribe;
-      console.log('[ShopScene] Voting system initialized');
+      console.log('[ShopScene] Ready system initialized');
     }).catch((error) => {
-      console.error('[ShopScene] Failed to setup voting:', error);
+      console.error('[ShopScene] Failed to setup ready system:', error);
     });
   }
 
-  private handleRemoteVote(userId: string, cardId: string): void {
-    console.log(`[ShopScene] Remote vote from ${userId}: ${cardId}`);
+  private handleRemoteReady(userId: string, readyStatus: string): void {
+    console.log(`[ShopScene] Remote ready from ${userId}: ${readyStatus}`);
     
     if (userId === this.userId) return;
     
-    if (!this.shopVotes) {
-      this.shopVotes = new Map<string, string>();
-    }
-    this.shopVotes.set(userId, cardId);
-    
-    // If voting to continue, mark as ready
-    if (cardId === 'continue') {
+    // Mark player as ready
+    if (readyStatus === 'ready') {
       this.readyPlayers.add(userId);
       console.log(`[ShopScene] ${userId} is ready to continue`);
       this.updateReadyIndicators();
-    }
-    
-    this.updateVotingUI();
-    
-    if (this.isHost) {
-      this.checkAllVotesIn();
+      
+      if (this.isHost) {
+        this.checkAllPlayersReady();
+      }
     }
   }
 
-  private handleVoteResult(selectedCardId: string, votes: { [cardId: string]: string[] }): void {
-    console.log('[ShopScene] Received vote result:', selectedCardId, votes);
+  private handleAllReady(signal: string, data: any): void {
+    console.log('[ShopScene] Received all ready signal');
     
     // Prevent duplicate execution if we're the host (we already called this locally)
     if (this.isHost) {
-      console.log('[ShopScene] Host ignoring vote result (already executed locally)');
+      console.log('[ShopScene] Host ignoring ready signal (already executed locally)');
       return;
     }
     
-    this.executeVoteResult(selectedCardId);
+    this.continueToMap();
   }
 
-  private executeVoteResult(selectedCardId: string): void {
-    console.log('[ShopScene] Executing vote result:', selectedCardId);
-    
-    if (selectedCardId === 'continue') {
-      this.continueToMap();
-    } else {
-      const shopCard = this.shopCards.find(c => c.card.id === selectedCardId);
-      if (shopCard) {
-        this.purchaseCardDirectly(shopCard);
-      }
-    }
-  }
-
-  private checkAllVotesIn(): void {
+  private checkAllPlayersReady(): void {
     if (!this.isHost) return;
     
     const totalPlayers = this.players.length;
-    const votesReceived = (this.shopVotes?.size || 0) + (this.myVote ? 1 : 0);
+    const readyCount = this.readyPlayers.size;
     
-    if (votesReceived >= totalPlayers) {
-      console.log('[ShopScene] All votes received, resolving...');
-      this.resolveVotes();
-    }
-  }
-
-  private resolveVotes(): void {
-    const voteCounts = new Map<string, string[]>();
+    console.log(`[ShopScene] ${readyCount}/${totalPlayers} players ready`);
     
-    if (this.shopVotes) {
-      for (const [userId, cardId] of this.shopVotes.entries()) {
-        if (!voteCounts.has(cardId)) {
-          voteCounts.set(cardId, []);
-        }
-        voteCounts.get(cardId)!.push(userId);
+    if (readyCount >= totalPlayers) {
+      console.log('[ShopScene] All players ready, continuing to map...');
+      
+      // Signal all players to continue
+      if (this.lobbyId) {
+        sendMapVoteResult(this.lobbyId, 'continue', {}).catch(err => {
+          console.error('[ShopScene] Failed to send ready signal:', err);
+        });
       }
-    }
-    
-    if (this.myVote) {
-      if (!voteCounts.has(this.myVote)) {
-        voteCounts.set(this.myVote, []);
-      }
-      voteCounts.get(this.myVote)!.push(this.userId!);
-    }
-    
-    let maxVotes = 0;
-    let winningOptions: string[] = [];
-    
-    for (const [option, voters] of voteCounts.entries()) {
-      if (voters.length > maxVotes) {
-        maxVotes = voters.length;
-        winningOptions = [option];
-      } else if (voters.length === maxVotes) {
-        winningOptions.push(option);
-      }
-    }
-    
-    const selectedOption = winningOptions[Math.floor(Math.random() * winningOptions.length)];
-    
-    console.log(`[ShopScene] Vote resolution: ${selectedOption} wins with ${maxVotes} votes`);
-    
-    const votesObject: { [cardId: string]: string[] } = {};
-    for (const [cardId, voters] of voteCounts.entries()) {
-      votesObject[cardId] = voters;
-    }
-    
-    if (this.lobbyId) {
-      sendMapVoteResult(this.lobbyId, selectedOption, votesObject).catch(err => {
-        console.error('[ShopScene] Failed to send vote result:', err);
-      });
-    }
-    
-    this.executeVoteResult(selectedOption);
-  }
-
-  private updateVotingUI(): void {
-    if (this.votingUI) {
-      this.votingUI.destroy();
-    }
-    
-    if (this.players.length <= 1) return;
-    
-    this.votingUI = this.add.container(50, this.scale.height - 100);
-    this.votingUI.setScrollFactor(0);
-    this.votingUI.setDepth(1000);
-    
-    const bg = this.add.rectangle(0, 0, 300, 80, 0x1a0f2e, 0.9);
-    bg.setStrokeStyle(2, 0xd4af37, 0.8);
-    this.votingUI.add(bg);
-    
-    const totalPlayers = this.players.length;
-    const votesReceived = (this.shopVotes?.size || 0) + (this.myVote ? 1 : 0);
-    
-    const statusText = this.add.text(0, -15, 'Voting for Purchase...', {
-      fontSize: '16px',
-      color: '#d4af37',
-      fontFamily: 'Arial Black',
-    });
-    statusText.setOrigin(0.5);
-    this.votingUI.add(statusText);
-    
-    const progressText = this.add.text(0, 10, `${votesReceived}/${totalPlayers} votes`, {
-      fontSize: '14px',
-      color: '#ffffff',
-      fontFamily: 'Arial',
-    });
-    progressText.setOrigin(0.5);
-    this.votingUI.add(progressText);
-    
-    if (this.myVote) {
-      const myVoteText = this.add.text(0, 30, `Your vote: ${this.myVote === 'continue' ? 'Continue' : 'Purchase'}`, {
-        fontSize: '12px',
-        color: '#44ff88',
-        fontFamily: 'Arial',
-      });
-      myVoteText.setOrigin(0.5);
-      this.votingUI.add(myVoteText);
+      
+      this.continueToMap();
     }
   }
 
@@ -567,7 +461,7 @@ export class ShopScene extends Phaser.Scene {
       });
       
       border.on('pointerdown', () => {
-        this.voteForCard(shopCard);
+        this.purchaseCard(shopCard);
       });
     } else {
       // Show "Can't Afford" text
@@ -584,37 +478,17 @@ export class ShopScene extends Phaser.Scene {
     this.cardContainers.push(container);
   }
 
-  private async voteForCard(shopCard: ShopCard): Promise<void> {
-    if (this.players.length > 1) {
-      this.myVote = shopCard.card.id;
-      this.updateVotingUI();
-      
-      if (this.lobbyId) {
-        try {
-          await sendMapVote(this.lobbyId, shopCard.card.id);
-          console.log(`[ShopScene] Voted for card: ${shopCard.card.name}`);
-        } catch (error) {
-          console.error('[ShopScene] Failed to send vote:', error);
-        }
-      }
-      
-      if (this.isHost) {
-        this.checkAllVotesIn();
-      }
-    } else {
-      this.purchaseCardDirectly(shopCard);
-    }
-  }
-
-  private purchaseCardDirectly(shopCard: ShopCard): void {
+  private purchaseCard(shopCard: ShopCard): void {
     if (this.playerGold < shopCard.price) {
       console.log('[ShopScene] Cannot afford card');
+      this.showPurchaseFeedback('Not enough gold!', 0xff4444);
       return;
     }
     
     const success = spendGold(this.userId, shopCard.price);
     if (!success) {
       console.log('[ShopScene] Failed to spend gold');
+      this.showPurchaseFeedback('Purchase failed!', 0xff4444);
       return;
     }
     
@@ -624,9 +498,21 @@ export class ShopScene extends Phaser.Scene {
     this.playerGold = getGold(this.userId);
     console.log(`[ShopScene] Purchased ${shopCard.card.name} for ${shopCard.price} gold. New balance: ${this.playerGold}`);
     
+    // Show success feedback
+    this.showPurchaseFeedback(`Purchased ${shopCard.card.name}!`, 0x44ff88);
+    
     // Update gold display
     if (this.goldText) {
       this.goldText.setText(`💰 ${this.playerGold} Gold`);
+      
+      // Pulse animation on gold text
+      this.tweens.add({
+        targets: this.goldText,
+        scale: 1.2,
+        duration: 200,
+        yoyo: true,
+        ease: 'Power2',
+      });
     }
     
     // Refresh card grid
@@ -634,6 +520,33 @@ export class ShopScene extends Phaser.Scene {
     this.cardContainers = [];
     this.generateShopCards();
     this.createCardGrid();
+  }
+  
+  private showPurchaseFeedback(message: string, color: number): void {
+    const width = this.scale.width;
+    const feedbackText = this.add.text(width / 2, 200, message, {
+      fontSize: '32px',
+      color: `#${color.toString(16).padStart(6, '0')}`,
+      fontFamily: 'Arial Black',
+      stroke: '#000000',
+      strokeThickness: 6,
+    });
+    feedbackText.setOrigin(0.5);
+    feedbackText.setDepth(10000);
+    feedbackText.setAlpha(0);
+    
+    // Fade in and out
+    this.tweens.add({
+      targets: feedbackText,
+      alpha: 1,
+      duration: 300,
+      ease: 'Power2',
+      yoyo: true,
+      hold: 1000,
+      onComplete: () => {
+        feedbackText.destroy();
+      }
+    });
   }
 
   private createContinueButton(): void {
@@ -667,36 +580,36 @@ export class ShopScene extends Phaser.Scene {
     });
     
     lockButtonImage.on('pointerdown', () => {
-      this.voteToContinue();
+      // Disable button to prevent double-click
+      lockButtonImage.disableInteractive();
+      lockButtonImage.setAlpha(0.5);
+      this.markReady();
     });
   }
 
-  private async voteToContinue(): Promise<void> {
-    if (this.players.length > 1) {
-      this.myVote = 'continue';
-      
-      // Mark self as ready
-      if (this.userId) {
-        this.readyPlayers.add(this.userId);
-        console.log('[ShopScene] Marked self as ready');
-      }
-      
-      this.updateVotingUI();
-      this.updateReadyIndicators();
-      
-      if (this.lobbyId) {
-        try {
-          await sendMapVote(this.lobbyId, 'continue');
-          console.log('[ShopScene] Voted to continue');
-        } catch (error) {
-          console.error('[ShopScene] Failed to send continue vote:', error);
-        }
+  private async markReady(): Promise<void> {
+    // Mark self as ready
+    if (this.userId) {
+      this.readyPlayers.add(this.userId);
+      console.log('[ShopScene] Marked self as ready');
+    }
+    
+    this.updateReadyIndicators();
+    
+    if (this.players.length > 1 && this.lobbyId) {
+      // Notify other players
+      try {
+        await sendMapVote(this.lobbyId, 'ready');
+        console.log('[ShopScene] Sent ready signal');
+      } catch (error) {
+        console.error('[ShopScene] Failed to send ready signal:', error);
       }
       
       if (this.isHost) {
-        this.checkAllVotesIn();
+        this.checkAllPlayersReady();
       }
     } else {
+      // Single player - continue immediately
       this.continueToMap();
     }
   }
