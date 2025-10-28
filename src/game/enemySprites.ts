@@ -30,9 +30,19 @@ import {
   createDemonBossAnimations,
   createDemonBossSprite,
 } from './enemies/demonBoss';
+import {
+  preloadStoneGolemSprites,
+  createStoneGolemAnimations,
+  createStoneGolemSprite,
+} from './enemies/stoneGolem';
+import {
+  preloadSkeletonWarriorSprites,
+  createSkeletonWarriorAnimations,
+  createSkeletonWarriorSprite,
+} from './enemies/skeletonWarrior';
 
 // Enemy types
-export type EnemyType = 'FlyingDemon' | 'Goblin' | 'SkeleMage' | 'Minotaur' | 'DemonBoss' | 'Skeleton' | 'Slime';
+export type EnemyType = 'FlyingDemon' | 'Goblin' | 'SkeleMage' | 'Minotaur' | 'DemonBoss' | 'StoneGolem' | 'SkeletonWarrior' | 'Skeleton' | 'Slime';
 
 /**
  * Preload all enemy sprites
@@ -46,7 +56,8 @@ export function preloadEnemySprites(scene: Phaser.Scene): void {
   preloadSkeleMageSprites(scene);
   preloadMinotaurSprites(scene);
   preloadDemonBossSprites(scene);
-  // Future: preloadSkeletonSprites(scene);
+  preloadStoneGolemSprites(scene);
+  preloadSkeletonWarriorSprites(scene);
   // Future: preloadSlimeSprites(scene);
 }
 
@@ -62,7 +73,8 @@ export function createEnemyAnimations(scene: Phaser.Scene): void {
   createSkeleMageAnimations(scene);
   createMinotaurAnimations(scene);
   createDemonBossAnimations(scene);
-  // Future: createSkeletonAnimations(scene);
+  createStoneGolemAnimations(scene);
+  createSkeletonWarriorAnimations(scene);
   // Future: createSlimeAnimations(scene);
 }
 
@@ -87,6 +99,10 @@ export function createEnemySprite(
       return createMinotaurSprite(scene, x, y, scale);
     case 'DemonBoss':
       return createDemonBossSprite(scene, x, y, scale);
+    case 'StoneGolem':
+      return createStoneGolemSprite(scene, x, y, scale);
+    case 'SkeletonWarrior':
+      return createSkeletonWarriorSprite(scene, x, y, scale);
     // Future cases:
     // case 'Skeleton': return createSkeletonSprite(scene, x, y, scale);
     // case 'Slime': return createSlimeSprite(scene, x, y, scale);
@@ -100,7 +116,7 @@ export function createEnemySprite(
  * Check if an enemy type has sprite support
  */
 export function hasEnemySprite(enemyType: string): boolean {
-  const supportedTypes: EnemyType[] = ['FlyingDemon', 'Goblin', 'SkeleMage', 'Minotaur', 'DemonBoss'];
+  const supportedTypes: EnemyType[] = ['FlyingDemon', 'Goblin', 'SkeleMage', 'Minotaur', 'DemonBoss', 'StoneGolem', 'SkeletonWarrior'];
   return supportedTypes.includes(enemyType as EnemyType);
 }
 

@@ -1484,6 +1484,9 @@ class NodeVisual extends Phaser.GameObjects.Container {
 
     if (node.type === NodeType.Battle || node.type === NodeType.Boss) {
       // Show enemy preview for battle nodes
+      // Pass world info to the preview function from the MapScene
+      const worldKey = (this.scene as any).worldKey || 'world1';
+      (scene as any).worldKey = worldKey;
       const sprite = this.createEnemyPreview(scene, stageNumber, node.type === NodeType.Boss);
       if (sprite) {
         this.icon = sprite;
@@ -1507,54 +1510,102 @@ class NodeVisual extends Phaser.GameObjects.Container {
   private createEnemyPreview(scene: Phaser.Scene, stage: number, isBoss: boolean): Phaser.GameObjects.Sprite | null {
     try {
       let spriteKey: string;
+      const worldKey = (scene as any).worldKey || 'world1';
       
       // Match EXACT enemy from BattleScene.generateEnemiesForStage()
       if (isBoss) {
-        // Stage 6 boss (Minotaur)
-        spriteKey = 'minotaur_idle';
+        // Boss - check world
+        if (worldKey === 'world2') {
+          spriteKey = 'demon_boss_idle';
+        } else {
+          spriteKey = 'minotaur_idle';
+        }
       } else {
         switch (stage) {
           case 1:
-            // Stage 1: Flying Demon
-            spriteKey = 'flying_demon_idle';
+            // Stage 1: Different enemy per world
+            if (worldKey === 'world2') {
+              spriteKey = 'stone_golem_idle';
+            } else {
+              spriteKey = 'skeleton_warrior_idle';
+            }
             break;
           case 2:
-            // Stage 2: Goblin Warrior (first enemy)
-            spriteKey = 'goblin_idle';
+            // Stage 2: Different enemy per world
+            if (worldKey === 'world2') {
+              spriteKey = 'stone_golem_idle';
+            } else {
+              spriteKey = 'skeleton_warrior_idle';
+            }
             break;
           case 3:
-            // Stage 3: Skele Mage (first enemy)
-            spriteKey = 'skele_mage_idle';
+            // Stage 3: Different enemy per world
+            if (worldKey === 'world2') {
+              spriteKey = 'stone_golem_idle';
+            } else {
+              spriteKey = 'skele_mage_idle'; // First enemy in World 1 Stage 3
+            }
             break;
           case 4:
-            // Stage 4: Flying Demon (first enemy)
-            spriteKey = 'flying_demon_idle';
+            // Stage 4: Different enemy per world
+            if (worldKey === 'world2') {
+              spriteKey = 'stone_golem_idle';
+            } else {
+              spriteKey = 'skeleton_warrior_idle'; // First enemy in World 1 Stage 4
+            }
             break;
           case 5:
-            // Stage 5: Skele Mage (first enemy)
-            spriteKey = 'skele_mage_idle';
+            // Stage 5: Different enemy per world
+            if (worldKey === 'world2') {
+              spriteKey = 'stone_golem_idle';
+            } else {
+              spriteKey = 'skele_mage_idle';
+            }
             break;
           default:
-            // Stage 7+: Skele Mage (first in rotation)
-            spriteKey = 'skele_mage_idle';
+            // Stage 7+: Default based on world
+            if (worldKey === 'world2') {
+              spriteKey = 'stone_golem_idle';
+            } else {
+              spriteKey = 'skele_mage_idle';
+            }
         }
       }
 
-      // Calculate position based on enemy type
+      // Calculate position and scale based on enemy type
       let x = 0, y = 0;
+      let scale = 0.7; // Default scale
       if (isBoss) {
         y = -15; // Boss position
+        if (spriteKey === 'demon_boss_idle') {
+          scale = 1.5; // Demon Boss is much larger
+          y = -65; // Move Demon Boss up
+        } else if (spriteKey === 'minotaur_idle') {
+          scale = 1.5; // Minotaur is much larger
+          x = 25; // Move Minotaur to the right
+          y = -35; // Move Minotaur up a bit more
+        }
       } else if (spriteKey === 'skele_mage_idle') {
         y = -15; // Move skele mages up 15px
-      } else if (spriteKey === 'goblin_idle') {
-        x = -6; // Move goblins left 6px (was -10, now -6 = +4px right)
-        y = -10; // Move goblins up 10px
+        scale = 1.0; // Skele Mage is larger
+      } else if (spriteKey === 'skeleton_warrior_idle') {
+        x = -6; // Move skeleton warriors left 6px
+        y = -10; // Move skeleton warriors up 10px
+        scale = 1.2; // Skeleton Warrior is larger
+      } else if (spriteKey === 'stone_golem_idle') {
+        y = -10; // Stone Golem positioning
+        scale = 1.2; // Stone Golem is larger
       }
       
       const sprite = scene.add.sprite(x, y, spriteKey);
-      sprite.setScale(0.7); // Slightly larger for better visibility
+      sprite.setScale(scale);
       sprite.setAlpha(1.0); // Ensure full opacity
       sprite.setTint(0xffffff); // Remove any tinting
+      
+      // Debug: Log skeleton warrior sprite creation
+      if (spriteKey.includes('skeleton_warrior')) {
+        console.log(`[MapScene] Created skeleton warrior preview: ${spriteKey}, alpha: ${sprite.alpha}, visible: ${sprite.visible}`);
+      }
       
       // Add a subtle background circle behind the enemy for better visibility
       const enemyBg = scene.add.circle(x, y, 20, 0x000000, 0.3);
@@ -1740,9 +1791,9 @@ class NodeVisual extends Phaser.GameObjects.Container {
     } else {
       this.circle.setAlpha(0.4);
       if (this.icon) {
-        // Keep enemy sprites more visible even when unavailable
+        // Keep enemy sprites fully visible even when unavailable
         if (this.icon instanceof Phaser.GameObjects.Sprite) {
-          this.icon.setAlpha(0.7); // More visible than other icons
+          this.icon.setAlpha(1.0); // Fully visible for enemy sprites
         } else {
           this.icon.setAlpha(0.4);
         }

@@ -74,6 +74,7 @@ export class BattleScene extends Phaser.Scene {
   private mapSeed: number | undefined = undefined; // Persist map across battles
   private visitedNodes: string[] = []; // Track visited nodes for map progression
   private currentNodeId: string | null = null; // Track current position on map
+  private worldKey: 'world1' | 'world2' = 'world1'; // Track current world
 
   // Combat state
   private combatState: CombatState = {
@@ -170,13 +171,14 @@ export class BattleScene extends Phaser.Scene {
     super('BattleScene');
   }
 
-  init(data: { lobbyId: string; players: any[]; loadouts?: Loadout[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number }): void {
+  init(data: { lobbyId: string; players: any[]; loadouts?: Loadout[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number; world?: 'world1' | 'world2' }): void {
     this.lobbyId = data.lobbyId;
     this.players = data.players || [];
     this.mapSeed = data.mapSeed; // Store map seed for continuity
     this.visitedNodes = data.visitedNodes || []; // Store visited nodes
     this.currentNodeId = data.currentNodeId || null; // Store current position
     this.currentStage = data.stage || 1; // Track battle stage number
+    this.worldKey = data.world || 'world1'; // Store world key
     
     // 🔄 RESET ALL BATTLE STATE FOR FRESH BATTLE
     console.log('🔄 Resetting battle state for new battle...');
@@ -309,103 +311,203 @@ export class BattleScene extends Phaser.Scene {
     
     switch (stage) {
       case 1:
-        // Stage 1: Single Flying Demon
-        return [
-          {
-            id: 'enemy_1',
-            side: 'enemy',
-            name: 'Flying Demon',
-            hp: 50,
-            maxHp: 50,
-            ap: 5,
-          },
-        ];
+        // Stage 1: Different enemy for each world
+        if (this.worldKey === 'world2') {
+          // World 2: Stone Golem
+          return [
+            {
+              id: 'enemy_1',
+              side: 'enemy',
+              name: 'Stone Golem',
+              hp: 60,
+              maxHp: 60,
+              ap: 5,
+            },
+          ];
+        } else {
+          // World 1: Skeleton Warrior
+          return [
+            {
+              id: 'enemy_1',
+              side: 'enemy',
+              name: 'Skeleton Warrior',
+              hp: 50,
+              maxHp: 50,
+              ap: 5,
+            },
+          ];
+        }
       
       case 2:
-        // Stage 2: Two Goblins
-        return [
-          {
-            id: 'enemy_1',
-            side: 'enemy',
-            name: 'Goblin Warrior',
-            hp: 40,
-            maxHp: 40,
-            ap: 5,
-          },
-          {
-            id: 'enemy_2',
-            side: 'enemy',
-            name: 'Goblin Archer',
-            hp: 35,
-            maxHp: 35,
-            ap: 5,
-          },
-        ];
+        // Stage 2: Different enemy for each world
+        if (this.worldKey === 'world2') {
+          // World 2: Stone Golem
+          return [
+            {
+              id: 'enemy_1',
+              side: 'enemy',
+              name: 'Stone Golem',
+              hp: 60,
+              maxHp: 60,
+              ap: 5,
+            },
+          ];
+        } else {
+          // World 1: Two Skeleton Warriors
+          return [
+            {
+              id: 'enemy_1',
+              side: 'enemy',
+              name: 'Skeleton Warrior',
+              hp: 40,
+              maxHp: 40,
+              ap: 5,
+            },
+            {
+              id: 'enemy_2',
+              side: 'enemy',
+              name: 'Skeleton Warrior',
+              hp: 35,
+              maxHp: 35,
+              ap: 5,
+            },
+          ];
+        }
       
       case 3:
-        // Stage 3: Introduce Skele Mage
-        return [
-          {
-            id: 'enemy_1',
-            side: 'enemy',
-            name: 'Skele Mage',
-            hp: 45,
-            maxHp: 45,
-            ap: 5,
-          },
-          {
-            id: 'enemy_2',
-            side: 'enemy',
-            name: 'Goblin Warrior',
-            hp: 40,
-            maxHp: 40,
-            ap: 5,
-          },
-        ];
+        // Stage 3: Different enemies for each world
+        if (this.worldKey === 'world2') {
+          // World 2: Multiple Stone Golems
+          return [
+            {
+              id: 'enemy_1',
+              side: 'enemy',
+              name: 'Stone Golem',
+              hp: 70,
+              maxHp: 70,
+              ap: 5,
+            },
+            {
+              id: 'enemy_2',
+              side: 'enemy',
+              name: 'Stone Golem',
+              hp: 70,
+              maxHp: 70,
+              ap: 5,
+            },
+          ];
+        } else {
+          // World 1: Introduce Skele Mage
+          return [
+            {
+              id: 'enemy_1',
+              side: 'enemy',
+              name: 'Skele Mage',
+              hp: 45,
+              maxHp: 45,
+              ap: 5,
+            },
+            {
+              id: 'enemy_2',
+              side: 'enemy',
+              name: 'Skeleton Warrior',
+              hp: 40,
+              maxHp: 40,
+              ap: 5,
+            },
+          ];
+        }
       
       case 4:
       case 5:
-        // Stage 4-5: Mixed enemy groups
-        return [
-          {
-            id: 'enemy_1',
-            side: 'enemy',
-            name: stage === 4 ? 'Flying Demon' : 'Skele Mage',
-            hp: 50,
-            maxHp: 50,
-            ap: 5,
-          },
-          {
-            id: 'enemy_2',
-            side: 'enemy',
-            name: 'Goblin Warrior',
-            hp: 45,
-            maxHp: 45,
-            ap: 5,
-          },
-          {
-            id: 'enemy_3',
-            side: 'enemy',
-            name: stage === 4 ? 'Goblin Archer' : 'Flying Demon',
-            hp: 40,
-            maxHp: 40,
-            ap: 5,
-          },
-        ];
+        // Stage 4-5: Different enemies for each world
+        if (this.worldKey === 'world2') {
+          // World 2: Multiple Stone Golems
+          return [
+            {
+              id: 'enemy_1',
+              side: 'enemy',
+              name: 'Stone Golem',
+              hp: 80,
+              maxHp: 80,
+              ap: 5,
+            },
+            {
+              id: 'enemy_2',
+              side: 'enemy',
+              name: 'Stone Golem',
+              hp: 80,
+              maxHp: 80,
+              ap: 5,
+            },
+            {
+              id: 'enemy_3',
+              side: 'enemy',
+              name: 'Stone Golem',
+              hp: 80,
+              maxHp: 80,
+              ap: 5,
+            },
+          ];
+        } else {
+          // World 1: Mixed enemy groups
+          return [
+            {
+              id: 'enemy_1',
+              side: 'enemy',
+              name: stage === 4 ? 'Skeleton Warrior' : 'Skele Mage',
+              hp: 50,
+              maxHp: 50,
+              ap: 5,
+            },
+            {
+              id: 'enemy_2',
+              side: 'enemy',
+              name: 'Skeleton Warrior',
+              hp: 45,
+              maxHp: 45,
+              ap: 5,
+            },
+            {
+              id: 'enemy_3',
+              side: 'enemy',
+              name: 'Skeleton Warrior',
+              hp: 40,
+              maxHp: 40,
+              ap: 5,
+            },
+          ];
+        }
       
       case 6:
-        // Stage 6: MINOTAUR BOSS FIGHT (First World Final Boss)
-        console.log('🔥 BOSS BATTLE: MINOTAUR 🔥');
-        return [
-          {
-            id: 'boss_1',
-            side: 'enemy',
-            name: 'Minotaur',
-            hp: 150,
-            maxHp: 150,
-            ap: 5,
-          },
-        ];
+        // Stage 6: Boss fight - check world to determine which boss
+        if (this.worldKey === 'world2') {
+          // World 2: DEMON BOSS FIGHT
+          console.log('🔥 BOSS BATTLE: DEMON BOSS 🔥');
+          return [
+            {
+              id: 'boss_1',
+              side: 'enemy',
+              name: 'Demon Boss',
+              hp: 200,
+              maxHp: 200,
+              ap: 5,
+            },
+          ];
+        } else {
+          // World 1: MINOTAUR BOSS FIGHT
+          console.log('🔥 BOSS BATTLE: MINOTAUR 🔥');
+          return [
+            {
+              id: 'boss_1',
+              side: 'enemy',
+              name: 'Minotaur',
+              hp: 150,
+              maxHp: 150,
+              ap: 5,
+            },
+          ];
+        }
       
       default:
         // Stage 7+: Post-boss scaling difficulty (if continuing)
@@ -413,7 +515,7 @@ export class BattleScene extends Phaser.Scene {
         const baseHP = 60 + ((stage - 6) * 8);
         
         // Mix of enemy types
-        const enemyTypes = ['Skele Mage', 'Goblin', 'Flying Demon'];
+        const enemyTypes = ['Skele Mage', 'Skeleton Warrior'];
         
         return Array.from({ length: enemyCount }, (_, i) => ({
           id: `enemy_${i + 1}`,
@@ -472,10 +574,15 @@ export class BattleScene extends Phaser.Scene {
     const battleHeight = this.scale.height;
     const bottomMargin = 120; // Space for action buttons (but bg covers it)
     
-    // Add background image based on stage
+    // Add background image based on stage and world
     let bgKey = 'battleground1';
     if (this.currentStage === 6) {
-      bgKey = 'bossbg'; // Special background for boss fight
+      // Boss fight - different background per world
+      if (this.worldKey === 'world2') {
+        bgKey = 'bossbg2'; // Demon Boss background (bosslevel2.png)
+      } else {
+        bgKey = 'bossbg'; // Minotaur background (minotaurbg.png)
+      }
     } else if (this.currentStage === 2) {
       bgKey = 'battleground2';
     }
@@ -607,9 +714,13 @@ export class BattleScene extends Phaser.Scene {
     const centerY = this.scale.height / 2;
     let verticalOffset = 60; // Move everything down to better center in viewport
     
-    // Move up for boss stage (Minotaur)
+    // Adjust positioning for boss stages based on world
     if (this.currentStage === 6) {
-      verticalOffset = 35; // Move up 25px for boss
+      if (this.worldKey === 'world2') {
+        verticalOffset = 85; // Move down 50px for Demon Boss (60 + 50 - 25)
+      } else {
+        verticalOffset = 35; // Move up 25px for Minotaur boss
+      }
     }
 
     // Create party slots (left side) - dynamic positioning based on player count
@@ -809,17 +920,26 @@ export class BattleScene extends Phaser.Scene {
    * Map enemy name to enemy type for sprite lookup
    */
   private getEnemyType(enemyName: string): EnemyType | null {
+    if (enemyName.includes('Demon Boss')) {
+      return 'DemonBoss';
+    }
     if (enemyName.includes('Minotaur')) {
       return 'Minotaur';
     }
     if (enemyName.includes('Flying Demon')) {
       return 'FlyingDemon';
     }
+    if (enemyName.includes('Skeleton Warrior')) {
+      return 'SkeletonWarrior';
+    }
     if (enemyName.includes('Goblin')) {
-      return 'Goblin';
+      return 'Goblin'; // Keep for backward compatibility
     }
     if (enemyName.includes('Skele Mage')) {
       return 'SkeleMage';
+    }
+    if (enemyName.includes('Stone Golem')) {
+      return 'StoneGolem';
     }
     // Future enemy types:
     // if (enemyName.includes('Skeleton')) return 'Skeleton';
@@ -842,9 +962,9 @@ export class BattleScene extends Phaser.Scene {
     
     if (enemyType && hasEnemySprite(enemyType)) {
       try {
-        // Use larger scale and higher position for bosses
-        const spriteScale = enemyType === 'Minotaur' ? 3.5 : 1.5;
-        const spriteY = enemyType === 'Minotaur' ? -150 : -10; // Bosses positioned much higher
+        // Use larger scale and higher position for bosses and Stone Golem
+        const spriteScale = (enemyType === 'Minotaur' || enemyType === 'DemonBoss') ? 3.5 : (enemyType === 'StoneGolem') ? 3.0 : 1.5;
+        const spriteY = (enemyType === 'Minotaur' || enemyType === 'DemonBoss') ? -150 : (enemyType === 'StoneGolem') ? -60 : (enemyType === 'SkeletonWarrior') ? 40 : (enemyType === 'SkeleMage') ? -30 : -10; // Bosses positioned higher, Golems slightly elevated, Skeleton Warriors moved down, Skeleton Mages moved up
         const sprite = createEnemySprite(this, 0, spriteY, enemyType, spriteScale);
         if (sprite) {
           container.add(sprite);
@@ -1767,6 +1887,9 @@ export class BattleScene extends Phaser.Scene {
       const enemyIndex = this.enemies.findIndex(e => e.id === targetEnemy.id);
       const enemySlot = this.enemySlots[enemyIndex];
       
+      // Get scale factor for explosion effects based on enemy type
+      const explosionScale = this.getAbilityScaleForEnemy(enemySlot) / 3; // Convert from ability scale to explosion scale
+      
       // Check if this is the final hit
       const isFinalHit = comboStep === comboSequence.length - 1;
       
@@ -1936,9 +2059,9 @@ export class BattleScene extends Phaser.Scene {
           
           // Multiple explosion layers
           const explosionLayers = [
-            { radius: 30, color: 0xffff00, scale: 6, duration: 500 },   // Bright core
-            { radius: 50, color: 0xff4400, scale: 5, duration: 600 },   // Inner blast
-            { radius: 70, color: 0xff0000, scale: 4.5, duration: 700 }, // Outer blast
+            { radius: 30 * explosionScale, color: 0xffff00, scale: 6, duration: 500 },   // Bright core
+            { radius: 50 * explosionScale, color: 0xff4400, scale: 5, duration: 600 },   // Inner blast
+            { radius: 70 * explosionScale, color: 0xff0000, scale: 4.5, duration: 700 }, // Outer blast
           ];
           
           explosionLayers.forEach((layer, idx) => {
@@ -1957,7 +2080,7 @@ export class BattleScene extends Phaser.Scene {
           
           // Expanding shockwave rings
           for (let r = 0; r < 3; r++) {
-            const shockwave = this.add.circle(enemySlot.x, enemySlot.y, 40 + (r * 10), 0xff6666, 0);
+            const shockwave = this.add.circle(enemySlot.x, enemySlot.y, (40 + (r * 10)) * explosionScale, 0xff6666, 0);
             shockwave.setStrokeStyle(8 - (r * 2), 0xff8888, 1);
             shockwave.setDepth(95 - r);
             
@@ -1977,14 +2100,14 @@ export class BattleScene extends Phaser.Scene {
             const particle = this.add.circle(
               enemySlot.x, 
               enemySlot.y, 
-              Phaser.Math.Between(4, 8), 
+              Phaser.Math.Between(4, 8) * explosionScale, 
               Phaser.Math.Between(0, 1) > 0.5 ? 0xff4444 : 0xffff00, 
               1
             );
             particle.setDepth(96);
             
             const pAngle = (Math.PI * 2 * p) / 20;
-            const pDist = Phaser.Math.Between(80, 150);
+            const pDist = Phaser.Math.Between(80, 150) * explosionScale;
             
             this.tweens.add({
               targets: particle,
@@ -2003,14 +2126,14 @@ export class BattleScene extends Phaser.Scene {
             const spark = this.add.circle(
               enemySlot.x, 
               enemySlot.y, 
-              2, 
+              2 * explosionScale, 
               0xffff00, 
               1
             );
             spark.setDepth(95);
             
             const sAngle = Math.random() * Math.PI * 2;
-            const sDist = Phaser.Math.Between(50, 200);
+            const sDist = Phaser.Math.Between(50, 200) * explosionScale;
             
             this.tweens.add({
               targets: spark,
@@ -3223,6 +3346,9 @@ export class BattleScene extends Phaser.Scene {
                     const angle = Phaser.Math.Angle.Between(smallFireball.x, smallFireball.y, targetX, targetY);
                     smallFireball.setRotation(angle);
                     
+                    // Get explosion scale based on enemy type
+                    const explosionScale = this.getAbilityScaleForEnemy(enemySlot) / 3;
+                    
                     this.tweens.add({
                       targets: smallFireball,
                       x: targetX,
@@ -3231,11 +3357,11 @@ export class BattleScene extends Phaser.Scene {
                       ease: 'Power2',
                       onComplete: () => {
                         // Explosion flash effect
-                        const explosionFlash = this.add.circle(targetX, targetY, 15, 0xff6600, 1);
+                        const explosionFlash = this.add.circle(targetX, targetY, 15 * explosionScale, 0xff6600, 1);
                         explosionFlash.setDepth(50);
                         
                         // Explosion ring
-                        const explosionRing = this.add.circle(targetX, targetY, 20, 0xffffff, 0.8);
+                        const explosionRing = this.add.circle(targetX, targetY, 20 * explosionScale, 0xffffff, 0.8);
                         explosionRing.setStrokeStyle(3, 0xff6600, 1);
                         explosionRing.setDepth(49);
                         
@@ -3277,14 +3403,49 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
+   * Get the scale factor for abilities appearing at enemy locations based on the enemy type
+   */
+  private getAbilityScaleForEnemy(dstSlot: Phaser.GameObjects.Container): number {
+    // Find the actor associated with this slot
+    const enemyIndex = this.enemySlots.indexOf(dstSlot);
+    if (enemyIndex === -1 || !this.enemies[enemyIndex]) {
+      return 3; // Default scale
+    }
+    
+    const enemy = this.enemies[enemyIndex];
+    const enemyType = this.getEnemyType(enemy.name);
+    
+    // Boss enemies (Minotaur) are scaled 3.5x, so abilities should be 1.75x larger (3 * 1.75 = 5.25)
+    // Regular enemies are scaled 1.5x, so keep ability at 3x
+    if (enemyType === 'Minotaur') {
+      return 5.25;
+    }
+    
+    return 3;
+  }
+
+  /**
    * Fire Inferno spell - large flame appears at enemy location and lasts for 3 seconds
    */
   private fireInfernoFlame(srcSlot: Phaser.GameObjects.Container, dstSlot: Phaser.GameObjects.Container): void {
-    console.log(`🔥 Inferno: Creating flame at enemy location (${dstSlot.x}, ${dstSlot.y})`);
+    const scale = this.getAbilityScaleForEnemy(dstSlot);
+    
+    // Find the actor associated with this slot to check enemy type
+    const enemyIndex = this.enemySlots.indexOf(dstSlot);
+    const xOffset = (enemyIndex !== -1 && this.enemies[enemyIndex]) 
+      ? (this.getEnemyType(this.enemies[enemyIndex].name) === 'Minotaur' ? 60 : 0)
+      : 0;
+    const yOffset = (enemyIndex !== -1 && this.enemies[enemyIndex]) 
+      ? (this.getEnemyType(this.enemies[enemyIndex].name) === 'Minotaur' ? -70 : 0)
+      : 0;
+    
+    const flameX = dstSlot.x + xOffset;
+    const flameY = dstSlot.y + yOffset;
+    console.log(`🔥 Inferno: Creating flame at enemy location (${flameX}, ${flameY}) with scale ${scale}`);
     
     // Create flame sprite
-    const flame = this.add.sprite(dstSlot.x, dstSlot.y, 'mage_inferno_flame');
-    flame.setScale(3); // Scale up the flame (32*3 = 96px, 48*3 = 144px)
+    const flame = this.add.sprite(flameX, flameY, 'mage_inferno_flame');
+    flame.setScale(scale);
     flame.setDepth(50); // Above characters
     
     // Play flame animation
@@ -3415,11 +3576,19 @@ export class BattleScene extends Phaser.Scene {
         // Pick a random enemy to target
         const targetSlot = Phaser.Utils.Array.GetRandom(enemySlots);
         
+        // Check if target is Minotaur boss to apply offset
+        const enemyIndex = enemySlots.indexOf(targetSlot);
+        const isMinotaur = enemyIndex !== -1 && this.enemies[enemyIndex] 
+          ? this.getEnemyType(this.enemies[enemyIndex].name) === 'Minotaur'
+          : false;
+        const bossXOffset = isMinotaur ? 60 : 0;
+        const bossYOffset = isMinotaur ? -70 : 0;
+        
         // Random X offset around the target
         const offsetX = Phaser.Math.Between(-60, 60);
-        const startX = targetSlot.x + offsetX;
-        const endX = targetSlot.x + offsetX * 0.2; // Slight drift
-        const endY = targetSlot.y;
+        const startX = targetSlot.x + offsetX + bossXOffset;
+        const endX = targetSlot.x + offsetX * 0.2 + bossXOffset; // Slight drift with boss offset
+        const endY = targetSlot.y + bossYOffset;
         
         // Create animated meteor sprite
         const meteor = this.add.sprite(startX, skyY, 'mage_meteor');
@@ -3660,10 +3829,21 @@ export class BattleScene extends Phaser.Scene {
             attackAnimKey = 'skele_mage_attack_anim';
             idleAnimKey = 'skele_mage_idle_anim';
           } else if (enemyType === 'Minotaur') {
-            // Alternate between attack1 and attack2 for Minotaur
+            // Alternate between attack1 and attack due
             this.minotaurAttackCounter++;
             attackAnimKey = this.minotaurAttackCounter % 2 === 1 ? 'minotaur_attack1_anim' : 'minotaur_attack2_anim';
             idleAnimKey = 'minotaur_idle_anim';
+          } else if (enemyType === 'StoneGolem') {
+            attackAnimKey = 'stone_golem_attack_anim';
+            idleAnimKey = 'stone_golem_idle_anim';
+          } else if (enemyType === 'SkeletonWarrior') {
+            // Alternate between attack1 and attack2
+            this.minotaurAttackCounter++;
+            attackAnimKey = this.minotaurAttackCounter % 2 === 1 ? 'skeleton_warrior_attack1_anim' : 'skeleton_warrior_attack2_anim';
+            idleAnimKey = 'skeleton_warrior_idle_anim';
+          } else if (enemyType === 'DemonBoss') {
+            attackAnimKey = 'demon_boss_attack_anim';
+            idleAnimKey = 'demon_boss_idle_anim';
           }
           
           if (attackAnimKey && this.anims.exists(attackAnimKey)) {
@@ -3774,6 +3954,15 @@ export class BattleScene extends Phaser.Scene {
           } else if (enemyType === 'Minotaur') {
             hurtAnimKey = 'minotaur_hurt_anim';
             idleAnimKey = 'minotaur_idle_anim';
+          } else if (enemyType === 'StoneGolem') {
+            hurtAnimKey = 'stone_golem_hurt_anim';
+            idleAnimKey = 'stone_golem_idle_anim';
+          } else if (enemyType === 'SkeletonWarrior') {
+            hurtAnimKey = 'skeleton_warrior_hurt_anim';
+            idleAnimKey = 'skeleton_warrior_idle_anim';
+          } else if (enemyType === 'DemonBoss') {
+            hurtAnimKey = 'demon_boss_hurt_anim';
+            idleAnimKey = 'demon_boss_idle_anim';
           }
           
           if (hurtAnimKey && this.anims.exists(hurtAnimKey)) {
@@ -3853,6 +4042,12 @@ export class BattleScene extends Phaser.Scene {
           deathAnimKey = 'skele_mage_death_anim';
         } else if (enemyType === 'Minotaur') {
           deathAnimKey = 'minotaur_death_anim';
+        } else if (enemyType === 'StoneGolem') {
+          deathAnimKey = 'stone_golem_death_anim';
+        } else if (enemyType === 'SkeletonWarrior') {
+          deathAnimKey = 'skeleton_warrior_death_anim';
+        } else if (enemyType === 'DemonBoss') {
+          deathAnimKey = 'demon_boss_death_anim';
         }
         
         if (deathAnimKey && this.anims.exists(deathAnimKey)) {
@@ -5820,16 +6015,25 @@ export class BattleScene extends Phaser.Scene {
         // Calculate gold reward based on stage
         const goldReward = this.calculateGoldReward(this.currentStage);
         
+        // Check if this is stage 6 (boss fight) - transition to world2 and reset progress
+        const isBossDefeated = this.currentStage === 6 && this.worldKey === 'world1';
+        const nextWorld = isBossDefeated ? 'world2' : this.worldKey;
+        const resetProgress = isBossDefeated;
+        
+        console.log(`🌍 Boss defeated: ${isBossDefeated}, transitioning to ${nextWorld}`);
+        
         // Transition to loot scene to show rewards and card selection
         this.scene.start('LootScene', {
           lobbyId: this.lobbyId,
           players: this.players,
           mapSeed: this.mapSeed || (Date.now() % 2147483647), // Keep within PostgreSQL integer range
-          visitedNodes: this.visitedNodes, // Pass visited nodes to restore progress
-          currentNodeId: this.currentNodeId, // Pass current position
-          stage: this.currentStage, // Pass current stage
+          visitedNodes: isBossDefeated ? [] : this.visitedNodes, // Reset visited nodes for new world
+          currentNodeId: isBossDefeated ? undefined : this.currentNodeId, // Reset position for new world
+          stage: isBossDefeated ? 0 : this.currentStage, // Reset stage for new world
           goldReward: goldReward, // Pass calculated gold reward
           battleBackground: this.battleBackgroundKey, // Pass background for continuity
+          world: nextWorld, // Pass world key
+          resetProgress: resetProgress, // Flag to indicate world transition
         });
       } else {
         // Return to lobby on defeat - DON'T save ultimate power (fresh start)
