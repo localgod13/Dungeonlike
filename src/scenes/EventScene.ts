@@ -22,6 +22,7 @@ export class EventScene extends Phaser.Scene {
   private autoTransitionTimer: Phaser.Time.TimerEvent | null = null; // Auto-proceed timer
   private eventVotes: Map<string, string> | null = null; // Track votes from other players
   private myVote: string | null = null; // Track this player's vote
+  private appliedConsequences: EventConsequence[] = []; // Track what actually happened
   
   // Event data
   private currentEvent: EventData | null = null;
@@ -445,8 +446,8 @@ export class EventScene extends Phaser.Scene {
             costType: 'none',
             costAmount: 0,
             consequences: [
-              { type: 'battle', enemyType: 'merchant_guards', chance: 0.7 },
-              { type: 'card', cardId: 'random_rare', target: 'all', chance: 0.3 },
+              { type: 'card', cardId: 'random_rare', target: 'all', chance: 0.3 },  // SUCCESS 30% = he caves
+              { type: 'battle', enemyType: 'merchant_guards', chance: 0.7 },  // FAIL 70% = he fights
             ],
             description: 'The merchant\'s eyes flash with anger...',
           },
@@ -474,8 +475,8 @@ export class EventScene extends Phaser.Scene {
             costType: 'none',
             costAmount: 0,
             consequences: [
-              { type: 'gold', amount: 50, target: 'all', chance: 0.5 },  // 50% clean steal
-              { type: 'damage', amount: 15, target: 'all', chance: 0.5 },  // 50% cursed (no gold)
+              { type: 'gold', amount: 50, target: 'all', chance: 0.5 },  // SUCCESS 50% = clean steal
+              { type: 'damage', amount: 15, target: 'all', chance: 0.5 },  // FAIL 50% = cursed (no gold)
             ],
             description: 'You grab the offerings...',
           },
@@ -540,8 +541,8 @@ export class EventScene extends Phaser.Scene {
             costType: 'none',
             costAmount: 0,
             consequences: [
-              { type: 'card', cardId: 'random_rare', target: 'all', chance: 0.5 },
-              { type: 'damage', amount: 15, target: 'all', chance: 0.5 },
+              { type: 'card', cardId: 'random_rare', target: 'all', chance: 0.5 },  // SUCCESS 50% = power
+              { type: 'damage', amount: 15, target: 'all', chance: 0.5 },  // FAIL 50% = poison
             ],
             description: 'You drink the cursed waters...',
           },
@@ -561,8 +562,8 @@ export class EventScene extends Phaser.Scene {
             costType: 'none',
             costAmount: 0,
             consequences: [
-              { type: 'gold', amount: 50, target: 'all', chance: 0.4 },  // 40% clean loot
-              { type: 'battle', enemyType: 'fountain_guardian', chance: 0.6 },  // 60% guardian spawns
+              { type: 'gold', amount: 50, target: 'all', chance: 0.4 },  // SUCCESS 40% = clean loot
+              { type: 'battle', enemyType: 'fountain_guardian', chance: 0.6 },  // FAIL 60% = guardian spawns
             ],
             description: 'You attack the fountain...',
           },
@@ -599,8 +600,8 @@ export class EventScene extends Phaser.Scene {
             costType: 'none',
             costAmount: 0,
             consequences: [
-              { type: 'gold', amount: 25, target: 'all', chance: 0.3 },
-              { type: 'battle', enemyType: 'bandits', chance: 0.7 },
+              { type: 'gold', amount: 25, target: 'all', chance: 0.3 },  // SUCCESS 30% = they flee
+              { type: 'battle', enemyType: 'bandits', chance: 0.7 },  // FAIL 70% = they attack
             ],
             description: 'You try to scare them off...',
           },
@@ -617,8 +618,8 @@ export class EventScene extends Phaser.Scene {
             costType: 'none',
             costAmount: 0,
             consequences: [
-              { type: 'gold', amount: 60, target: 'all', chance: 0.7 },
-              { type: 'damage', amount: 20, target: 'all', chance: 0.3 }, // Trapped!
+              { type: 'gold', amount: 60, target: 'all', chance: 0.7 },  // SUCCESS 70% = safe open
+              { type: 'damage', amount: 20, target: 'all', chance: 0.3 },  // FAIL 30% = trapped!
             ],
             description: 'You cautiously reach for the latch...',
           },
@@ -703,8 +704,8 @@ export class EventScene extends Phaser.Scene {
             costType: 'none',
             costAmount: 0,
             consequences: [
-              { type: 'battle', enemyType: 'camp_monsters', chance: 0.5 },
-              { type: 'gold', amount: 50, target: 'all', chance: 0.5 },
+              { type: 'gold', amount: 50, target: 'all', chance: 0.5 },  // SUCCESS = find treasure
+              { type: 'battle', enemyType: 'camp_monsters', chance: 0.5 },  // FAIL = monsters attack
             ],
             description: 'You follow the tracks leading away from camp...',
           },
@@ -894,6 +895,9 @@ export class EventScene extends Phaser.Scene {
     
     console.log(`Made choice: ${choice.text}`);
     
+    // Reset applied consequences tracker
+    this.appliedConsequences = [];
+    
     // Apply consequences
     await this.applyConsequences(choice);
     
@@ -982,6 +986,9 @@ export class EventScene extends Phaser.Scene {
    * Apply a single consequence
    */
   private async applySingleConsequence(consequence: EventConsequence): Promise<void> {
+    // Track that this consequence was applied
+    this.appliedConsequences.push(consequence);
+    
     switch (consequence.type) {
       case 'gold':
         await this.applyGoldConsequence(consequence);
@@ -1415,14 +1422,12 @@ export class EventScene extends Phaser.Scene {
     const width = this.scale.width;
     const height = this.scale.height;
     
-    // Build result text with consequences
+    // Build result text with ACTUALLY APPLIED consequences
     let resultText = choice.description + '\n\n';
     
-    // Add consequence summary
+    // Add consequence summary based on what actually happened
     const consequenceTexts: string[] = [];
-    for (const consequence of choice.consequences) {
-      if (consequence.chance && Math.random() > consequence.chance) continue; // Skip failed chances
-      
+    for (const consequence of this.appliedConsequences) {
       switch (consequence.type) {
         case 'gold':
           if (consequence.amount && consequence.amount > 0) {
@@ -1430,9 +1435,9 @@ export class EventScene extends Phaser.Scene {
           } else if (consequence.amount && consequence.amount < 0) {
             const costPerPlayer = Math.ceil(Math.abs(consequence.amount) / this.players.length);
             if (this.players.length > 1) {
-              consequenceTexts.push(`💰 Lost ${costPerPlayer} gold each`);
+              consequenceTexts.push(`💰 Paid ${costPerPlayer} gold each`);
             } else {
-              consequenceTexts.push(`💰 Lost ${Math.abs(consequence.amount)} gold`);
+              consequenceTexts.push(`💰 Paid ${Math.abs(consequence.amount)} gold`);
             }
           }
           break;
