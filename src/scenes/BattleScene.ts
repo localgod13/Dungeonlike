@@ -75,6 +75,7 @@ export class BattleScene extends Phaser.Scene {
   private visitedNodes: string[] = []; // Track visited nodes for map progression
   private currentNodeId: string | null = null; // Track current position on map
   private worldKey: 'world1' | 'world2' = 'world1'; // Track current world
+  private eventBattle: string | null = null; // Type of event battle (if any)
 
   // Combat state
   private combatState: CombatState = {
@@ -172,7 +173,7 @@ export class BattleScene extends Phaser.Scene {
     super('BattleScene');
   }
 
-  init(data: { lobbyId: string; players: any[]; loadouts?: Loadout[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number; world?: 'world1' | 'world2' }): void {
+  init(data: { lobbyId: string; players: any[]; loadouts?: Loadout[]; mapSeed?: number; visitedNodes?: string[]; currentNodeId?: string; stage?: number; world?: 'world1' | 'world2'; eventBattle?: string }): void {
     this.lobbyId = data.lobbyId;
     this.players = data.players || [];
     this.mapSeed = data.mapSeed; // Store map seed for continuity
@@ -180,6 +181,7 @@ export class BattleScene extends Phaser.Scene {
     this.currentNodeId = data.currentNodeId || null; // Store current position
     this.currentStage = data.stage || 1; // Track battle stage number
     this.worldKey = data.world || 'world1'; // Track which world we're in
+    this.eventBattle = data.eventBattle || null; // Store event battle type (if any)
     
     // 🔄 RESET ALL BATTLE STATE FOR FRESH BATTLE
     console.log('🔄 Resetting battle state for new battle...');
@@ -529,6 +531,108 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Generate enemies for event battles
+   */
+  private generateEventEnemies(eventType: string): Actor[] {
+    console.log(`🎯 Generating enemies for event: ${eventType}`);
+    
+    switch (eventType) {
+      case 'merchant_guards':
+        return [
+          {
+            id: 'enemy_1',
+            side: 'enemy',
+            name: 'Guard Captain',
+            hp: 45,
+            maxHp: 45,
+            ap: 5,
+          },
+          {
+            id: 'enemy_2',
+            side: 'enemy',
+            name: 'Guard',
+            hp: 30,
+            maxHp: 30,
+            ap: 5,
+          },
+        ];
+      
+      case 'bandits':
+        return [
+          {
+            id: 'enemy_1',
+            side: 'enemy',
+            name: 'Bandit Leader',
+            hp: 50,
+            maxHp: 50,
+            ap: 5,
+          },
+          {
+            id: 'enemy_2',
+            side: 'enemy',
+            name: 'Bandit',
+            hp: 35,
+            maxHp: 35,
+            ap: 5,
+          },
+          {
+            id: 'enemy_3',
+            side: 'enemy',
+            name: 'Bandit',
+            hp: 35,
+            maxHp: 35,
+            ap: 5,
+          },
+        ];
+      
+      case 'fountain_guardian':
+        return [
+          {
+            id: 'enemy_1',
+            side: 'enemy',
+            name: 'Cursed Guardian',
+            hp: 70,
+            maxHp: 70,
+            ap: 5,
+          },
+        ];
+      
+      case 'camp_monsters':
+        return [
+          {
+            id: 'enemy_1',
+            side: 'enemy',
+            name: 'Wild Beast',
+            hp: 40,
+            maxHp: 40,
+            ap: 5,
+          },
+          {
+            id: 'enemy_2',
+            side: 'enemy',
+            name: 'Wild Beast',
+            hp: 40,
+            maxHp: 40,
+            ap: 5,
+          },
+        ];
+      
+      default:
+        console.warn(`Unknown event type ${eventType}, returning default enemies`);
+        return [
+          {
+            id: 'enemy_1',
+            side: 'enemy',
+            name: 'Unknown Enemy',
+            hp: 40,
+            maxHp: 40,
+            ap: 5,
+          },
+        ];
+    }
+  }
+
   async create(): Promise<void> {
     console.log('🎮 ========================================');
     console.log('🎮 BATTLE SCENE CREATE() CALLED');
@@ -552,8 +656,13 @@ export class BattleScene extends Phaser.Scene {
     // Create enemy animations
     createEnemyAnimations(this);
 
-    // Create enemies based on stage
-    this.enemies = this.generateEnemiesForStage(this.currentStage);
+    // Create enemies based on event or stage
+    if (this.eventBattle) {
+      this.enemies = this.generateEventEnemies(this.eventBattle);
+      console.log(`⚔️ Event battle: ${this.eventBattle}`);
+    } else {
+      this.enemies = this.generateEnemiesForStage(this.currentStage);
+    }
 
     // Initialize combat state
     this.combatState = createCombatState(this.players, this.enemies, this.currentTurn);

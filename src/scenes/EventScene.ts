@@ -1,5 +1,4 @@
 import Phaser from 'phaser';
-import { COLORS } from '../game/config';
 import { SoundManager } from '../game/sound';
 import { subscribeMap, sendMapVote, sendMapVoteResult } from '../net/match';
 import { setupCustomCursor } from '../utils/cursor';
@@ -21,6 +20,8 @@ export class EventScene extends Phaser.Scene {
   private isHost = false;
   private readyPlayers: Set<string> = new Set(); // Track ready players for multiplayer
   private autoTransitionTimer: Phaser.Time.TimerEvent | null = null; // Auto-proceed timer
+  private eventVotes: Map<string, string> | null = null; // Track votes from other players
+  private myVote: string | null = null; // Track this player's vote
   
   // Event data
   private currentEvent: EventData | null = null;
@@ -72,8 +73,6 @@ export class EventScene extends Phaser.Scene {
   async create(): Promise<void> {
     // Set up custom cursor
     setupCustomCursor(this);
-    const width = this.scale.width;
-    const height = this.scale.height;
     
     // Get current user
     this.userId = await this.getCurrentUserId();
@@ -96,7 +95,7 @@ export class EventScene extends Phaser.Scene {
     // Create UI
     this.createTitle();
     this.createDescription();
-    this.createChoices();
+    await this.createChoices(); // Wait for affordability checks
     this.createContinueButton();
 
     // Setup voting if multiple players
@@ -423,23 +422,32 @@ export class EventScene extends Phaser.Scene {
         choices: [
           {
             id: 'buy_artifact',
-            text: 'Purchase the artifact (50 gold)',
-            cost: 50,
-            reward: 'mysterious_artifact',
-            description: 'You hand over the gold and receive a glowing crystal.',
+            text: 'Purchase the artifact',
+            costType: 'gold',
+            costAmount: 50,
+            consequences: [
+              { type: 'gold', amount: -50, target: 'all' }, // Split cost among players
+              { type: 'card', cardId: 'random_rare', target: 'all' }, // Everyone gets a card
+            ],
+            description: 'You pool your gold and receive a glowing crystal that pulses with power.',
           },
           {
             id: 'decline',
             text: 'Decline politely',
-            cost: 0,
-            reward: 'nothing',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [],
             description: 'The merchant nods and disappears into the shadows.',
           },
           {
             id: 'threaten',
             text: 'Demand they hand it over',
-            cost: 0,
-            reward: 'potential_fight',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'battle', enemyType: 'merchant_guards', chance: 0.7 },
+              { type: 'card', cardId: 'random_rare', target: 'all', chance: 0.3 },
+            ],
             description: 'The merchant\'s eyes flash with anger...',
           },
         ],
@@ -451,24 +459,35 @@ export class EventScene extends Phaser.Scene {
         choices: [
           {
             id: 'offer_gold',
-            text: 'Make an offering of gold (30 gold)',
-            cost: 30,
-            reward: 'divine_blessing',
-            description: 'The shrine glows warmly as your offering is accepted.',
+            text: 'Make an offering',
+            costType: 'gold',
+            costAmount: 30,
+            consequences: [
+              { type: 'gold', amount: -30, target: 'all' },
+              { type: 'heal', amount: 30, target: 'all' },
+            ],
+            description: 'The shrine glows warmly as your offering is accepted. Divine light washes over you, healing your wounds.',
           },
           {
             id: 'take_offerings',
             text: 'Take the scattered offerings',
-            cost: 0,
-            reward: 'stolen_gold',
-            description: 'You gather the offerings, but feel a chill down your spine.',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'gold', amount: 50, target: 'all', chance: 0.5 },  // 50% clean steal
+              { type: 'damage', amount: 15, target: 'all', chance: 0.5 },  // 50% cursed (no gold)
+            ],
+            description: 'You grab the offerings...',
           },
           {
             id: 'investigate',
             text: 'Investigate the shrine carefully',
-            cost: 0,
-            reward: 'knowledge',
-            description: 'You discover ancient knowledge inscribed on the walls.',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'card', cardId: 'divine_knowledge', target: 'all' },
+            ],
+            description: 'You discover ancient knowledge inscribed on the walls. The wisdom flows into your mind.',
           },
         ],
       },
@@ -480,23 +499,224 @@ export class EventScene extends Phaser.Scene {
           {
             id: 'heal_traveler',
             text: 'Use a healing potion on them',
-            cost: 1, // healing potion
-            reward: 'grateful_companion',
-            description: 'The traveler recovers and offers to join your journey.',
+            costType: 'consumable',
+            costAmount: 1,
+            costItem: 'healing_potion',
+            consequences: [
+              { type: 'card', cardId: 'companion_card', target: 'all' },
+              { type: 'gold', amount: 20, target: 'all' },
+            ],
+            description: 'The traveler recovers and gratefully offers to aid you. They also share some gold as thanks.',
           },
           {
             id: 'give_gold',
-            text: 'Give them some gold for medicine (25 gold)',
-            cost: 25,
-            reward: 'traveler_gratitude',
-            description: 'The traveler thanks you profusely and shares valuable information.',
+            text: 'Give them gold for medicine',
+            costType: 'gold',
+            costAmount: 25,
+            consequences: [
+              { type: 'gold', amount: -25, target: 'all' },
+              { type: 'card', cardId: 'random_common', target: 'random' },
+            ],
+            description: 'The traveler thanks you profusely and shares valuable information about the road ahead.',
           },
           {
             id: 'ignore',
             text: 'Continue on your way',
-            cost: 0,
-            reward: 'nothing',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [],
             description: 'You leave the traveler behind, but the guilt weighs on you.',
+          },
+        ],
+      },
+      {
+        id: 'cursed_fountain',
+        title: 'Cursed Fountain',
+        description: 'A bubbling fountain stands before you, its waters glowing with an eerie purple light. Strange whispers emanate from its depths, promising power... at a price.',
+        choices: [
+          {
+            id: 'drink_deeply',
+            text: 'Drink deeply from the fountain',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'card', cardId: 'random_rare', target: 'all', chance: 0.5 },
+              { type: 'damage', amount: 15, target: 'all', chance: 0.5 },
+            ],
+            description: 'You drink the cursed waters...',
+          },
+          {
+            id: 'take_sip',
+            text: 'Take a cautious sip',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'heal', amount: 15, target: 'all' },
+            ],
+            description: 'A small sip seems safe. You feel slightly refreshed.',
+          },
+          {
+            id: 'destroy_fountain',
+            text: 'Attempt to destroy the fountain',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'gold', amount: 50, target: 'all', chance: 0.4 },  // 40% clean loot
+              { type: 'battle', enemyType: 'fountain_guardian', chance: 0.6 },  // 60% guardian spawns
+            ],
+            description: 'You attack the fountain...',
+          },
+        ],
+      },
+      {
+        id: 'bandit_ambush',
+        title: 'Bandit Ambush!',
+        description: 'Bandits leap out from the trees, surrounding you! Their leader steps forward with a wicked grin. "Your gold or your life!" he snarls.',
+        choices: [
+          {
+            id: 'pay_bandits',
+            text: 'Pay them off',
+            costType: 'gold',
+            costAmount: 40,
+            consequences: [
+              { type: 'gold', amount: -40, target: 'all' },
+            ],
+            description: 'The bandits take your gold and disappear into the forest, laughing.',
+          },
+          {
+            id: 'fight_bandits',
+            text: 'Stand and fight!',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'battle', enemyType: 'bandits' },
+            ],
+            description: 'You draw your weapons and prepare for battle!',
+          },
+          {
+            id: 'intimidate',
+            text: 'Attempt to intimidate them',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'gold', amount: 25, target: 'all', chance: 0.3 },
+              { type: 'battle', enemyType: 'bandits', chance: 0.7 },
+            ],
+            description: 'You try to scare them off...',
+          },
+        ],
+      },
+      {
+        id: 'treasure_chest',
+        title: 'Suspicious Treasure Chest',
+        description: 'An ornate treasure chest sits in the middle of the path. It looks valuable... but also suspiciously unguarded.',
+        choices: [
+          {
+            id: 'open_carefully',
+            text: 'Open it carefully',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'gold', amount: 60, target: 'all', chance: 0.7 },
+              { type: 'damage', amount: 20, target: 'all', chance: 0.3 }, // Trapped!
+            ],
+            description: 'You cautiously reach for the latch...',
+          },
+          {
+            id: 'force_open',
+            text: 'Force it open',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'gold', amount: 70, target: 'all' },
+              { type: 'damage', amount: 10, target: 'all' }, // Always take some damage
+            ],
+            description: 'You smash the chest open! Gold spills out, but you trigger a trap.',
+          },
+          {
+            id: 'leave_chest',
+            text: 'Leave it alone',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [],
+            description: 'Better safe than sorry. You continue on your way.',
+          },
+        ],
+      },
+      {
+        id: 'mysterious_gambler',
+        title: 'Mysterious Gambler',
+        description: 'A cloaked figure sits at a makeshift table, shuffling cards with supernatural speed. "Care for a game?" they ask with a smile. "Winner takes all..."',
+        choices: [
+          {
+            id: 'bet_high',
+            text: 'Bet big',
+            costType: 'gold',
+            costAmount: 50,
+            consequences: [
+              { type: 'gold', amount: -50, target: 'all' },  // Always pay bet
+              { type: 'gold', amount: 200, target: 'all', chance: 0.4 },  // 40% win 4x (net +150)
+              // 60% lose everything (just the -50)
+            ],
+            description: 'You place your bet and the cards are dealt...',
+          },
+          {
+            id: 'bet_low',
+            text: 'Bet cautiously',
+            costType: 'gold',
+            costAmount: 20,
+            consequences: [
+              { type: 'gold', amount: -20, target: 'all' },  // Always pay bet
+              { type: 'gold', amount: 60, target: 'all', chance: 0.5 },  // 50% win 3x (net +40)
+              // 50% lose everything (just the -20)
+            ],
+            description: 'You make a modest wager...',
+          },
+          {
+            id: 'refuse_game',
+            text: 'Decline the game',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [],
+            description: 'The gambler shrugs and vanishes in a puff of smoke.',
+          },
+        ],
+      },
+      {
+        id: 'abandoned_camp',
+        title: 'Abandoned Camp',
+        description: 'You discover a recently abandoned campsite. Supplies are scattered everywhere, and a cooking pot still bubbles over the fire. Something made them leave in a hurry...',
+        choices: [
+          {
+            id: 'loot_camp',
+            text: 'Search for supplies',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'gold', amount: 35, target: 'all' },  // Always get gold
+            ],
+            description: 'You find useful supplies and equipment left behind.',
+          },
+          {
+            id: 'investigate_camp',
+            text: 'Investigate what happened',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'battle', enemyType: 'camp_monsters', chance: 0.5 },
+              { type: 'gold', amount: 50, target: 'all', chance: 0.5 },
+            ],
+            description: 'You follow the tracks leading away from camp...',
+          },
+          {
+            id: 'rest_at_camp',
+            text: 'Rest and recover',
+            costType: 'none',
+            costAmount: 0,
+            consequences: [
+              { type: 'heal', amount: 25, target: 'all' },
+            ],
+            description: 'You take advantage of the fire and rest. The warm meal restores your strength.',
           },
         ],
       },
@@ -510,7 +730,7 @@ export class EventScene extends Phaser.Scene {
     console.log('Generated event:', this.currentEvent.title);
   }
 
-  private createChoices(): void {
+  private async createChoices(): Promise<void> {
     if (!this.currentEvent) return;
     
     const width = this.scale.width;
@@ -519,13 +739,59 @@ export class EventScene extends Phaser.Scene {
     this.choiceContainer = this.add.container(width / 2, height / 2 + 50);
     this.choiceContainer.setDepth(100);
     
-    // Create choice buttons
-    this.currentEvent.choices.forEach((choice, index) => {
-      this.createChoiceButton(choice, index);
-    });
+    // Create choice buttons with affordability check
+    for (let i = 0; i < this.currentEvent.choices.length; i++) {
+      const choice = this.currentEvent.choices[i];
+      const isAffordable = await this.isChoiceAffordable(choice);
+      this.createChoiceButton(choice, i, isAffordable);
+    }
   }
 
-  private createChoiceButton(choice: EventChoice, index: number): void {
+  /**
+   * Check if a choice is affordable by ALL players
+   */
+  private async isChoiceAffordable(choice: EventChoice): Promise<boolean> {
+    if (choice.costType === 'none') {
+      return true;
+    }
+
+    const { getGold, getConsumableCount } = await import('../game/inventory');
+    
+    if (choice.costType === 'gold') {
+      // Split gold cost equally among all players (rounded up)
+      const playerCount = this.players.length;
+      const costPerPlayer = Math.ceil(choice.costAmount / playerCount);
+      
+      // Check if ALL players have enough gold
+      for (const player of this.players) {
+        const playerGold = getGold(player.userId);
+        if (playerGold < costPerPlayer) {
+          console.log(`[Event] Player ${player.name} cannot afford ${costPerPlayer} gold (has ${playerGold})`);
+          return false;
+        }
+      }
+      
+      return true;
+    }
+    
+    if (choice.costType === 'consumable' && choice.costItem) {
+      // Check if ANY player has the required consumable
+      for (const player of this.players) {
+        const count = getConsumableCount(player.userId, choice.costItem);
+        if (count >= choice.costAmount) {
+          console.log(`[Event] Player ${player.name} has ${count} ${choice.costItem}`);
+          return true;
+        }
+      }
+      
+      console.log(`[Event] No player has ${choice.costItem}`);
+      return false;
+    }
+    
+    return true;
+  }
+
+  private createChoiceButton(choice: EventChoice, index: number, isAffordable: boolean): void {
     if (!this.choiceContainer) return;
     
     const buttonWidth = 600;
@@ -536,45 +802,60 @@ export class EventScene extends Phaser.Scene {
     
     const y = startY + index * (buttonHeight + spacing);
     
-    // Button background
-    const buttonBg = this.add.rectangle(0, y, buttonWidth, buttonHeight, 0x1a0f2e, 0.9);
-    buttonBg.setStrokeStyle(2, 0x8b7355, 0.8);
-    buttonBg.setInteractive();
+    // Button background - dimmed if not affordable
+    const bgColor = isAffordable ? 0x1a0f2e : 0x0d0610;
+    const buttonBg = this.add.rectangle(0, y, buttonWidth, buttonHeight, bgColor, 0.9);
+    buttonBg.setStrokeStyle(2, isAffordable ? 0x8b7355 : 0x4a3a2a, 0.8);
+    if (isAffordable) {
+      buttonBg.setInteractive();
+    }
     
-    // Choice text
-    const choiceText = this.add.text(0, y, choice.text, {
+    // Choice text - with cost info
+    let displayText = choice.text;
+    if (choice.costType === 'gold' && choice.costAmount > 0) {
+      const costPerPlayer = Math.ceil(choice.costAmount / this.players.length);
+      if (this.players.length > 1) {
+        displayText += ` (${costPerPlayer}g each)`;
+      } else {
+        displayText += ` (${choice.costAmount}g)`;
+      }
+    } else if (choice.costType === 'consumable' && choice.costItem) {
+      displayText += ` (Requires ${choice.costItem})`;
+    }
+    
+    const choiceText = this.add.text(0, y, displayText, {
       fontSize: '16px',
-      color: '#d4af37',
+      color: isAffordable ? '#d4af37' : '#6a5a4a',
       fontFamily: 'Georgia, serif',
       align: 'center',
       wordWrap: { width: buttonWidth - 40 },
     });
     choiceText.setOrigin(0.5);
     
-    // Cost indicator
-    if (choice.cost > 0) {
-      const costText = this.add.text(buttonWidth / 2 - 20, y, `💰${choice.cost}`, {
+    // Show "Cannot afford" indicator
+    if (!isAffordable) {
+      const lockIcon = this.add.text(buttonWidth / 2 - 30, y, '🔒', {
         fontSize: '14px',
-        color: '#ff6b6b',
-        fontFamily: 'Georgia, serif',
       });
-      costText.setOrigin(0.5);
-      this.choiceContainer.add(costText);
+      lockIcon.setOrigin(0.5);
+      this.choiceContainer.add(lockIcon);
     }
     
-    // Hover effects
-    buttonBg.on('pointerover', () => {
-      buttonBg.setFillStyle(0x2a1f3d, 0.9);
-      choiceText.setColor('#f4e4bc');
-      this.soundManager?.playSfx('sfx_card_click');
-    });
-    
-    buttonBg.on('pointerout', () => {
-      buttonBg.setFillStyle(0x1a0f2e, 0.9);
-      choiceText.setColor('#d4af37');
-    });
-    
-    buttonBg.on('pointerdown', () => this.voteForChoice(choice));
+    // Hover effects (only if affordable)
+    if (isAffordable) {
+      buttonBg.on('pointerover', () => {
+        buttonBg.setFillStyle(0x2a1f3d, 0.9);
+        choiceText.setColor('#f4e4bc');
+        this.soundManager?.playSfx('sfx_card_click');
+      });
+      
+      buttonBg.on('pointerout', () => {
+        buttonBg.setFillStyle(0x1a0f2e, 0.9);
+        choiceText.setColor('#d4af37');
+      });
+      
+      buttonBg.on('pointerdown', () => this.voteForChoice(choice));
+    }
     
     this.choiceContainer.add([buttonBg, choiceText]);
   }
@@ -603,7 +884,7 @@ export class EventScene extends Phaser.Scene {
     }
   }
 
-  private makeChoiceDirectly(choice: EventChoice): void {
+  private async makeChoiceDirectly(choice: EventChoice): Promise<void> {
     // Prevent duplicate choice application
     if (this.hasAppliedChoice) {
       console.log('[EventScene] Choice already applied, skipping...');
@@ -613,45 +894,599 @@ export class EventScene extends Phaser.Scene {
     
     console.log(`Made choice: ${choice.text}`);
     
-    // TODO: Apply choice effects (costs, rewards, etc.)
-    console.log(`Result: ${choice.description}`);
+    // Apply consequences
+    await this.applyConsequences(choice);
+    
+    // Check if we transitioned to a battle (don't show result screen if so)
+    if (this.hasTransitioned) {
+      console.log('[EventScene] Transitioned to battle, skipping result screen');
+      return;
+    }
     
     // Hide choices and show result
     this.choiceContainer?.setVisible(false);
     this.showChoiceResult(choice);
   }
 
+  /**
+   * Apply all consequences of a choice
+   */
+  private async applyConsequences(choice: EventChoice): Promise<void> {
+    const { removeConsumable, getConsumableCount } = await import('../game/inventory');
+    
+    // First, handle the COST of the choice (if any)
+    if (choice.costType === 'consumable' && choice.costItem) {
+      // Find a player who has the consumable and remove it
+      for (const player of this.players) {
+        const count = getConsumableCount(player.userId, choice.costItem);
+        if (count >= choice.costAmount) {
+          removeConsumable(player.userId, choice.costItem);
+          console.log(`[Event] ${player.name} used ${choice.costItem}`);
+          break;
+        }
+      }
+    }
+    // Gold costs are handled in the gold consequence
+    
+    // Check if there are multiple consequences with chances (mutually exclusive outcomes)
+    const chanceConsequences = choice.consequences.filter(c => c.chance !== undefined);
+    
+    if (chanceConsequences.length > 1) {
+      // Multiple chance-based outcomes - roll ONCE to determine which happens
+      const totalChance = chanceConsequences.reduce((sum, c) => sum + (c.chance || 0), 0);
+      
+      if (totalChance <= 1.0) {
+        // Use the FIRST consequence's chance for the roll (they should add to 100%)
+        const firstChance = chanceConsequences[0].chance!;
+        console.log(`[Event] Rolling once for mutually exclusive outcomes`);
+        console.log(`[Event] Option 1 (${(firstChance * 100)}%): ${chanceConsequences[0].type}`);
+        console.log(`[Event] Option 2 (${((1 - firstChance) * 100)}%): ${chanceConsequences[1].type}`);
+        
+        const success = await this.rollDice(firstChance);
+        
+        // Apply the consequence based on the SINGLE roll result
+        const consequenceToApply = success ? chanceConsequences[0] : chanceConsequences[1];
+        console.log(`[Event] Roll ${success ? 'SUCCEEDED' : 'FAILED'} - applying: ${consequenceToApply.type}`);
+        
+        await this.applySingleConsequence(consequenceToApply);
+        
+        // Also apply any non-chance consequences
+        for (const consequence of choice.consequences) {
+          if (consequence.chance === undefined) {
+            console.log(`[Event] Also applying guaranteed consequence: ${consequence.type}`);
+            await this.applySingleConsequence(consequence);
+          }
+        }
+        
+        return;
+      }
+    }
+    
+    // Normal flow: apply all consequences (with individual rolls if needed)
+    for (const consequence of choice.consequences) {
+      // Check chance-based consequences with dice roll animation
+      if (consequence.chance !== undefined) {
+        const success = await this.rollDice(consequence.chance);
+        if (!success) {
+          console.log(`[Event] Consequence skipped (${(consequence.chance * 100).toFixed(0)}% chance failed)`);
+          continue;
+        }
+        console.log(`[Event] Consequence succeeded (${(consequence.chance * 100).toFixed(0)}% chance)`);
+      }
+      
+      await this.applySingleConsequence(consequence);
+    }
+  }
+
+  /**
+   * Apply a single consequence
+   */
+  private async applySingleConsequence(consequence: EventConsequence): Promise<void> {
+    switch (consequence.type) {
+      case 'gold':
+        await this.applyGoldConsequence(consequence);
+        break;
+        
+      case 'heal':
+        await this.applyHealConsequence(consequence);
+        break;
+        
+      case 'damage':
+        await this.applyDamageConsequence(consequence);
+        break;
+        
+      case 'card':
+        await this.applyCardConsequence(consequence);
+        break;
+        
+      case 'battle':
+        await this.applyBattleConsequence(consequence);
+        break;
+        
+      default:
+        console.log(`[Event] Unknown consequence type: ${consequence.type}`);
+    }
+  }
+
+  /**
+   * Show d10 dice roll animation and return success/failure
+   */
+  private async rollDice(successChance: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const width = this.scale.width;
+      const height = this.scale.height;
+      
+      // Calculate d10 threshold (roll must be >= threshold to succeed)
+      // 70% success = roll 4+ (4,5,6,7,8,9,10 = 7 numbers)
+      // 20% success = roll 9+ (9,10 = 2 numbers)
+      const successPercent = successChance * 100;
+      const threshold = Math.ceil((100 - successPercent) / 10) + 1;
+      
+      // Create dice roll UI
+      const diceContainer = this.add.container(width / 2, height / 2);
+      diceContainer.setDepth(5000);
+      
+      // Dark overlay
+      const overlay = this.add.rectangle(0, 0, width, height, 0x000000, 0.7);
+      overlay.setOrigin(0.5);
+      diceContainer.add(overlay);
+      
+      // Dice background
+      const diceBg = this.add.rectangle(0, 0, 400, 300, 0x1a0f2e, 0.95);
+      diceBg.setStrokeStyle(3, 0xd4af37, 1);
+      diceContainer.add(diceBg);
+      
+      // Title
+      const title = this.add.text(0, -110, 'ROLLING D10...', {
+        fontSize: '28px',
+        color: '#d4af37',
+        fontFamily: 'Georgia, serif',
+        fontStyle: 'bold',
+      });
+      title.setOrigin(0.5);
+      diceContainer.add(title);
+      
+      // Challenge description
+      const challengeText = this.add.text(0, -70, `Need ${threshold}+ to succeed`, {
+        fontSize: '20px',
+        color: '#b8a890',
+        fontFamily: 'Georgia, serif',
+      });
+      challengeText.setOrigin(0.5);
+      diceContainer.add(challengeText);
+      
+      // Dice number display (will cycle through numbers)
+      const diceNumber = this.add.text(0, 0, '?', {
+        fontSize: '96px',
+        color: '#ffffff',
+        fontFamily: 'Arial Black',
+        stroke: '#000000',
+        strokeThickness: 6,
+      });
+      diceNumber.setOrigin(0.5);
+      diceContainer.add(diceNumber);
+      
+      // Play sound
+      this.soundManager?.playSfx('sfx_card_click');
+      
+      // Animate numbers cycling (simulating dice roll)
+      let cycleCount = 0;
+      const cycleInterval = this.time.addEvent({
+        delay: 100,
+        callback: () => {
+          const randomNum = Math.floor(Math.random() * 10) + 1;
+          diceNumber.setText(randomNum.toString());
+          cycleCount++;
+          
+          if (cycleCount >= 10) {
+            cycleInterval.destroy();
+            showDiceResult();
+          }
+        },
+        loop: true,
+      });
+      
+      // Show final result
+      const showDiceResult = () => {
+        // Actual roll (1-10)
+        const roll = Math.floor(Math.random() * 10) + 1;
+        const success = roll >= threshold;
+        
+        // Show final number
+        diceNumber.setText(roll.toString());
+        diceNumber.setColor(success ? '#44ff88' : '#ff6b6b');
+        
+        // Bounce effect
+        this.tweens.add({
+          targets: diceNumber,
+          scale: { from: 1, to: 1.3 },
+          duration: 300,
+          yoyo: true,
+          ease: 'Back.easeOut',
+        });
+        
+        // Show result label
+        const resultLabel = this.add.text(0, 80, success ? 'SUCCESS!' : 'FAILED!', {
+          fontSize: '36px',
+          color: success ? '#44ff88' : '#ff6b6b',
+          fontFamily: 'Georgia, serif',
+          fontStyle: 'bold',
+          stroke: '#000000',
+          strokeThickness: 4,
+        });
+        resultLabel.setOrigin(0.5);
+        resultLabel.setAlpha(0);
+        diceContainer.add(resultLabel);
+        
+        // Show explanation
+        const explanation = this.add.text(0, 115, 
+          success ? `${roll} ≥ ${threshold}` : `${roll} < ${threshold}`, 
+          {
+            fontSize: '18px',
+            color: '#b8a890',
+            fontFamily: 'Georgia, serif',
+          }
+        );
+        explanation.setOrigin(0.5);
+        explanation.setAlpha(0);
+        diceContainer.add(explanation);
+        
+        this.tweens.add({
+          targets: [resultLabel, explanation],
+          alpha: 1,
+          duration: 400,
+          ease: 'Power2',
+        });
+        
+        // Play result sound
+        this.soundManager?.playSfx(success ? 'ui_click' : 'sfx_card_click');
+        
+        // Clean up after showing result
+        this.time.delayedCall(2000, () => {
+          this.tweens.add({
+            targets: diceContainer,
+            alpha: 0,
+            duration: 300,
+            onComplete: () => {
+              diceContainer.destroy();
+              resolve(success);
+            },
+          });
+        });
+      };
+    });
+  }
+
+  /**
+   * Apply gold consequence (gain or lose gold)
+   */
+  private async applyGoldConsequence(consequence: EventConsequence): Promise<void> {
+    if (!consequence.amount) return;
+    
+    const { addGold, spendGold } = await import('../game/inventory');
+    const playerCount = this.players.length;
+    
+    if (consequence.amount < 0) {
+      // Spending gold - split equally among players (rounded up)
+      const costPerPlayer = Math.ceil(Math.abs(consequence.amount) / playerCount);
+      
+      for (const player of this.players) {
+        spendGold(player.userId, costPerPlayer);
+      }
+      
+      console.log(`[Event] Each player spent ${costPerPlayer} gold`);
+    } else {
+      // Gaining gold - everyone gets full amount
+      for (const player of this.players) {
+        addGold(player.userId, consequence.amount);
+      }
+      
+      console.log(`[Event] Each player gained ${consequence.amount} gold`);
+    }
+  }
+
+  /**
+   * Apply heal consequence
+   */
+  private async applyHealConsequence(consequence: EventConsequence): Promise<void> {
+    if (!consequence.amount) return;
+    
+    // TODO: Implement party healing
+    // For now, just log it - we'll need to store party HP state
+    console.log(`[Event] Party healed for ${consequence.amount} HP`);
+    
+    // We could store this in a persistent party state or apply it in the next battle
+  }
+
+  /**
+   * Apply damage consequence
+   */
+  private async applyDamageConsequence(consequence: EventConsequence): Promise<void> {
+    if (!consequence.amount) return;
+    
+    // TODO: Implement party damage
+    console.log(`[Event] Party took ${consequence.amount} damage`);
+    
+    // We could store this in a persistent party state or apply it in the next battle
+  }
+
+  /**
+   * Apply card reward consequence
+   */
+  private async applyCardConsequence(consequence: EventConsequence): Promise<void> {
+    if (!consequence.cardId) return;
+    
+    const { addCardToDeck } = await import('../game/inventory');
+    const { CARD_POOL } = await import('../game/cards');
+    
+    // Determine which card(s) to give
+    let cardsToGive: any[] = [];
+    
+    if (consequence.cardId === 'random_rare') {
+      // Give a random advanced card (as we don't have rarity system yet)
+      // Filter to more powerful cards (ap cost >= 4)
+      const powerfulCards = CARD_POOL.filter((c: any) => c.ap >= 4 && c.class !== undefined);
+      if (powerfulCards.length > 0) {
+        const randomCard = powerfulCards[Math.floor(Math.random() * powerfulCards.length)];
+        cardsToGive = [randomCard];
+        console.log(`[Event] Giving random rare card: ${randomCard.name}`);
+      } else {
+        console.warn('[Event] No rare cards available, giving random card');
+        const randomCard = CARD_POOL[Math.floor(Math.random() * CARD_POOL.length)];
+        cardsToGive = [randomCard];
+      }
+    } else if (consequence.cardId === 'random_common') {
+      // Give a random basic card (ap cost <= 3)
+      const basicCards = CARD_POOL.filter((c: any) => c.ap <= 3);
+      if (basicCards.length > 0) {
+        const randomCard = basicCards[Math.floor(Math.random() * basicCards.length)];
+        cardsToGive = [randomCard];
+        console.log(`[Event] Giving random common card: ${randomCard.name}`);
+      } else {
+        console.warn('[Event] No common cards available, giving random card');
+        const randomCard = CARD_POOL[Math.floor(Math.random() * CARD_POOL.length)];
+        cardsToGive = [randomCard];
+      }
+    } else {
+      // Give specific card by ID
+      const card = CARD_POOL.find((c: any) => c.id === consequence.cardId);
+      if (card) {
+        cardsToGive = [card];
+        console.log(`[Event] Giving specific card: ${card.name}`);
+      } else {
+        console.warn(`[Event] Card not found: ${consequence.cardId}, giving random card`);
+        const randomCard = CARD_POOL[Math.floor(Math.random() * CARD_POOL.length)];
+        cardsToGive = [randomCard];
+      }
+    }
+    
+    // Give cards to players based on target
+    if (consequence.target === 'all') {
+      for (const player of this.players) {
+        for (const card of cardsToGive) {
+          addCardToDeck(player.userId, card);
+        }
+      }
+      console.log(`[Event] All players received cards: ${cardsToGive.map(c => c.name).join(', ')}`);
+    } else if (consequence.target === 'random' && this.players.length > 0) {
+      const randomPlayer = this.players[Math.floor(Math.random() * this.players.length)];
+      for (const card of cardsToGive) {
+        addCardToDeck(randomPlayer.userId, card);
+      }
+      console.log(`[Event] ${randomPlayer.name} received cards: ${cardsToGive.map(c => c.name).join(', ')}`);
+    }
+  }
+
+  /**
+   * Apply battle consequence - transition to a battle
+   */
+  private async applyBattleConsequence(consequence: EventConsequence): Promise<void> {
+    if (!consequence.enemyType) return;
+    
+    console.log(`[Event] 🔥 BATTLE CONSEQUENCE TRIGGERED!`);
+    console.log(`[Event] Enemy type: ${consequence.enemyType}`);
+    console.log(`[Event] Starting battle transition...`);
+    
+    // Show "Battle Starting!" message
+    await this.showBattleTransition(consequence.enemyType);
+    
+    console.log(`[Event] Battle transition complete, starting CardSelectScene...`);
+    
+    // Transition to card selection then battle
+    // We'll use the same flow as regular battles
+    this.hasTransitioned = true;
+    
+    this.scene.start('CardSelectScene', {
+      lobbyId: this.lobbyId,
+      players: this.players,
+      mapSeed: this.mapSeed,
+      visitedNodes: this.visitedNodes,
+      currentNodeId: this.currentNodeId,
+      stage: this.currentStage,
+      eventBattle: consequence.enemyType, // Mark this as an event battle
+    });
+    
+    console.log(`[Event] CardSelectScene started for event battle`);
+  }
+
+  /**
+   * Show battle transition screen
+   */
+  private async showBattleTransition(enemyType: string): Promise<void> {
+    return new Promise((resolve) => {
+      const width = this.scale.width;
+      const height = this.scale.height;
+      
+      // Create transition overlay
+      const transitionContainer = this.add.container(width / 2, height / 2);
+      transitionContainer.setDepth(6000);
+      
+      // Dark background
+      const bg = this.add.rectangle(0, 0, width, height, 0x000000, 0.9);
+      bg.setOrigin(0.5);
+      transitionContainer.add(bg);
+      
+      // Battle warning
+      const warningText = this.add.text(0, -50, '⚔️ BATTLE! ⚔️', {
+        fontSize: '64px',
+        color: '#ff6b6b',
+        fontFamily: 'Georgia, serif',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 6,
+      });
+      warningText.setOrigin(0.5);
+      warningText.setAlpha(0);
+      transitionContainer.add(warningText);
+      
+      // Enemy type
+      const enemyName = this.getEnemyDisplayName(enemyType);
+      const enemyText = this.add.text(0, 50, enemyName, {
+        fontSize: '32px',
+        color: '#d4af37',
+        fontFamily: 'Georgia, serif',
+        align: 'center',
+      });
+      enemyText.setOrigin(0.5);
+      enemyText.setAlpha(0);
+      transitionContainer.add(enemyText);
+      
+      // Animate in
+      this.tweens.add({
+        targets: warningText,
+        alpha: 1,
+        scale: { from: 0.5, to: 1.2 },
+        duration: 500,
+        ease: 'Back.easeOut',
+      });
+      
+      this.tweens.add({
+        targets: enemyText,
+        alpha: 1,
+        y: 80,
+        duration: 500,
+        delay: 200,
+        ease: 'Power2',
+      });
+      
+      // Flash effect
+      this.tweens.add({
+        targets: warningText,
+        scale: { from: 1.2, to: 1.1 },
+        duration: 300,
+        yoyo: true,
+        repeat: 2,
+        delay: 500,
+      });
+      
+      // Play battle sound
+      this.soundManager?.playSfx('ui_click');
+      
+      // Clean up and resolve
+      this.time.delayedCall(2000, () => {
+        this.tweens.add({
+          targets: transitionContainer,
+          alpha: 0,
+          duration: 300,
+          onComplete: () => {
+            transitionContainer.destroy();
+            resolve();
+          },
+        });
+      });
+    });
+  }
+
+  /**
+   * Get display name for enemy type
+   */
+  private getEnemyDisplayName(enemyType: string): string {
+    const names: { [key: string]: string } = {
+      'merchant_guards': 'Merchant Guards',
+      'bandits': 'Bandit Gang',
+      'fountain_guardian': 'Cursed Guardian',
+      'camp_monsters': 'Wild Beasts',
+    };
+    
+    return names[enemyType] || 'Unknown Enemy';
+  }
+
   private showChoiceResult(choice: EventChoice): void {
     const width = this.scale.width;
     const height = this.scale.height;
     
-    // Result background
-    const resultBg = this.add.rectangle(width / 2, height / 2, width - 100, 150, 0x1a0f2e, 0.9);
+    // Build result text with consequences
+    let resultText = choice.description + '\n\n';
+    
+    // Add consequence summary
+    const consequenceTexts: string[] = [];
+    for (const consequence of choice.consequences) {
+      if (consequence.chance && Math.random() > consequence.chance) continue; // Skip failed chances
+      
+      switch (consequence.type) {
+        case 'gold':
+          if (consequence.amount && consequence.amount > 0) {
+            consequenceTexts.push(`💰 Gained ${consequence.amount} gold`);
+          } else if (consequence.amount && consequence.amount < 0) {
+            const costPerPlayer = Math.ceil(Math.abs(consequence.amount) / this.players.length);
+            if (this.players.length > 1) {
+              consequenceTexts.push(`💰 Lost ${costPerPlayer} gold each`);
+            } else {
+              consequenceTexts.push(`💰 Lost ${Math.abs(consequence.amount)} gold`);
+            }
+          }
+          break;
+        case 'heal':
+          if (consequence.amount) {
+            consequenceTexts.push(`❤️ Healed ${consequence.amount} HP`);
+          }
+          break;
+        case 'damage':
+          if (consequence.amount) {
+            consequenceTexts.push(`💔 Took ${consequence.amount} damage`);
+          }
+          break;
+        case 'card':
+          consequenceTexts.push(`🃏 Received a card!`);
+          break;
+        case 'battle':
+          consequenceTexts.push(`⚔️ Battle incoming!`);
+          break;
+      }
+    }
+    
+    if (consequenceTexts.length > 0) {
+      resultText += consequenceTexts.join('\n');
+    }
+    
+    // Result background - larger to fit consequence text
+    const resultHeight = Math.min(250, 150 + (consequenceTexts.length * 25));
+    const resultBg = this.add.rectangle(width / 2, height / 2, width - 100, resultHeight, 0x1a0f2e, 0.9);
     resultBg.setStrokeStyle(2, 0x8b7355, 0.8);
     resultBg.setDepth(100);
     
     // Result text
-    const resultText = this.add.text(width / 2, height / 2, choice.description, {
+    const resultTextObj = this.add.text(width / 2, height / 2, resultText, {
       fontSize: '18px',
       color: '#e8dcc0',
       fontFamily: 'Georgia, serif',
       align: 'center',
       wordWrap: { width: width - 150 },
     });
-    resultText.setOrigin(0.5);
-    resultText.setDepth(150);
+    resultTextObj.setOrigin(0.5);
+    resultTextObj.setDepth(150);
     
     // Fade in effect
     resultBg.setAlpha(0);
-    resultText.setAlpha(0);
+    resultTextObj.setAlpha(0);
     
     this.tweens.add({
-      targets: [resultBg, resultText],
+      targets: [resultBg, resultTextObj],
       alpha: 1,
       duration: 500,
       onComplete: () => {
         // Auto-proceed after delay
-        const AUTO_PROCEED_DELAY = 2500; // 2.5 seconds to read the result
+        const AUTO_PROCEED_DELAY = 3500; // 3.5 seconds to read the result
         
         this.autoTransitionTimer = this.time.delayedCall(AUTO_PROCEED_DELAY, () => {
           if (this.hasTransitioned) {
@@ -797,7 +1632,9 @@ export class EventScene extends Phaser.Scene {
         fontFamily: 'Arial Black',
       });
       statusIcon.setOrigin(0.5);
-      this.readyIndicators.add(statusIcon);
+      if (this.readyIndicators) {
+        this.readyIndicators.add(statusIcon);
+      }
       
       // Player name
       const nameText = this.add.text(-50, yPos, player.name.substring(0, 10), {
@@ -806,7 +1643,9 @@ export class EventScene extends Phaser.Scene {
         fontFamily: 'Georgia, serif',
       });
       nameText.setOrigin(0, 0.5);
-      this.readyIndicators.add(nameText);
+      if (this.readyIndicators) {
+        this.readyIndicators.add(nameText);
+      }
     });
   }
 
@@ -878,7 +1717,18 @@ interface EventData {
 interface EventChoice {
   id: string;
   text: string;
-  cost: number; // gold or items
-  reward: string;
+  costType: 'gold' | 'consumable' | 'none'; // Type of cost
+  costAmount: number; // Amount (gold value or consumable count)
+  costItem?: string; // For consumables: card ID (e.g., 'healing_potion')
+  consequences: EventConsequence[]; // Multiple consequences per choice
   description: string;
+}
+
+interface EventConsequence {
+  type: 'gold' | 'heal' | 'damage' | 'card' | 'battle' | 'buff' | 'curse';
+  amount?: number; // For gold/heal/damage amounts
+  target?: 'all' | 'random' | 'self'; // Who gets affected
+  cardId?: string; // For card rewards
+  enemyType?: string; // For battle consequences
+  chance?: number; // For random outcomes (0-1, e.g., 0.5 = 50%)
 }
