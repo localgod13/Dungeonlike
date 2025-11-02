@@ -226,12 +226,20 @@ export function resolveTurn(
   const guarded = new Set<ActorId>();
   const guardValues = new Map<ActorId, number>(); // Track actual guard values
   const vulnerable = new Set<ActorId>(); // Track vulnerable actors
+  let hasSeenEnemy = false; // Track if we've seen any enemy actions yet
 
   for (const actorId of order) {
     const actor = getActor(actorId);
     if (!actor || actor.hp <= 0) continue;
     
     const isEnemy = actor.side === 'enemy';
+    
+    // Add delay before first enemy action to separate enemy turn from player turn
+    if (isEnemy && !hasSeenEnemy) {
+      hasSeenEnemy = true;
+      tCursor += 600; // 600ms delay before enemies start acting
+      console.log(`[Combat] Adding 600ms delay before enemy turn begins`);
+    }
     
     // Get all plans for this actor (party members can have multiple)
     const actorPlans = isEnemy 

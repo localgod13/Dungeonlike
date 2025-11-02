@@ -476,6 +476,39 @@ export class SoundManager {
   }
 
   /**
+   * Track last played player hurt sound to avoid repeating
+   */
+  private lastPlayerHurtSound: 'sfx_player_hurt1' | 'sfx_player_hurt2' | null = null;
+
+  /**
+   * Play player hurt sound effect - alternates between two sounds with pitch variation
+   * Never plays the same sound twice in a row
+   */
+  playPlayerHurt(): void {
+    if (!this.soundsEnabled) return;
+    
+    // Alternate between the two hurt sounds, never playing the same one twice
+    let soundKey: 'sfx_player_hurt1' | 'sfx_player_hurt2';
+    if (this.lastPlayerHurtSound === 'sfx_player_hurt1') {
+      soundKey = 'sfx_player_hurt2';
+    } else if (this.lastPlayerHurtSound === 'sfx_player_hurt2') {
+      soundKey = 'sfx_player_hurt1';
+    } else {
+      // First time playing, randomly pick one
+      soundKey = Math.random() < 0.5 ? 'sfx_player_hurt1' : 'sfx_player_hurt2';
+    }
+    
+    // Add pitch variation (0.85 to 1.15) for variety
+    const pitchVariation = 0.85 + Math.random() * 0.3;
+    
+    // Update last played sound
+    this.lastPlayerHurtSound = soundKey;
+    
+    console.log(`[SoundManager] Playing player hurt sound: ${soundKey} at rate ${pitchVariation.toFixed(2)}`);
+    this.playSfx(soundKey, { volume: 0.7, rate: pitchVariation });
+  }
+
+  /**
    * Play card deal sound effect with pitch variation - randomly selects between two sounds
    */
   playCardDeal(): void {
@@ -555,6 +588,9 @@ export const SOUND_ASSETS = {
   sfx_boss_hurt2: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/boss1/bosshurt2.mp3',
   sfx_boss_hurt3: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/boss1/bosshurt3.mp3',
   sfx_boss_turn: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/boss1/bossturn.mp3',
+  sfx_minotaur_entrance: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/Minotaur/minentrance.mp3',
+  sfx_player_hurt1: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/playersounds/playhurt1.mp3',
+  sfx_player_hurt2: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/playersounds/playhurt2.mp3',
   
   // Background music (converted to jsDelivr CDN)
   music_battle: 'https://cdn.jsdelivr.net/gh/localgod13/Dungeonlike@main/assets/sounds/music/battle1.mp3',

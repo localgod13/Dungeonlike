@@ -111,6 +111,7 @@ export class BattleScene extends Phaser.Scene {
   private selectedTarget: ActorId | null = null;
   private lockButton: Phaser.GameObjects.Container | null = null;
   private pendingActionDisplay: Phaser.GameObjects.Text | null = null;
+  private turnIndicatorText: Phaser.GameObjects.Text | null = null;
 
   // Animation timeline
   private timeline: AnimationTimeline | null = null;
@@ -121,6 +122,7 @@ export class BattleScene extends Phaser.Scene {
   private players: BattleActor[] = [];
   private enemies: Actor[] = [];
   private pendingPostState: Actor[] | null = null;
+  private currentResolvePayload: ResolvePayload | null = null;
   
   // Card system & Deck
   private loadouts = new Map<ActorId, string[]>(); // userId -> cardIds (full deck of 10)
@@ -726,6 +728,20 @@ export class BattleScene extends Phaser.Scene {
     this.soundManager = new SoundManager(this);
     console.log('Sound manager initialized');
 
+    // Check if this is a Minotaur battle and play entrance sound
+    const hasMinotaur = this.enemies.some(enemy => 
+      enemy.name && enemy.name.includes('Minotaur')
+    );
+    if (hasMinotaur && this.soundManager) {
+      console.log('🐂 MINOTAUR BATTLE DETECTED! Playing entrance sound...');
+      // Small delay to ensure sound is loaded, play once at battle start
+      this.time.delayedCall(500, () => {
+        if (this.soundManager) {
+          this.soundManager.playSfx('sfx_minotaur_entrance', { volume: 0.8 });
+        }
+      });
+    }
+
     // Initialize ultimate power manager (restore power from previous battle if available)
     const shouldRestorePower = hasPersistedPower();
     this.ultimatePowerManager = createUltimatePowerManager(shouldRestorePower);
@@ -1241,6 +1257,19 @@ export class BattleScene extends Phaser.Scene {
     phaseText.setOrigin(0, 0);
     phaseText.setDepth(1000);
     this.hudContainer.add(phaseText);
+
+    // Turn indicator (top center) - Shows "Players Turn" or "Enemies Turn"
+    this.turnIndicatorText = this.add.text(this.scale.width / 2, 20, 'Players Turn', {
+      fontSize: '24px',
+      color: '#4a90e2',
+      fontFamily: 'Arial, sans-serif',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 4,
+    });
+    this.turnIndicatorText.setOrigin(0.5, 0);
+    this.turnIndicatorText.setDepth(1000);
+    this.hudContainer.add(this.turnIndicatorText);
 
     // Bottom left HUD with proper positioning and sizing
     const statsWidth = 220;
@@ -2812,8 +2841,14 @@ export class BattleScene extends Phaser.Scene {
       this.combatState.shields = new Map();
     }
     
+    // Store payload for checking enemy actions
+    this.currentResolvePayload = payload;
+    
     // Build animation timeline
     this.buildAnimationTimeline(payload);
+    
+    // Update turn indicator based on payload
+    this.updateTurnIndicatorFromPayload(payload);
     
     // Don't reconcile state immediately - let animations apply damage
     // reconcileState(this.combatState, payload.post);
@@ -2942,6 +2977,15 @@ export class BattleScene extends Phaser.Scene {
           if (enemyType === 'Minotaur' && this.soundManager) {
             this.soundManager.playBossTurn();
           }
+          // Update turn indicator when enemy acts
+          if (this.turnIndicatorText) {
+            this.turnIndicatorText.setText('Enemies Turn');
+            this.turnIndicatorText.setColor('#e74c3c'); // Red for enemies
+          }
+        } else if (srcActor && srcActor.side === 'party' && this.turnIndicatorText && this.phase === 'resolving') {
+          // Update to Players Turn when party member acts (only during resolving)
+          this.turnIndicatorText.setText('Players Turn');
+          this.turnIndicatorText.setColor('#4a90e2'); // Blue for players
         }
         
         if (dstId) {
@@ -3834,9 +3878,209 @@ export class BattleScene extends Phaser.Scene {
       });
     }
     
-    // Check if combat ended after Meteor Shower
-    // 12 meteors × 100ms stagger + 700ms for last hit + 500ms for explosion animations = 2400ms
-    this.time.delayedCall(2400, () => {
+    // Final massive fireball - 2x the size of regular meteors
+    // Wait for most meteors to hit: 12 meteors × 100ms stagger + 400ms (mid-flight) = ~1600ms
+    this.time.delayedCall(1600, () => {
+      console.log(`☄️ FINAL MASSIVE FIREBALL!`);
+      
+      // Find center of all enemies for impact point
+      let centerX = 0;
+      let centerY = 0;
+      if (enemySlots.length > 0) {
+        enemySlots.forEach(slot => {
+          centerX += slot.x;
+          centerY += slot.y;
+        });
+        centerX /= enemySlots.length;
+        centerY /= enemySlots.length;
+      } else {
+        // Fallback to center of screen
+        centerX = this.scale.width / 2;
+        centerY = this.scale.height / 2;
+      }
+      
+      const skyY = -150;
+      const finalMeteorScale = 6; // 2x the regular meteor scale of 3
+      
+      // Create massive fireball sprite
+      const finalFireball = this.add.sprite(centerX, skyY, 'mage_meteor');
+      finalFireball.setScale(finalMeteorScale);
+      finalFireball.setRotation(Math.PI / 2); // Point downward
+      finalFireball.setDepth(100);
+      finalFireball.setTint(0xff0000); // Redder tint for more intensity
+      
+      // Play meteor animation
+      if (this.anims.exists('mage_meteor_anim')) {
+        finalFireball.play('mage_meteor_anim');
+      }
+      
+      // Animate massive fireball falling
+      this.tweens.add({
+        targets: finalFireball,
+        x: centerX,
+        y: centerY,
+        duration: 1000, // Slightly slower for dramatic effect
+        ease: 'Cubic.easeIn',
+        onUpdate: () => {
+          // Enhanced trail effect
+          if (Math.random() < 0.5) {
+            const trail = this.add.circle(finalFireball.x, finalFireball.y, 8, 0xff0000, 1);
+            trail.setDepth(99);
+            this.tweens.add({
+              targets: trail,
+              alpha: 0,
+              scale: 0.3,
+              duration: 300,
+              onComplete: () => trail.destroy(),
+            });
+          }
+        },
+        onComplete: () => {
+          // Massive screen shake
+          this.cameras.main.shake(300, 0.01); // 3x duration, 3x intensity
+          
+          // Screen flash effect - white overlay that fades
+          const flashOverlay = this.add.rectangle(
+            this.scale.width / 2,
+            this.scale.height / 2,
+            this.scale.width,
+            this.scale.height,
+            0xffffff,
+            0.8
+          );
+          flashOverlay.setDepth(1000); // Above everything
+          flashOverlay.setScrollFactor(0); // Stay fixed to camera
+          
+          // Flash fades out quickly
+          this.tweens.add({
+            targets: flashOverlay,
+            alpha: 0,
+            duration: 200,
+            ease: 'Power2',
+            onComplete: () => flashOverlay.destroy(),
+          });
+          
+          // Massive explosion - multiple layers
+          const explosionCore = this.add.circle(centerX, centerY, 40, 0xffffff, 1);
+          explosionCore.setDepth(101);
+          
+          const explosionInner = this.add.circle(centerX, centerY, 60, 0xffff00, 1);
+          explosionInner.setDepth(100);
+          
+          const explosionMid = this.add.circle(centerX, centerY, 80, 0xff4400, 0.9);
+          explosionMid.setDepth(99);
+          
+          const explosionOuter = this.add.circle(centerX, centerY, 100, 0xff8800, 0.7);
+          explosionOuter.setDepth(98);
+          
+          // Outer explosion ring (massive)
+          const explosionRing = this.add.circle(centerX, centerY, 100, 0xff6600, 0);
+          explosionRing.setStrokeStyle(8, 0xffaa00, 1);
+          explosionRing.setDepth(97);
+          
+          // Second outer ring
+          const explosionRing2 = this.add.circle(centerX, centerY, 120, 0xff4400, 0);
+          explosionRing2.setStrokeStyle(6, 0xff8800, 0.9);
+          explosionRing2.setDepth(96);
+          
+          // Animate core explosion
+          this.tweens.add({
+            targets: explosionCore,
+            scale: 5,
+            alpha: 0,
+            duration: 300,
+            ease: 'Power3',
+            onComplete: () => explosionCore.destroy(),
+          });
+          
+          // Animate inner explosion
+          this.tweens.add({
+            targets: explosionInner,
+            scale: 6,
+            alpha: 0,
+            duration: 400,
+            ease: 'Power3',
+            onComplete: () => explosionInner.destroy(),
+          });
+          
+          // Animate mid explosion
+          this.tweens.add({
+            targets: explosionMid,
+            scale: 7,
+            alpha: 0,
+            duration: 500,
+            ease: 'Power2',
+            onComplete: () => explosionMid.destroy(),
+          });
+          
+          // Animate outer explosion
+          this.tweens.add({
+            targets: explosionOuter,
+            scale: 8,
+            alpha: 0,
+            duration: 600,
+            ease: 'Power2',
+            onComplete: () => explosionOuter.destroy(),
+          });
+          
+          // Animate outer ring
+          this.tweens.add({
+            targets: explosionRing,
+            scale: 9,
+            alpha: 0,
+            duration: 700,
+            ease: 'Power2',
+            onComplete: () => explosionRing.destroy(),
+          });
+          
+          // Animate second ring
+          this.tweens.add({
+            targets: explosionRing2,
+            scale: 10,
+            alpha: 0,
+            duration: 800,
+            ease: 'Power2',
+            onComplete: () => explosionRing2.destroy(),
+          });
+          
+          // Enhanced debris particles
+          for (let j = 0; j < 16; j++) {
+            const debris = this.add.circle(centerX, centerY, 5, 0xff6600, 1);
+            debris.setDepth(95);
+            
+            const angle = (Math.PI * 2 * j) / 16;
+            const distance = Phaser.Math.Between(60, 120);
+            
+            this.tweens.add({
+              targets: debris,
+              x: centerX + Math.cos(angle) * distance,
+              y: centerY + Math.sin(angle) * distance,
+              alpha: 0,
+              scale: 0.5,
+              duration: 600,
+              ease: 'Power2',
+              onComplete: () => debris.destroy(),
+            });
+          }
+          
+          // Destroy massive fireball
+          finalFireball.destroy();
+          
+          // Play additional sound effect for final impact
+          if (this.soundManager) {
+            this.time.delayedCall(100, () => {
+              if (this.soundManager) {
+                this.soundManager.playMageFireSpell();
+              }
+            });
+          }
+        },
+      });
+    });
+    
+    // Check if combat ended after Meteor Shower (including final fireball)
+    // 1600ms delay + 1000ms final fireball fall + 800ms final explosion = ~3400ms
+    this.time.delayedCall(3400, () => {
       this.checkCombatEndAfterUltimate();
     });
   }
@@ -4005,6 +4249,11 @@ export class BattleScene extends Phaser.Scene {
         // PLAYER HURT ANIMATIONS
         const battleActor = actor as BattleActor;
         const characterClass = battleActor.selectedClass;
+        
+        // Play player hurt sound
+        if (this.soundManager) {
+          this.soundManager.playPlayerHurt();
+        }
         
         // Find sprite in the container
         const sprite = dstSlot.list.find(obj => obj.type === 'Sprite') as Phaser.GameObjects.Sprite | undefined;
@@ -5367,6 +5616,32 @@ export class BattleScene extends Phaser.Scene {
       phaseText.setText(''); // Hide for idle phase
     }
 
+    // Update turn indicator
+    if (this.turnIndicatorText) {
+      if (this.phase === 'planning') {
+        this.turnIndicatorText.setText('Players Turn');
+        this.turnIndicatorText.setColor('#4a90e2'); // Blue for players
+      } else if (this.phase === 'resolving') {
+        // Check if there are enemy actions in the current payload
+        if (this.currentResolvePayload) {
+          const hasEnemyActions = this.checkForEnemyActions(this.currentResolvePayload);
+          if (hasEnemyActions) {
+            this.turnIndicatorText.setText('Enemies Turn');
+            this.turnIndicatorText.setColor('#e74c3c'); // Red for enemies
+          } else {
+            this.turnIndicatorText.setText('Players Turn');
+            this.turnIndicatorText.setColor('#4a90e2'); // Blue for players
+          }
+        } else {
+          this.turnIndicatorText.setText('Players Turn');
+          this.turnIndicatorText.setColor('#4a90e2'); // Blue for players
+        }
+      } else {
+        this.turnIndicatorText.setText('Players Turn');
+        this.turnIndicatorText.setColor('#4a90e2'); // Blue for players
+      }
+    }
+
     // Update HP bars
     this.updateHPBars();
     
@@ -5763,6 +6038,44 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Check if there are enemy actions in the resolve payload
+   */
+  private checkForEnemyActions(payload: ResolvePayload): boolean {
+    if (!payload.effects || payload.effects.length === 0) {
+      return false;
+    }
+
+    // Check if any effect has an enemy as the source
+    for (const effect of payload.effects) {
+      // Only check effects that represent actions (hit, heal, etc.)
+      if (effect.kind === 'hit' || effect.kind === 'heal' || effect.kind === 'guard') {
+        const srcActor = [...this.players, ...this.enemies].find(a => a.id === effect.src);
+        if (srcActor && srcActor.side === 'enemy') {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Update turn indicator based on resolve payload
+   */
+  private updateTurnIndicatorFromPayload(payload: ResolvePayload): void {
+    if (!this.turnIndicatorText) return;
+
+    const hasEnemyActions = this.checkForEnemyActions(payload);
+    if (hasEnemyActions) {
+      this.turnIndicatorText.setText('Enemies Turn');
+      this.turnIndicatorText.setColor('#e74c3c'); // Red for enemies
+    } else {
+      this.turnIndicatorText.setText('Players Turn');
+      this.turnIndicatorText.setColor('#4a90e2'); // Blue for players
+    }
+  }
+
   private startPlanningPhase(): void {
     this.phase = 'planning';
     this.playerPlans.clear();
@@ -5772,6 +6085,7 @@ export class BattleScene extends Phaser.Scene {
     this.selectedAction = null;
     this.selectedTarget = null;
     this.selectedCardId = null;
+    this.currentResolvePayload = null; // Clear previous payload
     
     // Clear queue display
     if (this.queueDisplay) {
@@ -6952,6 +7266,10 @@ export class BattleScene extends Phaser.Scene {
    * Handles window resize events to maintain proper UI positioning
    */
   private handleResize(): void {
+    // Update turn indicator position to stay centered
+    if (this.turnIndicatorText) {
+      this.turnIndicatorText.setX(this.scale.width / 2);
+    }
     // Reposition combat log in bottom right corner
     if (this.combatLogContainer) {
       const logWidth = 220;
