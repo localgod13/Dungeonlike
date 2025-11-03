@@ -483,28 +483,28 @@ export class CardSelectUI {
 
   private handleCardClick(cardId: string, isItem: boolean): void {
     if (isItem) {
-      // Handle item card clicks
-      if (this.selectedItems.length < this.MAX_ITEMS && !this.selectedItems.includes(cardId)) {
+      // Handle item card clicks (allow duplicates)
+      if (this.selectedItems.length < this.MAX_ITEMS) {
         // Add item to item slots
         this.addItemToLoadout(cardId);
         if (this.onCardPick) {
           this.onCardPick(cardId);
         }
-      } else if (this.selectedItems.length === this.MAX_ITEMS && !this.selectedItems.includes(cardId)) {
+      } else if (this.selectedItems.length === this.MAX_ITEMS) {
         // Initiate item swap
         this.pendingSwap = cardId;
         this.highlightItemSlots(true);
         this.updateTitle('Click an item to swap');
       }
     } else {
-      // Handle regular card clicks
-      if (this.selectedCards.length < SLOT_COUNT && !this.selectedCards.includes(cardId)) {
+      // Handle regular card clicks (allow duplicates)
+      if (this.selectedCards.length < SLOT_COUNT) {
         // Pick card
         this.addCardToLoadout(cardId);
         if (this.onCardPick) {
           this.onCardPick(cardId);
         }
-      } else if (this.selectedCards.length === SLOT_COUNT && !this.selectedCards.includes(cardId)) {
+      } else if (this.selectedCards.length === SLOT_COUNT) {
         // Initiate swap - highlight filled loadout slots
         this.pendingSwap = cardId;
         this.highlightLoadoutSlots(true);

@@ -1297,23 +1297,30 @@ export class EventScene extends Phaser.Scene {
     // Show "Battle Starting!" message
     await this.showBattleTransition(consequence.enemyType);
     
-    console.log(`[Event] Battle transition complete, starting CardSelectScene...`);
+    // Check if all players have saved loadouts
+    const hasSavedLoadouts = await this.checkSavedLoadouts();
     
     // Transition to card selection then battle
     // We'll use the same flow as regular battles
     this.hasTransitioned = true;
     
-    this.scene.start('CardSelectScene', {
-      lobbyId: this.lobbyId,
-      players: this.players,
-      mapSeed: this.mapSeed,
-      visitedNodes: this.visitedNodes,
-      currentNodeId: this.currentNodeId,
-      stage: this.currentStage,
-      eventBattle: consequence.enemyType, // Mark this as an event battle
-    });
-    
-    console.log(`[Event] CardSelectScene started for event battle`);
+    if (hasSavedLoadouts) {
+      // Show modal asking if they want to change loadout
+      console.log('✨ Players have saved loadouts, showing change loadout modal for event battle...');
+      await this.showLoadoutModalForEvent(consequence.enemyType);
+    } else {
+      // First time, go to card selection
+      console.log(`[Event] No saved loadouts, going to CardSelectScene for event battle...`);
+      this.scene.start('CardSelectScene', {
+        lobbyId: this.lobbyId,
+        players: this.players,
+        mapSeed: this.mapSeed,
+        visitedNodes: this.visitedNodes,
+        currentNodeId: this.currentNodeId,
+        stage: this.currentStage,
+        eventBattle: consequence.enemyType, // Mark this as an event battle
+      });
+    }
   }
 
   /**
@@ -1416,6 +1423,201 @@ export class EventScene extends Phaser.Scene {
     };
     
     return names[enemyType] || 'Unknown Enemy';
+  }
+
+  /**
+   * Check if all players have saved loadouts
+   */
+  private async checkSavedLoadouts(): Promise<boolean> {
+    const { getSavedLoadout } = await import('../game/inventory');
+    
+    // Check if ALL players have saved loadouts
+    for (const player of this.players) {
+      const savedLoadout = getSavedLoadout(player.userId);
+      if (!savedLoadout || savedLoadout.length === 0) {
+        console.log(`[EventScene] Player ${player.name} has no saved loadout`);
+        return false;
+      }
+    }
+    
+    console.log('[EventScene] All players have saved loadouts!');
+    return true;
+  }
+
+  /**
+   * Show modal asking if player wants to change loadout before event battle
+   */
+  private async showLoadoutModalForEvent(enemyType: string): Promise<void> {
+    return new Promise((resolve) => {
+      const width = this.scale.width;
+      const height = this.scale.height;
+      
+      // Create modal container
+      const modalContainer = this.add.container(width / 2, height / 2);
+      modalContainer.setDepth(10000);
+      
+      // Dark overlay
+      const overlay = this.add.rectangle(0, 0, width, height, 0x000000, 0.7);
+      overlay.setOrigin(0.5);
+      overlay.setInteractive(); // Block clicks behind modal
+      modalContainer.add(overlay);
+      
+      // Modal background
+      const modalBg = this.add.rectangle(0, 0, 500, 250, 0x1a0f2e, 0.95);
+      modalBg.setStrokeStyle(3, 0xd4af37, 1);
+      modalContainer.add(modalBg);
+      
+      // Title
+      const title = this.add.text(0, -70, '⚔️ BATTLE AHEAD', {
+        fontSize: '32px',
+        color: '#d4af37',
+        fontFamily: 'Georgia, serif',
+        fontStyle: 'bold',
+      });
+      title.setOrigin(0.5);
+      modalContainer.add(title);
+      
+      // Question text
+      const questionText = this.add.text(0, -20, 'Do you want to change your loadout?', {
+        fontSize: '20px',
+        color: '#e8dcc0',
+        fontFamily: 'Georgia, serif',
+        align: 'center',
+      });
+      questionText.setOrigin(0.5);
+      modalContainer.add(questionText);
+      
+      // Yes button
+      const yesButton = this.createModalButton(-120, 50, 'Yes, change cards', 0x2a5a2a);
+      modalContainer.add(yesButton);
+      
+      // No button
+      const noButton = this.createModalButton(120, 50, 'No, keep loadout', 0x5a2a2a);
+      modalContainer.add(noButton);
+      
+      // Handle Yes - go to card select
+      yesButton.on('pointerdown', async () => {
+        this.soundManager?.playSfx('ui_click');
+        modalContainer.destroy();
+        
+        // Clear saved loadouts
+        const { clearSavedLoadout } = await import('../game/inventory');
+        for (const player of this.players) {
+          clearSavedLoadout(player.userId);
+        }
+        
+        // Go to card select scene
+        console.log(`[Event] Going to CardSelectScene for event battle...`);
+        this.scene.start('CardSelectScene', {
+          lobbyId: this.lobbyId,
+          players: this.players,
+          mapSeed: this.mapSeed,
+          visitedNodes: this.visitedNodes,
+          currentNodeId: this.currentNodeId,
+          stage: this.currentStage,
+          eventBattle: enemyType,
+        });
+        resolve();
+      });
+      
+      // Handle No - go directly to battle
+      noButton.on('pointerdown', async () => {
+        this.soundManager?.playSfx('ui_click');
+        modalContainer.destroy();
+        
+        // Go directly to battle with saved loadout
+        await this.transitionToBattleDirectly(enemyType);
+        resolve();
+      });
+      
+      // Fade in animation
+      modalContainer.setAlpha(0);
+      this.tweens.add({
+        targets: modalContainer,
+        alpha: 1,
+        duration: 200,
+        ease: 'Power2',
+      });
+    });
+  }
+
+  /**
+   * Create a button for the modal
+   */
+  private createModalButton(x: number, y: number, text: string, color: number): Phaser.GameObjects.Container {
+    const buttonContainer = this.add.container(x, y);
+    buttonContainer.setSize(200, 50);
+    buttonContainer.setInteractive({ useHandCursor: true });
+    
+    const bg = this.add.rectangle(0, 0, 200, 50, color, 0.9);
+    bg.setStrokeStyle(2, 0x8b7355, 0.8);
+    buttonContainer.add(bg);
+    
+    const label = this.add.text(0, 0, text, {
+      fontSize: '16px',
+      color: '#e8dcc0',
+      fontFamily: 'Georgia, serif',
+      fontStyle: 'bold',
+      align: 'center',
+      wordWrap: { width: 180 },
+    });
+    label.setOrigin(0.5);
+    buttonContainer.add(label);
+    
+    // Hover effects on the container
+    buttonContainer.on('pointerover', () => {
+      bg.setFillStyle(color + 0x202020, 1);
+      label.setColor('#ffffff');
+      this.soundManager?.playSfx('sfx_card_click');
+    });
+    
+    buttonContainer.on('pointerout', () => {
+      bg.setFillStyle(color, 0.9);
+      label.setColor('#e8dcc0');
+    });
+    
+    return buttonContainer;
+  }
+
+  /**
+   * Transition directly to battle using saved loadouts
+   */
+  private async transitionToBattleDirectly(enemyType: string): Promise<void> {
+    const { getSavedLoadout } = await import('../game/inventory');
+    
+    // Build loadouts from saved data
+    const loadouts = this.players.map(player => ({
+      userId: player.userId,
+      cards: getSavedLoadout(player.userId) || [],
+    }));
+    
+    console.log('[EventScene] Built loadouts from saved data:', loadouts);
+    
+    // Prepare player data for battle scene
+    const battlePlayers = this.players.map(player => ({
+      id: player.userId,
+      userId: player.userId,
+      side: 'party' as const,
+      name: player.name,
+      selectedClass: player.selectedClass || 'Warrior',
+      hp: 100,
+      maxHp: 100,
+      ap: 5,
+      isHost: player.isHost,
+    }));
+    
+    // Transition directly to battle
+    console.log('🚀 Starting BattleScene directly for event battle...');
+    this.scene.start('BattleScene', {
+      lobbyId: this.lobbyId,
+      players: battlePlayers,
+      loadouts: loadouts,
+      mapSeed: this.mapSeed,
+      visitedNodes: this.visitedNodes,
+      currentNodeId: this.currentNodeId,
+      stage: this.currentStage,
+      eventBattle: enemyType, // Mark this as an event battle
+    });
   }
 
   private showChoiceResult(choice: EventChoice): void {

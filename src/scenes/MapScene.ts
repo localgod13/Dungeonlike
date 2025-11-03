@@ -1135,7 +1135,7 @@ export class MapScene extends Phaser.Scene {
     });
   }
 
-  private transitionToNode(node: MapNode): void {
+  private async transitionToNode(node: MapNode): Promise<void> {
     // Prevent duplicate transitions
     if (this.hasTransitioned) {
       console.log('[MapScene] Already transitioning, skipping...');
@@ -1166,29 +1166,37 @@ export class MapScene extends Phaser.Scene {
         // Increment stage for each battle
         const nextStage = this.currentStage + 1;
         
-        // CRITICAL: Kill all tweens and stop all sounds immediately
-        console.log('🔇 Stopping all sounds and tweens before transition...');
-        this.tweens.killAll();
-        this.sound.stopAll();
+        // Check if all players have saved loadouts
+        const hasSavedLoadouts = await this.checkSavedLoadouts();
         
-        // Destroy sound manager to prevent lingering tweens
-        if (this.soundManager) {
-          console.log('🔇 Destroying sound manager...');
-          this.soundManager.destroy();
-          this.soundManager = null;
+        if (hasSavedLoadouts) {
+          // Show modal asking if they want to change loadout
+          console.log('✨ Players have saved loadouts, showing change loadout modal...');
+          await this.showLoadoutModal(node, visitedNodes, nextStage);
+        } else {
+          // First time, go to card selection
+          console.log('🚀 No saved loadouts, going to CardSelectScene...');
+          
+          // CRITICAL: Kill all tweens and stop all sounds immediately
+          this.tweens.killAll();
+          this.sound.stopAll();
+          
+          // Destroy sound manager to prevent lingering tweens
+          if (this.soundManager) {
+            this.soundManager.destroy();
+            this.soundManager = null;
+          }
+          
+          this.scene.start('CardSelectScene', {
+            lobbyId: this.lobbyId,
+            players: this.players,
+            mapSeed: this.gameMap.seed,
+            visitedNodes: visitedNodes,
+            currentNodeId: node.id,
+            stage: nextStage,
+            world: (this as any).worldKey,
+          });
         }
-        
-        // Transition immediately without delay
-        console.log('🚀 Transitioning to CardSelectScene...');
-        this.scene.start('CardSelectScene', {
-          lobbyId: this.lobbyId,
-          players: this.players,
-          mapSeed: this.gameMap.seed, // Pass map seed to maintain continuity
-          visitedNodes: visitedNodes, // Pass visited nodes to maintain progress
-          currentNodeId: node.id, // Pass the TARGET node as current position (player is moving to this node)
-          stage: nextStage, // Increment stage for next battle
-          world: (this as any).worldKey,
-        });
         break;
         
       case NodeType.Boss:
@@ -1197,29 +1205,37 @@ export class MapScene extends Phaser.Scene {
         // Boss battles are always Stage 6 (regardless of current stage)
         const bossStage = 6;
         
-        // CRITICAL: Kill all tweens and stop all sounds immediately
-        console.log('🔇 Stopping all sounds and tweens before transition...');
-        this.tweens.killAll();
-        this.sound.stopAll();
+        // Check if all players have saved loadouts
+        const hasSavedLoadoutsForBoss = await this.checkSavedLoadouts();
         
-        // Destroy sound manager to prevent lingering tweens
-        if (this.soundManager) {
-          console.log('🔇 Destroying sound manager...');
-          this.soundManager.destroy();
-          this.soundManager = null;
+        if (hasSavedLoadoutsForBoss) {
+          // Show modal asking if they want to change loadout
+          console.log('✨ Players have saved loadouts, showing change loadout modal for boss...');
+          await this.showLoadoutModal(node, visitedNodes, bossStage);
+        } else {
+          // First time, go to card selection
+          console.log('🚀 No saved loadouts, going to CardSelectScene for boss...');
+          
+          // CRITICAL: Kill all tweens and stop all sounds immediately
+          this.tweens.killAll();
+          this.sound.stopAll();
+          
+          // Destroy sound manager to prevent lingering tweens
+          if (this.soundManager) {
+            this.soundManager.destroy();
+            this.soundManager = null;
+          }
+          
+          this.scene.start('CardSelectScene', {
+            lobbyId: this.lobbyId,
+            players: this.players,
+            mapSeed: this.gameMap.seed,
+            visitedNodes: visitedNodes,
+            currentNodeId: node.id,
+            stage: bossStage,
+            world: (this as any).worldKey,
+          });
         }
-        
-        // Transition immediately without delay
-        console.log('🚀 Transitioning to CardSelectScene...');
-        this.scene.start('CardSelectScene', {
-          lobbyId: this.lobbyId,
-          players: this.players,
-          mapSeed: this.gameMap.seed, // Pass map seed to maintain continuity
-          visitedNodes: visitedNodes, // Pass visited nodes to maintain progress
-          currentNodeId: node.id, // Pass the TARGET node as current position (player is moving to this node)
-          stage: bossStage, // Boss battles are always Stage 6
-          world: (this as any).worldKey,
-        });
         break;
         
       case NodeType.Shop:
@@ -1374,6 +1390,220 @@ export class MapScene extends Phaser.Scene {
       this.votingUI.destroy();
       this.votingUI = null;
     }
+  }
+
+  /**
+   * Show modal asking if player wants to change loadout before battle
+   */
+  private async showLoadoutModal(node: MapNode, visitedNodes: string[], stage: number): Promise<void> {
+    return new Promise((resolve) => {
+      const width = this.scale.width;
+      const height = this.scale.height;
+      
+      // Create modal container
+      const modalContainer = this.add.container(width / 2, height / 2);
+      modalContainer.setDepth(10000);
+      
+      // Dark overlay
+      const overlay = this.add.rectangle(0, 0, width, height, 0x000000, 0.7);
+      overlay.setOrigin(0.5);
+      overlay.setInteractive(); // Block clicks behind modal
+      modalContainer.add(overlay);
+      
+      // Modal background
+      const modalBg = this.add.rectangle(0, 0, 500, 250, 0x1a0f2e, 0.95);
+      modalBg.setStrokeStyle(3, 0xd4af37, 1);
+      modalContainer.add(modalBg);
+      
+      // Title
+      const title = this.add.text(0, -70, '⚔️ BATTLE AHEAD', {
+        fontSize: '32px',
+        color: '#d4af37',
+        fontFamily: 'Georgia, serif',
+        fontStyle: 'bold',
+      });
+      title.setOrigin(0.5);
+      modalContainer.add(title);
+      
+      // Question text
+      const questionText = this.add.text(0, -20, 'Do you want to change your loadout?', {
+        fontSize: '20px',
+        color: '#e8dcc0',
+        fontFamily: 'Georgia, serif',
+        align: 'center',
+      });
+      questionText.setOrigin(0.5);
+      modalContainer.add(questionText);
+      
+      // Yes button
+      const yesButton = this.createModalButton(-120, 50, 'Yes, change cards', 0x2a5a2a);
+      modalContainer.add(yesButton);
+      
+      // No button
+      const noButton = this.createModalButton(120, 50, 'No, keep loadout', 0x5a2a2a);
+      modalContainer.add(noButton);
+      
+      // Handle Yes - go to card select
+      yesButton.on('pointerdown', async () => {
+        this.soundManager?.playSfx('ui_click');
+        modalContainer.destroy();
+        
+        // Clear saved loadouts
+        const { clearSavedLoadout } = await import('../game/inventory');
+        for (const player of this.players) {
+          clearSavedLoadout(player.userId);
+        }
+        
+        // Go to card select scene
+        this.proceedToCardSelect(node, visitedNodes, stage);
+        resolve();
+      });
+      
+      // Handle No - go directly to battle
+      noButton.on('pointerdown', async () => {
+        this.soundManager?.playSfx('ui_click');
+        modalContainer.destroy();
+        
+        // Go directly to battle with saved loadout
+        await this.transitionToBattleDirectly(node, visitedNodes, stage);
+        resolve();
+      });
+      
+      // Fade in animation
+      modalContainer.setAlpha(0);
+      this.tweens.add({
+        targets: modalContainer,
+        alpha: 1,
+        duration: 200,
+        ease: 'Power2',
+      });
+    });
+  }
+
+  /**
+   * Create a button for the modal
+   */
+  private createModalButton(x: number, y: number, text: string, color: number): Phaser.GameObjects.Container {
+    const buttonContainer = this.add.container(x, y);
+    buttonContainer.setSize(200, 50);
+    buttonContainer.setInteractive({ useHandCursor: true });
+    
+    const bg = this.add.rectangle(0, 0, 200, 50, color, 0.9);
+    bg.setStrokeStyle(2, 0x8b7355, 0.8);
+    buttonContainer.add(bg);
+    
+    const label = this.add.text(0, 0, text, {
+      fontSize: '16px',
+      color: '#e8dcc0',
+      fontFamily: 'Georgia, serif',
+      fontStyle: 'bold',
+      align: 'center',
+      wordWrap: { width: 180 },
+    });
+    label.setOrigin(0.5);
+    buttonContainer.add(label);
+    
+    // Hover effects on the container
+    buttonContainer.on('pointerover', () => {
+      bg.setFillStyle(color + 0x202020, 1);
+      label.setColor('#ffffff');
+      this.soundManager?.playSfx('sfx_card_click');
+    });
+    
+    buttonContainer.on('pointerout', () => {
+      bg.setFillStyle(color, 0.9);
+      label.setColor('#e8dcc0');
+    });
+    
+    return buttonContainer;
+  }
+
+  /**
+   * Proceed to card select scene
+   */
+  private proceedToCardSelect(node: MapNode, visitedNodes: string[], stage: number): void {
+    // CRITICAL: Kill all tweens and stop all sounds immediately
+    console.log('🔇 Stopping all sounds and tweens before transition...');
+    this.tweens.killAll();
+    this.sound.stopAll();
+    
+    // Destroy sound manager to prevent lingering tweens
+    if (this.soundManager) {
+      console.log('🔇 Destroying sound manager...');
+      this.soundManager.destroy();
+      this.soundManager = null;
+    }
+    
+    console.log('🚀 Transitioning to CardSelectScene...');
+    this.scene.start('CardSelectScene', {
+      lobbyId: this.lobbyId,
+      players: this.players,
+      mapSeed: this.gameMap.seed,
+      visitedNodes: visitedNodes,
+      currentNodeId: node.id,
+      stage: stage,
+      world: (this as any).worldKey,
+    });
+  }
+
+  /**
+   * Check if all players have saved loadouts
+   */
+  private async checkSavedLoadouts(): Promise<boolean> {
+    const { getSavedLoadout } = await import('../game/inventory');
+    
+    // Check if ALL players have saved loadouts
+    for (const player of this.players) {
+      const savedLoadout = getSavedLoadout(player.userId);
+      if (!savedLoadout || savedLoadout.length === 0) {
+        console.log(`[MapScene] Player ${player.name} has no saved loadout`);
+        return false;
+      }
+    }
+    
+    console.log('[MapScene] All players have saved loadouts!');
+    return true;
+  }
+
+  /**
+   * Transition directly to battle using saved loadouts
+   */
+  private async transitionToBattleDirectly(node: MapNode, visitedNodes: string[], stage: number): Promise<void> {
+    const { getSavedLoadout } = await import('../game/inventory');
+    
+    // Build loadouts from saved data
+    const loadouts = this.players.map(player => ({
+      userId: player.userId,
+      cards: getSavedLoadout(player.userId) || [],
+    }));
+    
+    console.log('[MapScene] Built loadouts from saved data:', loadouts);
+    
+    // Prepare player data for battle scene
+    const battlePlayers = this.players.map(player => ({
+      id: player.userId,
+      userId: player.userId,
+      side: 'party' as const,
+      name: player.name,
+      selectedClass: player.selectedClass || 'Warrior',
+      hp: 100,
+      maxHp: 100,
+      ap: 5,
+      isHost: player.isHost,
+    }));
+    
+    // Transition directly to battle
+    console.log('🚀 Starting BattleScene directly...');
+    this.scene.start('BattleScene', {
+      lobbyId: this.lobbyId,
+      players: battlePlayers,
+      loadouts: loadouts,
+      mapSeed: this.gameMap.seed,
+      visitedNodes: visitedNodes,
+      currentNodeId: node.id,
+      stage: stage,
+      world: (this as any).worldKey,
+    });
   }
 
   shutdown(): void {

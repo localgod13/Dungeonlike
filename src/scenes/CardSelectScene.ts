@@ -290,16 +290,12 @@ export class CardSelectScene extends Phaser.Scene {
       const myLoadout = this.loadouts.get(this.userId) || [];
       console.log(`Current loadout before pick:`, myLoadout);
       
-      // Don't add if already in loadout or at capacity
-      if (myLoadout.includes(cardId)) {
-        console.log(`Card ${cardId} already in loadout, skipping`);
-        return;
-      }
-      
+      // Only check capacity, allow duplicates
       if (myLoadout.length < 10) {
         myLoadout.push(cardId);
         this.loadouts.set(this.userId, myLoadout);
-        console.log(`Added ${cardId}. New loadout:`, myLoadout);
+        const duplicateCount = myLoadout.filter(id => id === cardId).length;
+        console.log(`Added ${cardId}. New loadout:`, myLoadout, `(${duplicateCount} copies of this card)`);
       } else {
         console.log(`Loadout at capacity (${myLoadout.length}/10), cannot add ${cardId}`);
       }
@@ -501,9 +497,16 @@ export class CardSelectScene extends Phaser.Scene {
     }
   }
 
-  private transitionToBattle(loadouts: Loadout[]): void {
+  private async transitionToBattle(loadouts: Loadout[]): Promise<void> {
     console.log('🎬 TRANSITIONING TO BATTLE with loadouts:', loadouts);
     console.log(`🎬 Scene active: ${this.scene.isActive()}, Scene key: ${this.scene.key}`);
+
+    // Save loadouts for each player so they don't have to select again
+    const { saveLoadout } = await import('../game/inventory');
+    for (const loadout of loadouts) {
+      saveLoadout(loadout.userId, loadout.cards);
+      console.log(`💾 Saved loadout for ${loadout.userId}`);
+    }
 
     // Prevent multiple transitions
     if (this.hasTransitioned) {

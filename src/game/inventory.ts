@@ -9,6 +9,7 @@ export interface PlayerInventory {
   gold: number;
   permanentDeck: Card[]; // Cards that persist across battles
   consumables: Map<string, number>; // Card ID -> count
+  savedLoadout: string[] | null; // Saved card loadout for battles
 }
 
 // Global inventory state (per player session)
@@ -23,6 +24,7 @@ export function initializeInventory(playerId: string): void {
       gold: 0,
       permanentDeck: [],
       consumables: new Map(),
+      savedLoadout: null,
     });
     console.log(`[Inventory] Initialized inventory for player ${playerId}`);
   }
@@ -86,13 +88,9 @@ export function addCardToDeck(playerId: string, card: Card): void {
     inventory.consumables.set(card.id, currentCount + 1);
     console.log(`[Inventory] ${playerId} gained consumable: ${card.name} (count: ${currentCount + 1})`);
   } else {
-    // Add to permanent deck (if not already present)
-    if (!inventory.permanentDeck.some(c => c.id === card.id)) {
-      inventory.permanentDeck.push(card);
-      console.log(`[Inventory] ${playerId} added ${card.name} to permanent deck`);
-    } else {
-      console.log(`[Inventory] ${playerId} already has ${card.name} in deck`);
-    }
+    // Add to permanent deck (allow duplicates)
+    inventory.permanentDeck.push(card);
+    console.log(`[Inventory] ${playerId} added ${card.name} to permanent deck (total copies: ${inventory.permanentDeck.filter(c => c.id === card.id).length})`);
   }
 }
 
@@ -157,7 +155,38 @@ export function resetInventory(playerId: string): void {
     gold: 0,
     permanentDeck: [],
     consumables: new Map(),
+    savedLoadout: null,
   });
   console.log(`[Inventory] Reset inventory for player ${playerId}`);
+}
+
+/**
+ * Save player's card loadout for reuse in future battles
+ */
+export function saveLoadout(playerId: string, cardIds: string[]): void {
+  const inventory = getInventory(playerId);
+  if (!inventory) return;
+  
+  inventory.savedLoadout = [...cardIds]; // Store a copy
+  console.log(`[Inventory] ${playerId} saved loadout:`, cardIds);
+}
+
+/**
+ * Get player's saved loadout
+ */
+export function getSavedLoadout(playerId: string): string[] | null {
+  const inventory = getInventory(playerId);
+  return inventory?.savedLoadout || null;
+}
+
+/**
+ * Clear player's saved loadout
+ */
+export function clearSavedLoadout(playerId: string): void {
+  const inventory = getInventory(playerId);
+  if (!inventory) return;
+  
+  inventory.savedLoadout = null;
+  console.log(`[Inventory] ${playerId} cleared saved loadout`);
 }
 
